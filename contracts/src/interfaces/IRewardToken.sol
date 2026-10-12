@@ -8,6 +8,6 @@ interface IRewardToken {
     /// @notice Mints the loss rebate for `usdcLost` (6 decimals) to `trader`. PerpEngine only.
     function mintLossRebate(address trader, uint256 usdcLost) external returns (uint256 minted);
 
-    /// @notice Registers `amount` USDC of new yield for current stakers. HouseVault only.
+    /// @notice Registers `amount` USDC of new yield, streamed to stakers over the stream period. HouseVault only.
     function notifyYield(uint256 amount) external;
 }

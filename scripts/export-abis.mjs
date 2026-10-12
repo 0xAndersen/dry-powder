@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const contracts = ["PerpEngine", "HouseVault", "RewardToken"];
+const contracts = ["PerpEngine", "EngineLens", "HouseVault", "RewardToken", "PublisherOracle", "TestUSDC"];
 const targets = ["keeper/src/abi.ts", "frontend/src/lib/abi.ts"];
 
 const lower = (name) => name[0].toLowerCase() + name.slice(1);

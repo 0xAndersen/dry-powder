@@ -10,28 +10,46 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
-import {PythStructs} from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 
 import {IHouseVault} from "./interfaces/IHouseVault.sol";
 import {IPerpEngine} from "./interfaces/IPerpEngine.sol";
 import {IRewardToken} from "./interfaces/IRewardToken.sol";
+import {PositionMath} from "./libraries/PositionMath.sol";
+import {PythOracle} from "./PythOracle.sol";
+import {
+    LimitParams,
+    Market,
+    MarketConfig,
+    OpenParams,
+    OraclePrice,
+    Order,
+    OrderType,
+    Position,
+    PriceStatus
+} from "./Types.sol";
 
 /// @title PerpEngine
-/// @notice Synthetic perpetuals engine for Arc. Traders post USDC margin and take leveraged long/short exposure to
-///         Pyth-priced markets; the HouseVault is the counterparty to every position.
+/// @notice Synthetic derivatives engine for Arc. Traders post USDC margin and take leveraged long/short exposure
+///         to Pyth-priced instruments; the HouseVault is the counterparty to every position.
+///
+/// @dev Instruments
+///  A market is a Pyth feed plus three optional switches (see {Market}): a quote feed (crosses such as ETH/BTC),
+///  inversion (JPY/USD from USD/JPY) and an expiry (dated, cash-settled futures). Positions are sized in USDC
+///  notional, so every instrument is fractional down to `minMargin`.
 ///
 /// @dev Conventions
-///  - USDC amounts (margin, size, fees) use 6 decimals. `size` is the position notional in USDC.
-///  - Prices are normalised to 18 decimals. Markets flagged `invert` use the reciprocal of the Pyth feed
-///    (Pyth publishes USD/JPY; the JPY/USD market inverts it).
-///  - One position per trader per market, keyed by `positionKey(trader, priceId)`.
+///  - USDC amounts (margin, size, fees) use 6 decimals; prices use 18.
+///  - One position per trader per market, keyed by `positionKey(trader, marketId)`. The market id is called
+///    `priceId` in structs and events; for a plain perpetual it is the Pyth feed id.
 ///  - Trades that favour the trader execute on the adverse side of Pyth's confidence band (buys at price+conf,
 ///    sells at price-conf). Liquidations and trigger conditions are evaluated at the mid price.
-///  - A position can only be closed (by its trader or by a TP/SL order) against a price published after the
-///    second it was opened in; liquidation has no such restriction.
+///  - A position can only be closed (by its trader or by an order) against a price published after the second
+///    it was opened in; liquidation has no such restriction.
 ///  - A position is liquidatable once price loss plus funding owed reaches 90% of its margin.
-///  - Engine USDC holdings always equal the sum of open position margins plus open order escrows; everything
-///    else is forwarded to the vault, the trader or the keeper in the same transaction.
+///  - Profit on a position is capped at `maxProfitMultiple` times its margin.
+///  - Engine USDC holdings always equal open position margins plus open order escrows plus deferred payments.
+///  - Payments to traders never block: if USDC refuses the transfer (a blocklisted recipient) the amount is
+///    parked in `claimable` for that same address and the position is still removed.
 ///  - Pyth update fees are paid in Arc's native USDC via `msg.value`; any excess is refunded to the caller.
 contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -40,106 +58,14 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
     using EnumerableSet for EnumerableSet.Bytes32Set;
     using EnumerableSet for EnumerableSet.UintSet;
 
-    // ───────────────────────────── Types ─────────────────────────────
-
-    struct Position {
-        uint256 margin; // USDC collateral, 6 decimals
-        uint256 size; // USDC notional, 6 decimals
-        uint256 entryPrice; // 18 decimals
-        bool isLong;
-        bytes32 priceId; // Pyth feed id; also the market id
-        address trader;
-        uint64 openedAt;
-        uint64 tpOrderId; // linked take-profit order, 0 if none
-        uint64 slOrderId; // linked stop-loss order, 0 if none
-        int256 entryFundingIndex;
-    }
-
-    struct Market {
-        bool enabled; // false blocks new positions; closes and liquidations still work
-        bool invert; // use 1/price of the Pyth feed
-        uint16 maxLeverage; // whole multiples, 1..100
-        uint64 lastFundingTime;
-        uint256 maxOiPerSide; // USDC notional cap for each of long and short
-        uint256 skewScale; // USDC notional floor for the skew-ratio denominator
-        uint256 longOi;
-        uint256 shortOi;
-        int256 fundingIndex; // cumulative funding per unit of notional, 1e18; positive means longs have paid
-    }
-
-    enum OrderType {
-        LimitOpen,
-        TakeProfit,
-        StopLoss
-    }
-
-    struct Order {
-        address trader;
-        bytes32 priceId;
-        OrderType orderType;
-        bool isLong;
-        uint64 createdAt;
-        uint256 margin; // LimitOpen only
-        uint256 size; // LimitOpen only
-        uint256 triggerPrice; // 18 decimals
-        uint256 takeProfit; // LimitOpen only: bracket TP to attach on fill, 0 for none
-        uint256 stopLoss; // LimitOpen only: bracket SL to attach on fill, 0 for none
-        uint256 feeBudget; // LimitOpen only: escrowed maximum open fee
-        uint256 executionFee; // keeper fee escrowed per execution (this order and each bracket)
-    }
-
-    struct OpenParams {
-        bytes32 priceId;
-        bool isLong;
-        uint256 margin;
-        uint256 size;
-        uint256 acceptablePrice; // worst execution price accepted; 0 disables the check
-        uint256 takeProfit; // optional bracket trigger, 0 for none
-        uint256 stopLoss; // optional bracket trigger, 0 for none
-    }
-
-    struct LimitParams {
-        bytes32 priceId;
-        bool isLong;
-        uint256 margin;
-        uint256 size;
-        uint256 triggerPrice; // long fills at or below, short fills at or above
-        uint256 takeProfit;
-        uint256 stopLoss;
-    }
-
-    struct PositionView {
-        bytes32 key;
-        Position position;
-        int256 fundingOwed; // positive: the position owes funding
-        uint256 liquidationPrice; // type(uint256).max / 0 when liquidatable at any price
-    }
-
-    struct OraclePrice {
-        uint256 mid;
-        uint256 bid;
-        uint256 ask;
-        uint256 publishTime;
-    }
-
-    enum PriceStatus {
-        Ok,
-        Unavailable,
-        Stale,
-        Invalid,
-        ConfidenceTooWide
-    }
-
     // ───────────────────────────── Constants ─────────────────────────────
 
     uint256 internal constant BPS = 10_000;
-    uint256 internal constant PRICE_PRECISION = 1e18;
-    int256 internal constant FUNDING_PRECISION = 1e18;
 
     /// @notice Hard ceiling on per-market leverage.
     uint256 public constant MAX_LEVERAGE = 100;
     /// @notice A position is liquidated once its loss (price move plus funding) reaches this share of margin.
-    uint256 public constant LIQUIDATION_THRESHOLD_BPS = 9_000;
+    uint256 public constant LIQUIDATION_THRESHOLD_BPS = PositionMath.LIQUIDATION_THRESHOLD_BPS;
     /// @notice Share of the liquidated margin paid to the liquidator; the remainder goes to the vault.
     uint256 public constant LIQUIDATOR_FEE_BPS = 200;
 
@@ -150,15 +76,16 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
     uint256 public constant MAX_EXECUTION_FEE = 10e6;
     uint256 public constant MAX_PRICE_AGE = 60;
     uint256 public constant MAX_CONF_BPS = 500;
-    /// @notice Bounds for `maxOiToNavBps` (0.5x to 10x of NAV), so the reserve can neither vanish nor be
-    ///         inflated to freeze every withdrawal.
+    /// @notice Bounds for `maxOiToNavBps` (0.5x to 10x of NAV).
     uint256 public constant MIN_OI_TO_NAV_BPS = 5_000;
     uint256 public constant MAX_OI_TO_NAV_BPS = 100_000;
+    uint256 public constant MAX_MARKETS = 64;
 
     // ───────────────────────────── Immutables ─────────────────────────────
 
     IERC20 public immutable usdc;
     IPyth public immutable pyth;
+    PythOracle public immutable oracle;
     IHouseVault public immutable vault;
     IRewardToken public immutable rewardToken;
 
@@ -180,10 +107,12 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
     uint256 public maxOiToNavBps = 30_000;
     /// @notice Minimum position margin.
     uint256 public minMargin = 5e6;
+    /// @notice A position's profit is capped at this multiple of its margin.
+    uint256 public maxProfitMultiple = 10;
 
     // ───────────────────────────── State ─────────────────────────────
 
-    mapping(bytes32 priceId => Market) public markets;
+    mapping(bytes32 marketId => Market) private _markets;
     bytes32[] private _marketIds;
 
     mapping(bytes32 key => Position) private _positions;
@@ -196,15 +125,22 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
     /// @notice Sum of long and short notional across all markets.
     uint256 public totalOpenInterest;
 
+    /// @notice USDC owed to `account` whose transfer was refused; collect with {claim}.
+    mapping(address account => uint256) public claimable;
+    uint256 public totalClaimable;
+
     // ───────────────────────────── Events ─────────────────────────────
 
     event MarketConfigured(
         bytes32 indexed priceId, bool enabled, bool invert, uint16 maxLeverage, uint256 maxOiPerSide, uint256 skewScale
     );
-    event FeeParamsSet(
-        uint256 baseFeeBps, uint256 maxSkewFeeBps, uint256 maxFundingRatePerSecond, uint256 executionFee
+    event MarketListed(
+        bytes32 indexed priceId, string symbol, bytes32 feedId, bytes32 quoteFeedId, bool invert, uint64 expiry
     );
+    event MarketSettled(bytes32 indexed priceId, uint256 settlementPrice);
+    event FeeParamsSet(uint256 baseFeeBps, uint256 maxSkewFeeBps, uint256 maxFundingRatePerSecond, uint256 executionFee);
     event RiskParamsSet(uint256 maxPriceAge, uint256 maxConfBps, uint256 maxOiToNavBps, uint256 minMargin);
+    event MaxProfitMultipleSet(uint256 maxProfitMultiple);
     event PositionOpened(
         bytes32 indexed key,
         address indexed trader,
@@ -247,6 +183,8 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
     event OrderUpdated(uint256 indexed orderId, uint256 triggerPrice);
     event OrderCancelled(uint256 indexed orderId, address indexed trader);
     event OrderExecuted(uint256 indexed orderId, address indexed trader, address indexed keeper, uint256 price);
+    event PaymentDeferred(address indexed account, uint256 amount);
+    event Claimed(address indexed account, uint256 amount);
 
     // ───────────────────────────── Errors ─────────────────────────────
 
@@ -255,6 +193,10 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
     error MarketExists();
     error MarketNotFound();
     error MarketDisabled();
+    error MarketExpired();
+    error MarketNotExpired();
+    error MarketAlreadySettled();
+    error PriceBeforeExpiry();
     error MarginTooLow();
     error LeverageOutOfRange();
     error PositionExists();
@@ -271,6 +213,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
     error PriceBeforeOrder();
     error PriceNotAfterOpen();
     error NothingToLiquidate();
+    error NothingToClaim();
     error InsufficientOracleFee();
     error RefundFailed();
     error OraclePriceUnavailable();
@@ -280,15 +223,16 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
 
     // ───────────────────────────── Constructor ─────────────────────────────
 
-    constructor(IERC20 usdc_, IPyth pyth_, IHouseVault vault_, IRewardToken rewardToken_, address owner_)
+    constructor(IERC20 usdc_, PythOracle oracle_, IHouseVault vault_, IRewardToken rewardToken_, address owner_)
         Ownable(owner_)
     {
         if (
-            address(usdc_) == address(0) || address(pyth_) == address(0) || address(vault_) == address(0)
+            address(usdc_) == address(0) || address(oracle_) == address(0) || address(vault_) == address(0)
                 || address(rewardToken_) == address(0)
         ) revert ZeroAddress();
         usdc = usdc_;
-        pyth = pyth_;
+        oracle = oracle_;
+        pyth = oracle_.pyth();
         vault = vault_;
         rewardToken = rewardToken_;
         // The vault pulls losses and fees from the engine.
@@ -297,38 +241,45 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
 
     // ───────────────────────────── Admin ─────────────────────────────
 
-    /// @notice Lists a new market for Pyth feed `priceId`.
-    function addMarket(bytes32 priceId, bool invert, uint16 maxLeverage, uint256 maxOiPerSide, uint256 skewScale)
-        external
-        onlyOwner
-    {
-        Market storage m = markets[priceId];
+    /// @notice Lists a new instrument under `marketId`.
+    /// @dev By convention a plain perpetual uses its Pyth feed id as market id; crosses and dated futures use
+    ///      any other unique id (the deploy script hashes the symbol).
+    function addMarket(bytes32 marketId, MarketConfig calldata cfg) external onlyOwner {
+        Market storage m = _markets[marketId];
         if (m.lastFundingTime != 0) revert MarketExists();
-        if (priceId == bytes32(0)) revert InvalidParam();
-        _checkMarketParams(maxLeverage, skewScale);
+        if (
+            marketId == bytes32(0) || cfg.feedId == bytes32(0) || cfg.feedId == cfg.quoteFeedId
+                || (cfg.expiry != 0 && cfg.expiry <= block.timestamp) || _marketIds.length == MAX_MARKETS
+        ) revert InvalidParam();
+        _checkMarketParams(cfg.maxLeverage, cfg.skewScale);
         m.enabled = true;
-        m.invert = invert;
-        m.maxLeverage = maxLeverage;
+        m.invert = cfg.invert;
+        m.maxLeverage = cfg.maxLeverage;
         m.lastFundingTime = uint64(block.timestamp);
-        m.maxOiPerSide = maxOiPerSide;
-        m.skewScale = skewScale;
-        _marketIds.push(priceId);
-        emit MarketConfigured(priceId, true, invert, maxLeverage, maxOiPerSide, skewScale);
+        m.expiry = cfg.expiry;
+        m.feedId = cfg.feedId;
+        m.quoteFeedId = cfg.quoteFeedId;
+        m.maxOiPerSide = cfg.maxOiPerSide;
+        m.skewScale = cfg.skewScale;
+        m.symbol = cfg.symbol;
+        _marketIds.push(marketId);
+        emit MarketListed(marketId, cfg.symbol, cfg.feedId, cfg.quoteFeedId, cfg.invert, cfg.expiry);
+        emit MarketConfigured(marketId, true, cfg.invert, cfg.maxLeverage, cfg.maxOiPerSide, cfg.skewScale);
     }
 
     /// @notice Updates a market's risk parameters. Disabling only blocks new positions.
-    function setMarket(bytes32 priceId, bool enabled, uint16 maxLeverage, uint256 maxOiPerSide, uint256 skewScale)
+    function setMarket(bytes32 marketId, bool enabled, uint16 maxLeverage, uint256 maxOiPerSide, uint256 skewScale)
         external
         onlyOwner
     {
-        Market storage m = _existingMarket(priceId);
+        Market storage m = _existingMarket(marketId);
         _checkMarketParams(maxLeverage, skewScale);
         _accrueFunding(m); // skewScale feeds the funding rate; settle at the old value first
         m.enabled = enabled;
         m.maxLeverage = maxLeverage;
         m.maxOiPerSide = maxOiPerSide;
         m.skewScale = skewScale;
-        emit MarketConfigured(priceId, enabled, m.invert, maxLeverage, maxOiPerSide, skewScale);
+        emit MarketConfigured(marketId, enabled, m.invert, maxLeverage, maxOiPerSide, skewScale);
     }
 
     function setFeeParams(
@@ -344,7 +295,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         // Settle funding at the old rate before it changes.
         uint256 n = _marketIds.length;
         for (uint256 i; i < n; ++i) {
-            _accrueFunding(markets[_marketIds[i]]);
+            _accrueFunding(_markets[_marketIds[i]]);
         }
         baseFeeBps = baseFeeBps_;
         maxSkewFeeBps = maxSkewFeeBps_;
@@ -368,6 +319,13 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         emit RiskParamsSet(maxPriceAge_, maxConfBps_, maxOiToNavBps_, minMargin_);
     }
 
+    /// @notice Sets the profit cap, as a multiple of margin (1 to 100).
+    function setMaxProfitMultiple(uint256 maxProfitMultiple_) external onlyOwner {
+        if (maxProfitMultiple_ == 0 || maxProfitMultiple_ > 100) revert InvalidParam();
+        maxProfitMultiple = maxProfitMultiple_;
+        emit MaxProfitMultipleSet(maxProfitMultiple_);
+    }
+
     /// @notice Blocks new positions and new/filled limit orders. Closes, triggers and liquidations keep working.
     function pause() external onlyOwner {
         _pause();
@@ -381,7 +339,8 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
 
     /// @notice Opens a position at the current Pyth price, optionally with take-profit / stop-loss brackets.
     /// @dev The caller pays `margin + open fee + executionFee per bracket` in USDC (approve first), plus the Pyth
-    ///      update fee in native value.
+    ///      update fee in native value. Callers that cannot land a transaction within `maxPriceAge` of fetching
+    ///      a price (people using wallets) should place a marketable limit order with {createLimitOrder} instead.
     /// @param p See {OpenParams}.
     /// @param priceUpdate Pyth update data from Hermes. May be empty if a fresh enough price is already on-chain.
     function openPosition(OpenParams calldata p, bytes[] calldata priceUpdate)
@@ -395,7 +354,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         Market storage m = _existingMarket(p.priceId);
         _validateTrade(m, p.margin, p.size);
 
-        OraclePrice memory px = _readPrice(p.priceId, m.invert);
+        OraclePrice memory px = _readPrice(m);
         uint256 price = p.isLong ? px.ask : px.bid;
         if (p.acceptablePrice != 0 && (p.isLong ? price > p.acceptablePrice : price < p.acceptablePrice)) {
             revert SlippageExceeded();
@@ -411,35 +370,46 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         _attachBrackets(key, p.takeProfit, p.stopLoss, execFee);
     }
 
-    /// @notice Closes the caller's position in `priceId` at the current Pyth price.
+    /// @notice Closes the caller's position in `marketId` at the current price (or at the settlement price of a
+    ///         settled dated market).
     /// @param acceptablePrice Worst execution price accepted (minimum for longs, maximum for shorts); 0 disables.
-    function closePosition(bytes32 priceId, uint256 acceptablePrice, bytes[] calldata priceUpdate)
+    function closePosition(bytes32 marketId, uint256 acceptablePrice, bytes[] calldata priceUpdate)
         external
         payable
         nonReentrant
     {
         _updateOracle(priceUpdate);
-        bytes32 key = positionKey(msg.sender, priceId);
-        Position storage pos = _positions[key];
+        bytes32 key = positionKey(msg.sender, marketId);
+        Position memory pos = _positions[key];
         if (pos.trader == address(0)) revert PositionNotFound();
-        Market storage m = markets[priceId];
+        Market storage m = _markets[marketId];
 
-        OraclePrice memory px = _readPrice(priceId, m.invert);
-        _requirePriceAfterOpen(pos, px);
+        OraclePrice memory px = _readPrice(m);
+        if (px.publishTime <= pos.openedAt) revert PriceNotAfterOpen();
         _accrueFunding(m);
-        if (_isLiquidatable(pos, px.mid, m.fundingIndex)) revert PositionLiquidatable();
+        if (PositionMath.isLiquidatable(pos, px.mid, m.fundingIndex)) revert PositionLiquidatable();
 
-        bool isLong = pos.isLong;
-        uint256 price = isLong ? px.bid : px.ask;
-        if (acceptablePrice != 0 && (isLong ? price < acceptablePrice : price > acceptablePrice)) {
+        uint256 price = pos.isLong ? px.bid : px.ask;
+        if (acceptablePrice != 0 && (pos.isLong ? price < acceptablePrice : price > acceptablePrice)) {
             revert SlippageExceeded();
         }
-        _close(key, m, price);
+        _close(key, pos, m, price);
+    }
+
+    /// @notice Collects USDC that could not be delivered to the caller earlier.
+    function claim() external nonReentrant {
+        uint256 amount = claimable[msg.sender];
+        if (amount == 0) revert NothingToClaim();
+        claimable[msg.sender] = 0;
+        totalClaimable -= amount;
+        emit Claimed(msg.sender, amount);
+        usdc.safeTransfer(msg.sender, amount);
     }
 
     // ───────────────────────────── Orders ─────────────────────────────
 
-    /// @notice Places a limit order to open a position when price reaches `triggerPrice`.
+    /// @notice Places an order to open a position when price reaches `triggerPrice`. With a trigger at or beyond
+    ///         the current price it is a market order executed by a keeper against the next price.
     /// @dev Escrows margin, the maximum possible open fee and one execution fee for the order plus one per
     ///      bracket. Unused fee budget is refunded on fill; everything is refunded on cancel.
     function createLimitOrder(LimitParams calldata p) external nonReentrant whenNotPaused returns (uint256 orderId) {
@@ -474,22 +444,24 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         );
     }
 
-    /// @notice Sets (or moves) the take-profit or stop-loss on the caller's open position in `priceId`.
-    /// @dev A position has at most one order of each type. Creating one escrows `executionFee`; moving an
-    ///      existing one is free. Take-profit fires when the mid price is at or beyond the trigger in the
-    ///      position's favour, stop-loss when it is at or beyond the trigger against it.
-    function setTriggerOrder(bytes32 priceId, OrderType orderType, uint256 triggerPrice)
+    /// @notice Sets (or moves) an order attached to the caller's open position in `marketId`.
+    /// @dev A position has at most one order of each type; creating one escrows `executionFee`, moving it is free.
+    ///      - TakeProfit fires when the mid price is at or beyond `triggerPrice` in the position's favour.
+    ///      - StopLoss fires when it is at or beyond `triggerPrice` against it.
+    ///      - Close is a market close executed by a keeper against the next price; `triggerPrice` is the worst
+    ///        acceptable execution price (0 for none).
+    function setTriggerOrder(bytes32 marketId, OrderType orderType, uint256 triggerPrice)
         external
         nonReentrant
         returns (uint256 orderId)
     {
         if (orderType == OrderType.LimitOpen) revert NotTriggerOrderType();
-        if (triggerPrice == 0) revert InvalidTrigger();
-        bytes32 key = positionKey(msg.sender, priceId);
+        if (triggerPrice == 0 && orderType != OrderType.Close) revert InvalidTrigger();
+        bytes32 key = positionKey(msg.sender, marketId);
         Position storage pos = _positions[key];
         if (pos.trader == address(0)) revert PositionNotFound();
 
-        orderId = orderType == OrderType.TakeProfit ? pos.tpOrderId : pos.slOrderId;
+        orderId = _link(pos, orderType);
         if (orderId != 0) {
             Order storage o = _orders[orderId];
             o.triggerPrice = triggerPrice;
@@ -513,16 +485,14 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
             uint256 brackets = (o.takeProfit != 0 ? 1 : 0) + (o.stopLoss != 0 ? 1 : 0);
             refund = o.margin + o.feeBudget + (1 + brackets) * o.executionFee;
         } else {
-            Position storage pos = _positions[positionKey(o.trader, o.priceId)];
-            if (o.orderType == OrderType.TakeProfit) pos.tpOrderId = 0;
-            else pos.slOrderId = 0;
+            _setLink(_positions[positionKey(o.trader, o.priceId)], o.orderType, 0);
             refund = o.executionFee;
         }
         _removeOrder(orderId, o.trader);
-        if (refund != 0) usdc.safeTransfer(o.trader, refund);
+        _pay(o.trader, refund);
     }
 
-    /// @notice Executes order `orderId` if its trigger is met. Anyone may call; the caller earns the order's
+    /// @notice Executes order `orderId` if its condition is met. Anyone may call; the caller earns the order's
     ///         execution fee.
     /// @dev The price used must have been published at or after the order was created or last moved, so an
     ///      order can never be filled against a price that predates it.
@@ -530,9 +500,9 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         _updateOracle(priceUpdate);
         Order memory o = _orders[orderId];
         if (o.trader == address(0)) revert OrderNotFound();
-        Market storage m = markets[o.priceId];
+        Market storage m = _markets[o.priceId];
 
-        OraclePrice memory px = _readPrice(o.priceId, m.invert);
+        OraclePrice memory px = _readPrice(m);
         if (px.publishTime < o.createdAt) revert PriceBeforeOrder();
 
         uint256 price;
@@ -545,7 +515,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         if (o.executionFee != 0) usdc.safeTransfer(msg.sender, o.executionFee);
     }
 
-    // ───────────────────────────── Liquidations ─────────────────────────────
+    // ───────────────────────────── Liquidations and settlement ─────────────────────────────
 
     /// @notice Liquidates every liquidatable position of `trader` using prices already on-chain.
     /// @dev Reverts with {NothingToLiquidate} if none qualifies (including when prices are stale).
@@ -580,23 +550,82 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         if (liquidated == 0) revert NothingToLiquidate();
     }
 
+    /// @notice Fixes the settlement price of a dated market once it has expired. Anyone may call.
+    /// @dev The settlement price is the first usable mid price submitted at or after expiry.
+    function settleMarket(bytes32 marketId, bytes[] calldata priceUpdate) external payable nonReentrant {
+        _updateOracle(priceUpdate);
+        Market storage m = _existingMarket(marketId);
+        if (m.expiry == 0 || block.timestamp < m.expiry) revert MarketNotExpired();
+        if (m.settlementPrice != 0) revert MarketAlreadySettled();
+        OraclePrice memory px = _readPrice(m);
+        if (px.publishTime < m.expiry) revert PriceBeforeExpiry();
+        _accrueFunding(m);
+        m.settlementPrice = px.mid;
+        emit MarketSettled(marketId, px.mid);
+    }
+
+    /// @notice Closes positions in settled dated markets at the settlement price, liquidating those that are
+    ///         past the threshold. Anyone may call; entries that do not qualify are skipped.
+    function settlePositions(bytes32[] calldata keys) external nonReentrant returns (uint256 settled) {
+        uint256 n = keys.length;
+        for (uint256 i; i < n; ++i) {
+            bytes32 key = keys[i];
+            Position memory pos = _positions[key];
+            if (pos.trader == address(0)) continue;
+            Market storage m = _markets[pos.priceId];
+            uint256 price = m.settlementPrice;
+            if (price == 0) continue;
+            if (!_tryLiquidate(key)) _close(key, pos, m, price);
+            ++settled;
+        }
+    }
+
     // ───────────────────────────── Views ─────────────────────────────
 
-    function positionKey(address trader, bytes32 priceId) public pure returns (bytes32) {
-        return keccak256(abi.encode(trader, priceId));
+    function positionKey(address trader, bytes32 marketId) public pure returns (bytes32) {
+        return keccak256(abi.encode(trader, marketId));
     }
 
     /// @inheritdoc IPerpEngine
+    /// @dev Reserves against net exposure: a book that is long and short in equal size needs no backing, so
+    ///      matched open interest cannot be used to lock LP withdrawals.
     function reservedLiquidity() external view returns (uint256) {
-        return Math.mulDiv(totalOpenInterest, BPS, maxOiToNavBps, Math.Rounding.Ceil);
+        uint256 skew;
+        uint256 n = _marketIds.length;
+        for (uint256 i; i < n; ++i) {
+            Market storage m = _markets[_marketIds[i]];
+            skew += _absDiff(m.longOi, m.shortOi);
+        }
+        return Math.mulDiv(skew, BPS, maxOiToNavBps, Math.Rounding.Ceil);
+    }
+
+    /// @inheritdoc IPerpEngine
+    /// @dev Uses the last price Pyth holds for each market regardless of age, and skips markets without one.
+    ///      It ignores funding, the profit cap and the fact that losses stop at margin, so it is an estimate;
+    ///      the vault only ever uses it on the conservative side.
+    function unrealizedTraderPnl() external view returns (int256 total) {
+        uint256 n = _marketIds.length;
+        for (uint256 i; i < n; ++i) {
+            Market storage m = _markets[_marketIds[i]];
+            if (m.longOi == 0 && m.shortOi == 0) continue;
+            (PriceStatus status, OraclePrice memory px) = _peekPrice(m, type(uint256).max);
+            if (status != PriceStatus.Ok) continue;
+            uint256 longValue = Math.mulDiv(m.longUnits, px.mid, PositionMath.UNIT_PRECISION);
+            uint256 shortValue = Math.mulDiv(m.shortUnits, px.mid, PositionMath.UNIT_PRECISION);
+            total += longValue.toInt256() - m.longOi.toInt256() + m.shortOi.toInt256() - shortValue.toInt256();
+        }
     }
 
     function getMarketIds() external view returns (bytes32[] memory) {
         return _marketIds;
     }
 
-    function getPosition(address trader, bytes32 priceId) external view returns (Position memory) {
-        return _positions[positionKey(trader, priceId)];
+    function getMarket(bytes32 marketId) external view returns (Market memory) {
+        return _markets[marketId];
+    }
+
+    function getPosition(address trader, bytes32 marketId) external view returns (Position memory) {
+        return _positions[positionKey(trader, marketId)];
     }
 
     function getPositionByKey(bytes32 key) external view returns (Position memory) {
@@ -607,49 +636,15 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         return _positionKeys.length();
     }
 
-    /// @notice Pages through all open positions. Ordering is not stable across state changes.
-    function getPositions(uint256 offset, uint256 limit) external view returns (PositionView[] memory out) {
+    /// @notice Pages through the keys of all open positions. Ordering is not stable across state changes.
+    function positionKeys(uint256 offset, uint256 limit) external view returns (bytes32[] memory out) {
         uint256 total = _positionKeys.length();
         if (offset >= total) return out;
         uint256 n = Math.min(limit, total - offset);
-        out = new PositionView[](n);
+        out = new bytes32[](n);
         for (uint256 i; i < n; ++i) {
-            out[i] = _positionView(_positionKeys.at(offset + i));
+            out[i] = _positionKeys.at(offset + i);
         }
-    }
-
-    /// @notice All open positions of `trader`, one per market at most.
-    function getTraderPositions(address trader) external view returns (PositionView[] memory out) {
-        uint256 n = _marketIds.length;
-        PositionView[] memory tmp = new PositionView[](n);
-        uint256 count;
-        for (uint256 i; i < n; ++i) {
-            bytes32 key = positionKey(trader, _marketIds[i]);
-            if (_positions[key].trader != address(0)) tmp[count++] = _positionView(key);
-        }
-        out = new PositionView[](count);
-        for (uint256 i; i < count; ++i) {
-            out[i] = tmp[i];
-        }
-    }
-
-    /// @notice Values a position at an arbitrary `price` (18 decimals).
-    /// @return pnl Price PnL minus funding owed, before the close fee.
-    /// @return fundingOwed Funding the position owes (negative: is owed).
-    /// @return liquidationPrice Mid price at which the position becomes liquidatable.
-    /// @return liquidatable Whether it would be liquidatable at `price`.
-    function getPositionState(bytes32 key, uint256 price)
-        external
-        view
-        returns (int256 pnl, int256 fundingOwed, uint256 liquidationPrice, bool liquidatable)
-    {
-        Position storage pos = _positions[key];
-        if (pos.trader == address(0)) revert PositionNotFound();
-        int256 index = _currentFundingIndex(markets[pos.priceId]);
-        fundingOwed = _fundingOwed(pos, index);
-        pnl = _pricePnl(pos, price) - fundingOwed;
-        liquidationPrice = _liquidationPrice(pos, index);
-        liquidatable = _isLiquidatable(pos, price, index);
     }
 
     function getOrder(uint256 orderId) external view returns (Order memory) {
@@ -660,64 +655,42 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         return _orderIds.length();
     }
 
-    /// @notice Pages through all open orders. Ordering is not stable across state changes.
-    function getOrders(uint256 offset, uint256 limit) external view returns (uint256[] memory ids, Order[] memory out) {
+    /// @notice Pages through the ids of all open orders. Ordering is not stable across state changes.
+    function orderIds(uint256 offset, uint256 limit) external view returns (uint256[] memory out) {
         uint256 total = _orderIds.length();
-        if (offset >= total) return (ids, out);
+        if (offset >= total) return out;
         uint256 n = Math.min(limit, total - offset);
-        ids = new uint256[](n);
-        out = new Order[](n);
+        out = new uint256[](n);
         for (uint256 i; i < n; ++i) {
-            uint256 id = _orderIds.at(offset + i);
-            ids[i] = id;
-            out[i] = _orders[id];
-        }
-    }
-
-    /// @notice All open orders of `trader`. Linear in the number of open orders; intended for eth_call.
-    function getTraderOrders(address trader) external view returns (uint256[] memory ids, Order[] memory out) {
-        uint256 total = _orderIds.length();
-        uint256 count;
-        for (uint256 i; i < total; ++i) {
-            if (_orders[_orderIds.at(i)].trader == trader) ++count;
-        }
-        ids = new uint256[](count);
-        out = new Order[](count);
-        uint256 j;
-        for (uint256 i; j < count; ++i) {
-            uint256 id = _orderIds.at(i);
-            if (_orders[id].trader == trader) {
-                ids[j] = id;
-                out[j++] = _orders[id];
-            }
+            out[i] = _orderIds.at(offset + i);
         }
     }
 
     /// @notice Open fee a trade of `size` on the given side would pay right now.
-    function quoteOpenFee(bytes32 priceId, uint256 size, bool isLong) external view returns (uint256) {
-        return _openFee(_existingMarket(priceId), size, isLong);
+    function quoteOpenFee(bytes32 marketId, uint256 size, bool isLong) external view returns (uint256) {
+        return _openFee(_existingMarket(marketId), size, isLong);
     }
 
     /// @notice Current funding rate per second per unit of notional (1e18). Positive: longs pay shorts.
-    function fundingRate(bytes32 priceId) external view returns (int256) {
-        return _fundingRate(_existingMarket(priceId));
+    function fundingRate(bytes32 marketId) external view returns (int256) {
+        return _fundingRate(_existingMarket(marketId));
     }
 
     /// @notice Funding index including funding accrued since the last on-chain update.
-    function currentFundingIndex(bytes32 priceId) external view returns (int256) {
-        return _currentFundingIndex(_existingMarket(priceId));
+    function currentFundingIndex(bytes32 marketId) external view returns (int256) {
+        return _currentFundingIndex(_existingMarket(marketId));
     }
 
-    /// @notice Validated on-chain price of a market; reverts if Pyth has no usable price.
-    function getPrice(bytes32 priceId) external view returns (OraclePrice memory) {
-        return _readPrice(priceId, _existingMarket(priceId).invert);
+    /// @notice Validated on-chain price of a market; reverts if there is no usable price.
+    function getPrice(bytes32 marketId) external view returns (OraclePrice memory) {
+        return _readPrice(_existingMarket(marketId));
     }
 
     // ───────────────────────────── Internal: trading ─────────────────────────────
 
     function _open(
         address trader,
-        bytes32 priceId,
+        bytes32 marketId,
         Market storage m,
         bool isLong,
         uint256 margin,
@@ -725,11 +698,18 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 price,
         uint256 fee
     ) private returns (bytes32 key) {
-        key = positionKey(trader, priceId);
+        key = positionKey(trader, marketId);
         if (_positions[key].trader != address(0)) revert PositionExists();
 
         _accrueFunding(m);
-        uint256 sideOi = isLong ? (m.longOi += size) : (m.shortOi += size);
+        uint256 sideOi;
+        if (isLong) {
+            sideOi = (m.longOi += size);
+            m.longUnits += PositionMath.units(size, price);
+        } else {
+            sideOi = (m.shortOi += size);
+            m.shortUnits += PositionMath.units(size, price);
+        }
         if (sideOi > m.maxOiPerSide) revert MarketOiCapExceeded();
         uint256 totalOi = (totalOpenInterest += size);
         if (totalOi * BPS > vault.totalAssets() * maxOiToNavBps) revert VaultOiCapExceeded();
@@ -739,46 +719,46 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
             size: size,
             entryPrice: price,
             isLong: isLong,
-            priceId: priceId,
+            priceId: marketId,
             trader: trader,
             openedAt: uint64(block.timestamp),
             tpOrderId: 0,
             slOrderId: 0,
+            closeOrderId: 0,
             entryFundingIndex: m.fundingIndex
         });
         _positionKeys.add(key);
-        emit PositionOpened(key, trader, priceId, isLong, margin, size, price, fee);
+        emit PositionOpened(key, trader, marketId, isLong, margin, size, price, fee);
 
         if (fee != 0) vault.receiveFees(fee);
     }
 
-    /// @dev Settles and removes a position at `price`. Funding must already be accrued for `m`.
-    function _close(bytes32 key, Market storage m, uint256 price) private {
-        Position memory pos = _positions[key];
-        int256 pnl = _pricePnl(_positions[key], price) - _fundingOwed(_positions[key], m.fundingIndex);
+    /// @dev Settles and removes position `key` (a copy of which is `pos`) at `price`. Funding must already be
+    ///      accrued for `m`.
+    function _close(bytes32 key, Position memory pos, Market storage m, uint256 price) private {
+        int256 pnl = PositionMath.pricePnl(pos, price) - PositionMath.fundingOwed(pos, m.fundingIndex);
+        int256 cap = (pos.margin * maxProfitMultiple).toInt256();
+        if (pnl > cap) pnl = cap;
         uint256 refund = _removePosition(key, pos, m);
         uint256 fee = Math.mulDiv(pos.size, baseFeeBps, BPS, Math.Rounding.Ceil);
 
-        uint256 fromEngine; // USDC returned to the trader out of margin and order escrow
-        uint256 fromVault; // profit paid by the vault
+        uint256 payout; // margin returned plus profit received from the vault
         if (pnl >= 0) {
             fee = Math.min(fee, pos.margin);
-            fromEngine = pos.margin - fee;
+            payout = pos.margin - fee;
             if (fee != 0) vault.receiveFees(fee);
-            if (pnl != 0) fromVault = vault.payoutTraderProfit(pos.trader, pnl.toUint256());
+            if (pnl != 0) payout += vault.payoutTraderProfit(pos.trader, pnl.toUint256());
         } else {
             uint256 loss = Math.min((-pnl).toUint256(), pos.margin);
             uint256 remaining = pos.margin - loss;
             fee = Math.min(fee, remaining);
-            fromEngine = remaining - fee;
+            payout = remaining - fee;
             vault.receiveTraderLoss(pos.trader, loss);
             rewardToken.mintLossRebate(pos.trader, loss);
             if (fee != 0) vault.receiveFees(fee);
         }
-        emit PositionClosed(key, pos.trader, pos.priceId, price, pnl, fee, fromEngine + fromVault);
-
-        fromEngine += refund;
-        if (fromEngine != 0) usdc.safeTransfer(pos.trader, fromEngine);
+        emit PositionClosed(key, pos.trader, pos.priceId, price, pnl, fee, payout);
+        _pay(pos.trader, payout + refund);
     }
 
     function _fillLimit(uint256 orderId, Order memory o, Market storage m, OraclePrice memory px)
@@ -797,8 +777,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 fee = Math.min(_openFee(m, o.size, o.isLong), o.feeBudget);
         bytes32 key = _open(o.trader, o.priceId, m, o.isLong, o.margin, o.size, price, fee);
         _attachBrackets(key, o.takeProfit, o.stopLoss, o.executionFee);
-
-        if (o.feeBudget > fee) usdc.safeTransfer(o.trader, o.feeBudget - fee);
+        _pay(o.trader, o.feeBudget - fee);
     }
 
     function _fillTrigger(uint256 orderId, Order memory o, Market storage m, OraclePrice memory px)
@@ -806,26 +785,29 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         returns (uint256 price)
     {
         bytes32 key = positionKey(o.trader, o.priceId);
-        Position storage pos = _positions[key];
-        _requirePriceAfterOpen(pos, px);
+        Position memory pos = _positions[key];
+        if (px.publishTime <= pos.openedAt) revert PriceNotAfterOpen();
         _accrueFunding(m);
-        // Past the liquidation threshold the position belongs to liquidators, not to its stop-loss.
-        if (_isLiquidatable(pos, px.mid, m.fundingIndex)) revert PositionLiquidatable();
+        // Past the liquidation threshold the position belongs to liquidators, not to its orders.
+        if (PositionMath.isLiquidatable(pos, px.mid, m.fundingIndex)) revert PositionLiquidatable();
 
-        bool isLong = pos.isLong;
-        bool priceAtOrAbove = px.mid >= o.triggerPrice;
-        bool priceAtOrBelow = px.mid <= o.triggerPrice;
-        if (o.orderType == OrderType.TakeProfit) {
-            if (isLong ? !priceAtOrAbove : !priceAtOrBelow) revert TriggerNotMet();
-            pos.tpOrderId = 0;
+        price = pos.isLong ? px.bid : px.ask;
+        bool met;
+        if (o.orderType == OrderType.Close) {
+            met = o.triggerPrice == 0 || (pos.isLong ? price >= o.triggerPrice : price <= o.triggerPrice);
         } else {
-            if (isLong ? !priceAtOrBelow : !priceAtOrAbove) revert TriggerNotMet();
-            pos.slOrderId = 0;
+            // Take-profit wants the price at or beyond the trigger in the position's favour, stop-loss against.
+            bool wantsHigher = pos.isLong == (o.orderType == OrderType.TakeProfit);
+            met = wantsHigher ? px.mid >= o.triggerPrice : px.mid <= o.triggerPrice;
         }
-        _removeOrder(orderId, address(0));
+        if (!met) revert TriggerNotMet();
 
-        price = isLong ? px.bid : px.ask;
-        _close(key, m, price);
+        // Unlink it from the copy `_close` works on, so its fee goes to the keeper, not back to the trader.
+        if (o.orderType == OrderType.TakeProfit) pos.tpOrderId = 0;
+        else if (o.orderType == OrderType.StopLoss) pos.slOrderId = 0;
+        else pos.closeOrderId = 0;
+        _removeOrder(orderId, address(0));
+        _close(key, pos, m, price);
     }
 
     function _liquidateTrader(address trader) private returns (uint256 liquidated) {
@@ -841,14 +823,13 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
     function _tryLiquidate(bytes32 key) private returns (bool) {
         Position memory pos = _positions[key];
         if (pos.trader == address(0)) return false;
-        Market storage m = markets[pos.priceId];
-        (PriceStatus status, OraclePrice memory px) = _peekPrice(pos.priceId, m.invert);
+        Market storage m = _markets[pos.priceId];
+        (PriceStatus status, OraclePrice memory px) = _peekPrice(m, maxPriceAge);
         if (status != PriceStatus.Ok) return false;
         _accrueFunding(m);
-        if (!_isLiquidatable(_positions[key], px.mid, m.fundingIndex)) return false;
+        if (!PositionMath.isLiquidatable(pos, px.mid, m.fundingIndex)) return false;
 
-        // Escrow of the position's bracket orders is not returned to the trader here: a transfer to a
-        // blocklisted trader would revert and make the position unliquidatable. It goes to the vault as a fee.
+        // Escrow of the position's orders is not returned to the trader on liquidation; it goes to the vault.
         uint256 orphanedEscrow = _removePosition(key, pos, m);
         uint256 liquidatorFee = (pos.margin * LIQUIDATOR_FEE_BPS) / BPS;
         uint256 toVault = pos.margin - liquidatorFee;
@@ -861,23 +842,29 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         return true;
     }
 
-    /// @dev Deletes the position, releases its open interest and cancels its bracket orders.
-    /// @return escrow Execution fees that were escrowed for the cancelled bracket orders.
+    /// @dev Deletes the position, releases its open interest and cancels its linked orders.
+    /// @return escrow Execution fees that were escrowed for the cancelled orders.
     function _removePosition(bytes32 key, Position memory pos, Market storage m) private returns (uint256 escrow) {
-        if (pos.isLong) m.longOi -= pos.size;
-        else m.shortOi -= pos.size;
+        uint256 units = PositionMath.units(pos.size, pos.entryPrice);
+        if (pos.isLong) {
+            m.longOi -= pos.size;
+            m.longUnits -= units;
+        } else {
+            m.shortOi -= pos.size;
+            m.shortUnits -= units;
+        }
         totalOpenInterest -= pos.size;
 
-        if (pos.tpOrderId != 0) {
-            escrow += _orders[pos.tpOrderId].executionFee;
-            _removeOrder(pos.tpOrderId, pos.trader);
-        }
-        if (pos.slOrderId != 0) {
-            escrow += _orders[pos.slOrderId].executionFee;
-            _removeOrder(pos.slOrderId, pos.trader);
-        }
+        escrow = _cancelLinked(pos.tpOrderId, pos.trader) + _cancelLinked(pos.slOrderId, pos.trader)
+            + _cancelLinked(pos.closeOrderId, pos.trader);
         delete _positions[key];
         _positionKeys.remove(key);
+    }
+
+    function _cancelLinked(uint64 orderId, address trader) private returns (uint256 escrow) {
+        if (orderId == 0) return 0;
+        escrow = _orders[orderId].executionFee;
+        _removeOrder(orderId, trader);
     }
 
     function _attachBrackets(bytes32 key, uint256 takeProfit, uint256 stopLoss, uint256 execFee) private {
@@ -885,7 +872,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         if (stopLoss != 0) _createTrigger(key, OrderType.StopLoss, stopLoss, execFee);
     }
 
-    /// @dev Creates a TP/SL order linked to position `key`. The execution fee must already be held.
+    /// @dev Creates an order linked to position `key`. The execution fee must already be held.
     function _createTrigger(bytes32 key, OrderType orderType, uint256 triggerPrice, uint256 execFee)
         private
         returns (uint64 orderId)
@@ -907,9 +894,20 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
             executionFee: execFee
         });
         _orderIds.add(orderId);
-        if (orderType == OrderType.TakeProfit) pos.tpOrderId = orderId;
-        else pos.slOrderId = orderId;
+        _setLink(pos, orderType, orderId);
         emit OrderCreated(orderId, pos.trader, pos.priceId, orderType, pos.isLong, triggerPrice, 0, 0);
+    }
+
+    function _link(Position storage pos, OrderType orderType) private view returns (uint64) {
+        if (orderType == OrderType.TakeProfit) return pos.tpOrderId;
+        if (orderType == OrderType.StopLoss) return pos.slOrderId;
+        return pos.closeOrderId;
+    }
+
+    function _setLink(Position storage pos, OrderType orderType, uint64 orderId) private {
+        if (orderType == OrderType.TakeProfit) pos.tpOrderId = orderId;
+        else if (orderType == OrderType.StopLoss) pos.slOrderId = orderId;
+        else pos.closeOrderId = orderId;
     }
 
     /// @dev `cancelledFor` is the trader when the order is being cancelled, or zero when it is being filled.
@@ -919,17 +917,21 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         if (cancelledFor != address(0)) emit OrderCancelled(orderId, cancelledFor);
     }
 
-    // ───────────────────────────── Internal: validation and math ─────────────────────────────
-
-    /// @dev A position may only be closed voluntarily against a price published after the second it was
-    ///      opened in. Without this, a trader holding two signed prices from the same staleness window could
-    ///      open on the older and close on the newer in one block for a risk-free profit.
-    function _requirePriceAfterOpen(Position storage pos, OraclePrice memory px) private view {
-        if (px.publishTime <= pos.openedAt) revert PriceNotAfterOpen();
+    /// @dev Pays `amount` USDC to `to`. If USDC refuses (Arc's USDC reverts for blocklisted accounts) the
+    ///      amount is parked for that same account instead, so no position or order can be made immovable.
+    function _pay(address to, uint256 amount) private {
+        if (amount == 0) return;
+        (bool ok, bytes memory ret) = address(usdc).call(abi.encodeCall(IERC20.transfer, (to, amount)));
+        if (ok && (ret.length == 0 || abi.decode(ret, (bool)))) return;
+        claimable[to] += amount;
+        totalClaimable += amount;
+        emit PaymentDeferred(to, amount);
     }
 
-    function _existingMarket(bytes32 priceId) private view returns (Market storage m) {
-        m = markets[priceId];
+    // ───────────────────────────── Internal: validation and math ─────────────────────────────
+
+    function _existingMarket(bytes32 marketId) private view returns (Market storage m) {
+        m = _markets[marketId];
         if (m.lastFundingTime == 0) revert MarketNotFound();
     }
 
@@ -939,6 +941,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
 
     function _validateTrade(Market storage m, uint256 margin, uint256 size) private view {
         if (!m.enabled) revert MarketDisabled();
+        if (m.expiry != 0 && block.timestamp >= m.expiry) revert MarketExpired();
         if (margin < minMargin) revert MarginTooLow();
         if (size < margin || size > margin * m.maxLeverage) revert LeverageOutOfRange();
     }
@@ -978,54 +981,21 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         return longOi > shortOi ? rate : -rate;
     }
 
+    /// @dev Funding stops accruing at a dated market's expiry.
+    function _fundingTime(Market storage m) private view returns (uint256 t) {
+        t = block.timestamp;
+        if (m.expiry != 0 && t > m.expiry) t = m.expiry;
+    }
+
     function _currentFundingIndex(Market storage m) private view returns (int256) {
-        return m.fundingIndex + _fundingRate(m) * (block.timestamp - m.lastFundingTime).toInt256();
+        return m.fundingIndex + _fundingRate(m) * (_fundingTime(m) - m.lastFundingTime).toInt256();
     }
 
     function _accrueFunding(Market storage m) private {
-        if (block.timestamp == m.lastFundingTime) return;
+        uint256 t = _fundingTime(m);
+        if (t == m.lastFundingTime) return;
         m.fundingIndex = _currentFundingIndex(m);
-        m.lastFundingTime = uint64(block.timestamp);
-    }
-
-    /// @dev Funding owed by the position since entry; negative when the position is owed funding.
-    function _fundingOwed(Position storage pos, int256 fundingIndex) private view returns (int256 owed) {
-        owed = (pos.size.toInt256() * (fundingIndex - pos.entryFundingIndex)) / FUNDING_PRECISION;
-        if (!pos.isLong) owed = -owed;
-    }
-
-    /// @dev PnL from the price move alone. Rounded against the trader: profits down, losses up.
-    function _pricePnl(Position storage pos, uint256 price) private view returns (int256) {
-        uint256 entry = pos.entryPrice;
-        bool profit = pos.isLong ? price >= entry : price <= entry;
-        uint256 magnitude =
-            Math.mulDiv(pos.size, _absDiff(price, entry), entry, profit ? Math.Rounding.Floor : Math.Rounding.Ceil);
-        return profit ? magnitude.toInt256() : -magnitude.toInt256();
-    }
-
-    function _isLiquidatable(Position storage pos, uint256 price, int256 fundingIndex) private view returns (bool) {
-        int256 pnl = _pricePnl(pos, price) - _fundingOwed(pos, fundingIndex);
-        return pnl <= -((pos.margin * LIQUIDATION_THRESHOLD_BPS) / BPS).toInt256();
-    }
-
-    function _liquidationPrice(Position storage pos, int256 fundingIndex) private view returns (uint256) {
-        // Price loss the position can still absorb before it hits the threshold.
-        int256 room = ((pos.margin * LIQUIDATION_THRESHOLD_BPS) / BPS).toInt256() - _fundingOwed(pos, fundingIndex);
-        if (room <= 0) return pos.isLong ? type(uint256).max : 0;
-        uint256 r = room.toUint256();
-        if (pos.isLong) {
-            return r >= pos.size ? 0 : Math.mulDiv(pos.entryPrice, pos.size - r, pos.size, Math.Rounding.Ceil);
-        }
-        return Math.mulDiv(pos.entryPrice, pos.size + r, pos.size);
-    }
-
-    function _positionView(bytes32 key) private view returns (PositionView memory v) {
-        Position storage pos = _positions[key];
-        int256 index = _currentFundingIndex(markets[pos.priceId]);
-        v.key = key;
-        v.position = pos;
-        v.fundingOwed = _fundingOwed(pos, index);
-        v.liquidationPrice = _liquidationPrice(pos, index);
+        m.lastFundingTime = uint64(t);
     }
 
     function _absDiff(uint256 a, uint256 b) private pure returns (uint256) {
@@ -1049,9 +1019,9 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         }
     }
 
-    function _readPrice(bytes32 priceId, bool invert) private view returns (OraclePrice memory px) {
+    function _readPrice(Market storage m) private view returns (OraclePrice memory px) {
         PriceStatus status;
-        (status, px) = _peekPrice(priceId, invert);
+        (status, px) = _peekPrice(m, maxPriceAge);
         if (status == PriceStatus.Ok) return px;
         if (status == PriceStatus.Unavailable) revert OraclePriceUnavailable();
         if (status == PriceStatus.Stale) revert OraclePriceStale();
@@ -1059,33 +1029,14 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         revert OraclePriceInvalid();
     }
 
-    /// @dev Reads and validates the latest on-chain Pyth price without reverting.
-    function _peekPrice(bytes32 priceId, bool invert) private view returns (PriceStatus, OraclePrice memory px) {
-        PythStructs.Price memory p;
-        try pyth.getPriceUnsafe(priceId) returns (PythStructs.Price memory fetched) {
-            p = fetched;
-        } catch {
-            return (PriceStatus.Unavailable, px);
+    /// @dev A settled dated market trades at its settlement price for ever; everything else asks the oracle.
+    function _peekPrice(Market storage m, uint256 maxAge) private view returns (PriceStatus, OraclePrice memory px) {
+        uint256 settled = m.settlementPrice;
+        if (settled != 0) {
+            px.mid = px.bid = px.ask = settled;
+            px.publishTime = block.timestamp;
+            return (PriceStatus.Ok, px);
         }
-        if (_absDiff(block.timestamp, p.publishTime) > maxPriceAge) return (PriceStatus.Stale, px);
-        if (p.price <= 0 || p.expo > 0 || p.expo < -18) return (PriceStatus.Invalid, px);
-
-        uint256 raw = uint256(uint64(p.price));
-        uint256 conf = p.conf;
-        if (conf * BPS > raw * maxConfBps) return (PriceStatus.ConfidenceTooWide, px);
-
-        // maxConfBps <= 5% guarantees conf < raw, so the band stays strictly positive.
-        uint256 scale = 10 ** (18 - uint256(uint32(-p.expo)));
-        px.mid = raw * scale;
-        px.bid = (raw - conf) * scale;
-        px.ask = (raw + conf) * scale;
-        px.publishTime = p.publishTime;
-        if (invert) {
-            uint256 one = PRICE_PRECISION * PRICE_PRECISION;
-            (px.bid, px.ask) = (one / px.ask, Math.ceilDiv(one, px.bid));
-            px.mid = one / px.mid;
-            if (px.bid == 0) return (PriceStatus.Invalid, px);
-        }
-        return (PriceStatus.Ok, px);
+        return oracle.peek(m.feedId, m.quoteFeedId, m.invert, maxAge, maxConfBps);
     }
 }
