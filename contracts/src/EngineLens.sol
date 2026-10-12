@@ -68,7 +68,7 @@ contract EngineLens {
     /// @notice Values a position at an arbitrary `price` (18 decimals).
     /// @return pnl Price PnL minus funding owed, before the close fee and the profit cap.
     /// @return fundingOwed Funding the position owes (negative: is owed).
-    /// @return liquidationPrice Mid price at which the position becomes liquidatable.
+    /// @return liquidationPrice Mid price at or below (long) / at or above (short) which it is liquidatable.
     /// @return liquidatable Whether it would be liquidatable at `price`.
     function getPositionState(bytes32 key, uint256 price)
         external

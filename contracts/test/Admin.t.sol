@@ -5,10 +5,22 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {Market, MarketConfig} from "../src/Types.sol";
 import {Base} from "./Base.t.sol";
 
 contract AdminTest is Base {
     bytes32 internal constant SOL = bytes32(uint256(0x501));
+
+    function _sol(bool invert, uint16 maxLeverage, uint256 maxOiPerSide, uint256 skewScale)
+        internal
+        pure
+        returns (MarketConfig memory cfg)
+    {
+        cfg = _cfg("SOL-USD", SOL, bytes32(0), invert, 0);
+        cfg.maxLeverage = maxLeverage;
+        cfg.maxOiPerSide = maxOiPerSide;
+        cfg.skewScale = skewScale;
+    }
 
     function _unauthorized() internal view returns (bytes memory) {
         return abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice);
@@ -17,13 +29,15 @@ contract AdminTest is Base {
     function test_onlyOwner() public {
         vm.startPrank(alice);
         vm.expectRevert(_unauthorized());
-        engine.addMarket(SOL, false, 50, 1e12, 1e12);
+        engine.addMarket(SOL, _sol(false, 50, 1e12, 1e12));
         vm.expectRevert(_unauthorized());
         engine.setMarket(BTC, true, 50, 1e12, 1e12);
         vm.expectRevert(_unauthorized());
         engine.setFeeParams(1, 1, 1, 1);
         vm.expectRevert(_unauthorized());
         engine.setRiskParams(1, 1, 1, 1);
+        vm.expectRevert(_unauthorized());
+        engine.setMaxProfitMultiple(5);
         vm.expectRevert(_unauthorized());
         engine.pause();
         vm.expectRevert(_unauthorized());
@@ -33,46 +47,138 @@ contract AdminTest is Base {
 
     function test_addMarket() public {
         vm.expectEmit(address(engine));
+        emit PerpEngine.MarketListed(SOL, "SOL-USD", SOL, bytes32(0), true, 0);
+        vm.expectEmit(address(engine));
         emit PerpEngine.MarketConfigured(SOL, true, true, 50, 123e6, 456e6);
         vm.prank(owner);
-        engine.addMarket(SOL, true, 50, 123e6, 456e6);
+        engine.addMarket(SOL, _sol(true, 50, 123e6, 456e6));
 
-        (
-            bool enabled,
-            bool invert,
-            uint16 maxLeverage,
-            uint64 lastFundingTime,
-            uint256 maxOiPerSide,
-            uint256 skewScale,
-            uint256 longOi,
-            uint256 shortOi,
-            int256 fundingIndex
-        ) = engine.markets(SOL);
-        assertTrue(enabled);
-        assertTrue(invert);
-        assertEq(maxLeverage, 50);
-        assertEq(lastFundingTime, block.timestamp);
-        assertEq(maxOiPerSide, 123e6);
-        assertEq(skewScale, 456e6);
-        assertEq(longOi, 0);
-        assertEq(shortOi, 0);
-        assertEq(fundingIndex, 0);
-        assertEq(engine.getMarketIds().length, 5);
+        Market memory m = engine.getMarket(SOL);
+        assertTrue(m.enabled);
+        assertTrue(m.invert);
+        assertEq(m.maxLeverage, 50);
+        assertEq(m.lastFundingTime, vm.getBlockTimestamp());
+        assertEq(m.expiry, 0);
+        assertEq(m.feedId, SOL);
+        assertEq(m.quoteFeedId, bytes32(0));
+        assertEq(m.maxOiPerSide, 123e6);
+        assertEq(m.skewScale, 456e6);
+        assertEq(m.longOi, 0);
+        assertEq(m.shortOi, 0);
+        assertEq(m.longUnits, 0);
+        assertEq(m.shortUnits, 0);
+        assertEq(m.fundingIndex, 0);
+        assertEq(m.settlementPrice, 0);
+        assertEq(m.symbol, "SOL-USD");
+        assertEq(engine.getMarketIds().length, 7);
+    }
+
+    function test_addMarket_crossAndDated() public {
+        bytes32 id = keccak256("SOL-BTC-DATED");
+        MarketConfig memory cfg = _cfg("SOL-BTC-DATED", SOL, BTC, true, uint64(vm.getBlockTimestamp() + 1));
+        vm.expectEmit(address(engine));
+        emit PerpEngine.MarketListed(id, "SOL-BTC-DATED", SOL, BTC, true, uint64(vm.getBlockTimestamp() + 1));
+        vm.prank(owner);
+        engine.addMarket(id, cfg);
+        Market memory m = engine.getMarket(id);
+        assertEq(m.feedId, SOL);
+        assertEq(m.quoteFeedId, BTC);
+        assertEq(m.expiry, vm.getBlockTimestamp() + 1);
+        assertTrue(m.invert);
+        // The fixture's own cross and future.
+        assertEq(engine.getMarket(ETHBTC).quoteFeedId, BTC);
+        assertEq(engine.getMarket(ETHBTC).feedId, ETH);
+        assertEq(engine.getMarket(FUT).expiry, EXPIRY);
+        assertEq(engine.getMarket(FUT).symbol, "BTC-USD-FUT");
+        // An unknown id reads as an empty market.
+        assertEq(engine.getMarket(bytes32(uint256(1))).lastFundingTime, 0);
     }
 
     function test_addMarket_validations() public {
         vm.startPrank(owner);
         vm.expectRevert(PerpEngine.MarketExists.selector);
-        engine.addMarket(BTC, false, 50, 1e12, 1e12);
+        engine.addMarket(BTC, _sol(false, 50, 1e12, 1e12));
         vm.expectRevert(PerpEngine.InvalidParam.selector);
-        engine.addMarket(bytes32(0), false, 50, 1e12, 1e12);
+        engine.addMarket(bytes32(0), _sol(false, 50, 1e12, 1e12));
         vm.expectRevert(PerpEngine.InvalidParam.selector);
-        engine.addMarket(SOL, false, 0, 1e12, 1e12);
+        engine.addMarket(SOL, _sol(false, 0, 1e12, 1e12));
         vm.expectRevert(PerpEngine.InvalidParam.selector);
-        engine.addMarket(SOL, false, 101, 1e12, 1e12);
+        engine.addMarket(SOL, _sol(false, 101, 1e12, 1e12));
         vm.expectRevert(PerpEngine.InvalidParam.selector);
-        engine.addMarket(SOL, false, 50, 1e12, 0);
+        engine.addMarket(SOL, _sol(false, 50, 1e12, 0));
+
+        // A market needs a feed, and a cross needs two different ones.
+        MarketConfig memory cfg = _sol(false, 50, 1e12, 1e12);
+        cfg.feedId = bytes32(0);
+        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        engine.addMarket(SOL, cfg);
+        cfg.feedId = SOL;
+        cfg.quoteFeedId = SOL;
+        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        engine.addMarket(SOL, cfg);
+
+        // A dated market must expire in the future.
+        cfg = _sol(false, 50, 1e12, 1e12);
+        cfg.expiry = uint64(vm.getBlockTimestamp());
+        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        engine.addMarket(SOL, cfg);
+        cfg.expiry = uint64(vm.getBlockTimestamp() + 1);
+        engine.addMarket(SOL, cfg);
         vm.stopPrank();
+    }
+
+    function test_addMarket_capsTheNumberOfMarkets() public {
+        vm.startPrank(owner);
+        for (uint256 i = engine.getMarketIds().length; i < 64; ++i) {
+            engine.addMarket(bytes32(i + 1000), _sol(false, 50, 1e12, 1e12));
+        }
+        assertEq(engine.getMarketIds().length, engine.MAX_MARKETS());
+        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        engine.addMarket(SOL, _sol(false, 50, 1e12, 1e12));
+        vm.stopPrank();
+    }
+
+    /// @dev Every deposit, withdrawal and open values the whole book: one loop over all markets, one oracle
+    ///      read per feed of each market that has open interest. With all 64 slots listed and every one of
+    ///      them holding a position, that valuation must still be cheap enough to sit inside a trade.
+    function test_valuation_gasWithEveryMarketSlotInUse() public {
+        vm.startPrank(owner);
+        for (uint256 i = engine.getMarketIds().length; i < 64; ++i) {
+            // Crosses, so that each costs two feed reads.
+            engine.addMarket(bytes32(i + 1000), _cfg("X", ETH, BTC, false, 0));
+        }
+        vm.stopPrank();
+        _refreshAll();
+        bytes32[] memory ids = engine.getMarketIds();
+        for (uint256 i; i < 64; ++i) {
+            if (ids[i] == EUR || ids[i] == JPY) _open(alice, ids[i], true, 5e6, 500e6);
+            else _open(alice, ids[i], i % 2 == 0, 5e6, 500e6);
+        }
+        assertEq(engine.positionCount(), 64);
+
+        uint256 gasBefore = gasleft();
+        engine.unrealizedTraderPnl();
+        uint256 valuation = gasBefore - gasleft();
+        gasBefore = gasleft();
+        engine.reservedLiquidity();
+        uint256 reserve = gasBefore - gasleft();
+        gasBefore = gasleft();
+        vm.prank(bob);
+        engine.openPosition(_params(BTC, true, 5e6, 500e6), _noBytes());
+        uint256 open = gasBefore - gasleft();
+        // liquidate(address) walks every market for the trader; here nothing qualifies and it reverts at the end.
+        gasBefore = gasleft();
+        try engine.liquidate(alice) {} catch {}
+        uint256 liquidate = gasBefore - gasleft();
+        emit log_named_uint("liquidate(trader) gas, 64 positions", liquidate);
+        assertLt(liquidate, 10_000_000);
+        emit log_named_uint("unrealizedTraderPnl gas, 64 markets with OI", valuation);
+        emit log_named_uint("reservedLiquidity gas", reserve);
+        emit log_named_uint("openPosition gas", open);
+        // Measured with the checked-in settings: ~0.9m, ~0.06m, ~1.1m and ~1.0m gas. The bounds are loose
+        // because the same test also runs unoptimised under `forge coverage`.
+        assertLt(valuation, 10_000_000);
+        assertLt(open, 10_000_000);
     }
 
     function test_setMarket() public {
@@ -81,19 +187,23 @@ contract AdminTest is Base {
         engine.setMarket(SOL, true, 50, 1e12, 1e12);
         vm.expectRevert(PerpEngine.InvalidParam.selector);
         engine.setMarket(BTC, true, 101, 1e12, 1e12);
+        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        engine.setMarket(BTC, true, 0, 1e12, 1e12);
+        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        engine.setMarket(BTC, true, 50, 1e12, 0);
 
         vm.expectEmit(address(engine));
         emit PerpEngine.MarketConfigured(JPY, false, true, 25, 7e6, 8e6);
         engine.setMarket(JPY, false, 25, 7e6, 8e6);
         vm.stopPrank();
 
-        (bool enabled, bool invert, uint16 maxLeverage,, uint256 maxOiPerSide, uint256 skewScale,,,) =
-            engine.markets(JPY);
-        assertFalse(enabled);
-        assertTrue(invert); // the inversion flag is fixed at listing
-        assertEq(maxLeverage, 25);
-        assertEq(maxOiPerSide, 7e6);
-        assertEq(skewScale, 8e6);
+        Market memory m = engine.getMarket(JPY);
+        assertFalse(m.enabled);
+        assertTrue(m.invert); // the structure of an instrument (feeds, inversion, expiry) is fixed at listing
+        assertEq(m.feedId, JPY);
+        assertEq(m.maxLeverage, 25);
+        assertEq(m.maxOiPerSide, 7e6);
+        assertEq(m.skewScale, 8e6);
     }
 
     function test_setFeeParams() public {
@@ -144,6 +254,22 @@ contract AdminTest is Base {
         assertEq(engine.minMargin(), 1e6);
     }
 
+    function test_setMaxProfitMultiple() public {
+        assertEq(engine.maxProfitMultiple(), 10);
+        vm.startPrank(owner);
+        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        engine.setMaxProfitMultiple(0);
+        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        engine.setMaxProfitMultiple(101);
+        vm.expectEmit(address(engine));
+        emit PerpEngine.MaxProfitMultipleSet(1);
+        engine.setMaxProfitMultiple(1);
+        assertEq(engine.maxProfitMultiple(), 1);
+        engine.setMaxProfitMultiple(100);
+        assertEq(engine.maxProfitMultiple(), 100);
+        vm.stopPrank();
+    }
+
     function test_defaults() public view {
         assertEq(engine.baseFeeBps(), 5);
         assertEq(engine.maxSkewFeeBps(), 10);
@@ -153,6 +279,9 @@ contract AdminTest is Base {
         assertEq(engine.maxConfBps(), 50);
         assertEq(engine.maxOiToNavBps(), 30_000);
         assertEq(engine.minMargin(), 5e6);
+        assertEq(engine.maxProfitMultiple(), 10);
+        assertEq(engine.nextOrderId(), 1);
+        assertEq(engine.totalClaimable(), 0);
     }
 
     function test_riskParams_takeEffect() public {

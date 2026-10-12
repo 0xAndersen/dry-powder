@@ -17,7 +17,7 @@ import {IRewardToken} from "./interfaces/IRewardToken.sol";
 ///         actually earns.
 ///
 /// @dev Accounting
-///  - The asset is Arc's native USDC through its 6-decimal ERC-20 interface. Shares (`rcUSDC`) have 18 decimals
+///  - The asset is Arc's native USDC through its 6-decimal ERC-20 interface. Shares (`hmUSDC`) have 18 decimals
 ///    via a 12-digit virtual offset, which also makes share-price inflation attacks uneconomic.
 ///  - `totalHouseBalance` is the realised balance owned by share holders, tracked internally and never read
 ///    from `balanceOf` (on Arc a native value transfer also changes the ERC-20 balance).
@@ -95,7 +95,7 @@ contract HouseVault is ERC4626, IHouseVault {
 
     constructor(IERC20 usdc, address engine_, address rewardToken_, uint256 withdrawLockPeriod_, uint256 epochLength_)
         ERC4626(usdc)
-        ERC20("Arc House USDC", "rcUSDC")
+        ERC20("House Money USDC", "hmUSDC")
     {
         if (engine_ == address(0) || rewardToken_ == address(0)) revert ZeroAddress();
         engine = engine_;
@@ -176,11 +176,25 @@ contract HouseVault is ERC4626, IHouseVault {
 
     /// @dev Deposits must be for the caller: crediting a third party would either let the caller bypass the
     ///      lock (if the receiver is not locked) or grief the receiver (if it is).
+    ///
+    ///      New shares enter the high-water mark at the price they were bought at. {settleEpoch} measures
+    ///      profit as (value per share - mark) * supply, so shares issued above the mark would otherwise be
+    ///      charged the staker share on a gain that was made before they existed. With the last holders gone
+    ///      the leftover rounding dust (or fees that arrived meanwhile) prices the next shares far above the
+    ///      old mark, and close to 15% of the newcomer's own deposit would go to stakers. Blending the mark
+    ///      with the issue price, weighted by shares, keeps the profit still to be settled exactly what it was
+    ///      before the deposit. The mark is only ever raised here: shares bought below it wait for the old
+    ///      mark like everyone else.
     function _deposit(address caller, address receiver, uint256 assets, uint256 shares) internal override {
         if (receiver != caller) revert ReceiverMustBeCaller();
         totalHouseBalance += assets;
         withdrawUnlockTime[receiver] = block.timestamp + withdrawLockPeriod;
         super._deposit(caller, receiver, assets, shares);
+        if (shares != 0) {
+            uint256 mark = highWaterMark;
+            uint256 paid = Math.mulDiv(assets, HWM_PRECISION, shares);
+            if (paid > mark) highWaterMark = mark + Math.mulDiv(paid - mark, shares, totalSupply());
+        }
     }
 
     function _withdraw(address caller, address receiver, address owner, uint256 assets, uint256 shares)

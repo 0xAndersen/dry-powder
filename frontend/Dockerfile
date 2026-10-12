@@ -28,5 +28,6 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 USER nextjs
 EXPOSE 3000
 
-# Contract addresses and endpoints are read from the environment at request time; see .env.example.
+# Contract addresses, the oracle mode and endpoints are read from the environment at request time; see .env.example.
+# For a server-less deployment use the static bundle instead (npm run build:static, README.md).
 CMD ["node", "server.js"]

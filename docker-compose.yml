@@ -1,6 +1,6 @@
 # Runs the trading frontend and the keeper together.
 #
-#   cp .env.example .env    # fill in the three contract addresses and the keeper key
+#   cp .env.example .env    # fill in the contract addresses from ops/output-testnet/addresses.json
 #   docker compose up --build
 #
 # Frontend: http://localhost:3000
@@ -13,16 +13,25 @@ services:
       - "${FRONTEND_PORT:-3000}:3000"
     environment:
       PERP_ENGINE_ADDRESS: ${PERP_ENGINE_ADDRESS:?set PERP_ENGINE_ADDRESS in .env}
+      ENGINE_LENS_ADDRESS: ${ENGINE_LENS_ADDRESS:?set ENGINE_LENS_ADDRESS in .env}
       HOUSE_VAULT_ADDRESS: ${HOUSE_VAULT_ADDRESS:?set HOUSE_VAULT_ADDRESS in .env}
       REWARD_TOKEN_ADDRESS: ${REWARD_TOKEN_ADDRESS:?set REWARD_TOKEN_ADDRESS in .env}
       USDC_ADDRESS: ${USDC_ADDRESS:-0x3600000000000000000000000000000000000000}
-      PYTH_ADDRESS: ${PYTH_ADDRESS:-0x2880aB155794e7179c9eE2e38200202908C17B43}
+      COLLATERAL_SYMBOL: ${COLLATERAL_SYMBOL:-USDC}
+      COLLATERAL_IS_TEST: ${COLLATERAL_IS_TEST:-false}
+      ORACLE_MODE: ${ORACLE_MODE:-publisher}
+      KRAKEN_URL: ${KRAKEN_URL:-https://api.kraken.com}
+      PYTH_API_KEY: ${PYTH_API_KEY:-}
       RPC_URL: ${RPC_URL:-https://rpc.testnet.arc.network}
       HERMES_URL: ${HERMES_URL:-https://hermes.pyth.network}
       CHAIN_ID: ${CHAIN_ID:-5042002}
       EXPLORER_URL: ${EXPLORER_URL:-https://testnet.arcscan.app}
 
+  # NOT YET PORTED TO V2. The Node keeper still targets the v1 ABI and Pyth Hermes. Until it is ported, the
+  # publisher + keeper for a testnet deployment is the ops runtime (see ops/README.md). Enable with
+  # `docker compose --profile legacy-keeper up` only against a v1 deployment.
   keeper:
+    profiles: ["legacy-keeper"]
     build: ./keeper
     restart: unless-stopped
     environment:

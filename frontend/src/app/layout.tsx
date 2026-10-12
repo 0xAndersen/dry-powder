@@ -1,48 +1,41 @@
 import type { Metadata, Viewport } from "next";
-import type { ReactNode } from "react";
-import "@fontsource-variable/archivo/wdth.css";
+import { connection } from "next/server";
+import { Suspense, type ReactNode } from "react";
+import "@fontsource-variable/bricolage-grotesque/wdth.css";
 import "./globals.css";
-import { readRuntimeConfig } from "@/lib/config";
-import { Providers } from "@/components/providers";
-import { Header } from "@/components/header";
-import { NotConfigured } from "@/components/not-configured";
-
-// Contract addresses come from the container environment at request time, never from the build.
-export const dynamic = "force-dynamic";
+import { IS_STATIC_BUILD, rawFromEnv, readRuntimeConfig, type RuntimeConfigResult } from "@/lib/config";
+import { ConfigGate } from "@/components/config-gate";
+import { Shell } from "@/components/shell";
 
 export const metadata: Metadata = {
-  title: { default: "Arc House", template: "%s | Arc House" },
-  description: "Synthetic perpetuals on Arc Testnet. Trade against the house, or be the house.",
-  icons: { icon: "/favicon.svg" },
+  title: { default: "House Money", template: "%s | House Money" },
+  description: "Perpetuals, crosses, FX and dated futures on Arc. Play against the house, or be the house.",
+  // The static bundle keeps every page one directory deep, so a relative icon works under any sub-path.
+  icons: { icon: IS_STATIC_BUILD ? "../favicon.svg" : "/favicon.svg" },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#121a26",
+  themeColor: "#111014",
   colorScheme: "dark",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
-  const result = readRuntimeConfig(process.env);
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  // Server build: contract addresses come from the container environment on every request, never from the
+  // build. Static build: nothing is known here; the browser loads config.json.
+  let server: RuntimeConfigResult | null = null;
+  if (!IS_STATIC_BUILD) {
+    await connection();
+    server = readRuntimeConfig(rawFromEnv(process.env));
+  }
 
   return (
     <html lang="en">
       <body>
-        {result.ok ? (
-          <Providers config={result.config}>
-            <a
-              href="#main"
-              className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:bg-raised focus:px-3 focus:py-2"
-            >
-              Skip to content
-            </a>
-            <Header />
-            <main id="main" className="mx-auto w-full max-w-[1680px] px-3 pb-12 pt-3 sm:px-4">
-              {children}
-            </main>
-          </Providers>
-        ) : (
-          <NotConfigured problems={result.problems} />
-        )}
+        <ConfigGate server={server}>
+          <Suspense fallback={null}>
+            <Shell>{children}</Shell>
+          </Suspense>
+        </ConfigGate>
       </body>
     </html>
   );

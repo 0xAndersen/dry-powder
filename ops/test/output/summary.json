@@ -1,0 +1,580 @@
+{
+ "run": {
+  "phase": "ended",
+  "startedAt": "2026-10-12T17:17:17.445Z",
+  "seconds": 417,
+  "chainId": 5042002,
+  "agents": 100,
+  "done": 100,
+  "failed": 0,
+  "blocks": [
+   0,
+   441
+  ]
+ },
+ "trades": {
+  "opens": 605,
+  "closes": 596,
+  "liquidations": 9,
+  "settledPositions": 8,
+  "ordersCreated": 648,
+  "fills": {
+   "limit": 88,
+   "takeProfit": 80,
+   "stopLoss": 77,
+   "close": 41
+  },
+  "roundTrips": 605,
+  "tripsMin": 5,
+  "forcedEntries": 66
+ },
+ "volume": 35820531,
+ "marginDeployed": 1024611,
+ "agentsPnl": {
+  "total": -6993,
+  "best": 4586.48,
+  "worst": -4078.01,
+  "winners": 49
+ },
+ "openInterest": {
+  "cols": [
+   "tSec",
+   "oi",
+   "nav"
+  ],
+  "series": [
+   [
+    0,
+    0,
+    5000000
+   ],
+   [
+    10,
+    3062182,
+    5012209
+   ],
+   [
+    25,
+    2386256,
+    5011462
+   ],
+   [
+    40,
+    1878123,
+    5011554
+   ],
+   [
+    55,
+    689936,
+    5008124
+   ],
+   [
+    70,
+    1660563,
+    5002265
+   ],
+   [
+    85,
+    1862439,
+    5004980
+   ],
+   [
+    100,
+    1978896,
+    5004375
+   ],
+   [
+    115,
+    1420444,
+    4996547
+   ],
+   [
+    130,
+    1692353,
+    4997658
+   ],
+   [
+    145,
+    1767886,
+    4998618
+   ],
+   [
+    153,
+    1079424,
+    4998711
+   ],
+   [
+    169,
+    1531061,
+    4999352
+   ],
+   [
+    184,
+    1424108,
+    4999254
+   ],
+   [
+    199,
+    1562149,
+    4998915
+   ],
+   [
+    214,
+    1352163,
+    5001460
+   ],
+   [
+    229,
+    1359078,
+    4998425
+   ],
+   [
+    244,
+    1402197,
+    4991736
+   ],
+   [
+    259,
+    1241957,
+    4993233
+   ],
+   [
+    274,
+    1580815,
+    4994562
+   ],
+   [
+    289,
+    1592503,
+    4994514
+   ],
+   [
+    304,
+    1401902,
+    4998135
+   ],
+   [
+    319,
+    831662,
+    5001200
+   ],
+   [
+    334,
+    497805,
+    5002649
+   ],
+   [
+    349,
+    1364879,
+    5004237
+   ],
+   [
+    364,
+    1419203,
+    5004000
+   ],
+   [
+    379,
+    747937,
+    5005739
+   ],
+   [
+    394,
+    24527,
+    5006509
+   ],
+   [
+    409,
+    0,
+    5006702
+   ]
+  ],
+  "max": 3062182,
+  "last": 0
+ },
+ "vault": {
+  "navStart": 5000000,
+  "navEnd": 5006701.6,
+  "sharePriceStart": 1,
+  "sharePriceEnd": 1.00134,
+  "traderLosses": 57171.6,
+  "traderProfits": 72071.87,
+  "fees": 22324.67,
+  "housePnl": 7424.4,
+  "stakerYieldAllocated": 746.79,
+  "stakerYieldClaimed": 746.79,
+  "epochs": 4,
+  "shortfall": 0,
+  "houseStaked": 2961952,
+  "stakes": 69,
+  "yieldClaims": 70,
+  "lpDeposits": 9718.41,
+  "lpRedeems": 5
+ },
+ "keeper": {
+  "liquidations": 9,
+  "liquidationTxs": 8,
+  "fills": {
+   "limit": 88,
+   "tp": 80,
+   "sl": 77,
+   "close": 41
+  },
+  "fillsWithoutUpdate": 60,
+  "medianDelayMs": 690,
+  "p95DelayMs": 1382,
+  "lensRetries": 0,
+  "marketsSettled": 1,
+  "settleDelayS": 1.7,
+  "positionsSettled": 8,
+  "epochs": 4,
+  "benign": {
+   "OrderNotFound": 2,
+   "MarketAlreadySettled": 1,
+   "TriggerNotMet": 2
+  },
+  "errors": {}
+ },
+ "publisher": {
+  "polls": 441,
+  "pollErrors": 0,
+  "signed": 2675,
+  "pushes": 176,
+  "feedsPushed": 533,
+  "maxOnchainGapS": 31,
+  "maxStalenessSeenS": 16,
+  "staleSamples": 0,
+  "feedClosures": {
+   "XAU": 2
+  },
+  "errors": {}
+ },
+ "reverts": {
+  "PositionNotFound": 9,
+  "(revertedOnChain)": 2,
+  "OrderNotFound": 1
+ },
+ "txErrors": {
+  "revertedOnChain": 2
+ },
+ "rpc": {
+  "calls": 9092,
+  "http": 3289,
+  "batches": 1005,
+  "errors": {},
+  "errorRate": 0,
+  "retries": 0,
+  "failed": 0
+ },
+ "latencyMs": {
+  "cols": [
+   "p50",
+   "p90",
+   "p95",
+   "p99",
+   "max"
+  ],
+  "decisionToInclusion": [
+   836,
+   1278,
+   1342,
+   1507,
+   1567
+  ]
+ },
+ "gas": {
+  "total": 694826175,
+  "txs": 2059,
+  "paidUsdc": 14.59135,
+  "usdcAt20gwei": 13.8965,
+  "topUps": 108,
+  "topUpUsdc": 8.36,
+  "byType": {
+   "addMarket": [
+    8,
+    180516
+   ],
+   "approve": [
+    106,
+    46269
+   ],
+   "cancelOrder": [
+    89,
+    97066
+   ],
+   "claimYield": [
+    70,
+    86996
+   ],
+   "close": [
+    388,
+    217656
+   ],
+   "deploy:EngineLens": [
+    1,
+    1480833
+   ],
+   "deploy:HouseVault": [
+    1,
+    1800546
+   ],
+   "deploy:PerpEngine": [
+    1,
+    5386463
+   ],
+   "deploy:PublisherOracle": [
+    1,
+    632328
+   ],
+   "deploy:PythOracle": [
+    1,
+    374642
+   ],
+   "deploy:RewardToken": [
+    1,
+    1048900
+   ],
+   "deploy:TestUSDC": [
+    1,
+    483961
+   ],
+   "exec:close": [
+    41,
+    242674
+   ],
+   "exec:limit": [
+    88,
+    763861
+   ],
+   "exec:sl": [
+    77,
+    297383
+   ],
+   "exec:tp": [
+    80,
+    285185
+   ],
+   "fund:mint": [
+    2,
+    1408782
+   ],
+   "fund:native": [
+    3,
+    1269554
+   ],
+   "fund:topup": [
+    18,
+    92257
+   ],
+   "limit:marketable": [
+    42,
+    297798
+   ],
+   "limit:resting": [
+    134,
+    338203
+   ],
+   "liquidateBatch": [
+    8,
+    204929
+   ],
+   "lpDeposit": [
+    5,
+    348546
+   ],
+   "lpRedeem": [
+    5,
+    372884
+   ],
+   "open": [
+    357,
+    552400
+   ],
+   "open+brackets": [
+    157,
+    875891
+   ],
+   "push": [
+    176,
+    86770
+   ],
+   "seed:deposit": [
+    1,
+    207993
+   ],
+   "seed:mint": [
+    1,
+    96941
+   ],
+   "setRiskParams": [
+    1,
+    39119
+   ],
+   "settleEpoch": [
+    4,
+    280162
+   ],
+   "settleMarket": [
+    1,
+    105933
+   ],
+   "settlePositions": [
+    1,
+    651073
+   ],
+   "stake": [
+    70,
+    71974
+   ],
+   "trigger:close": [
+    41,
+    245191
+   ],
+   "trigger:sl": [
+    62,
+    200562
+   ],
+   "trigger:tp": [
+    16,
+    256706
+   ]
+  }
+ },
+ "strategies": {
+  "cols": [
+   "agents",
+   "pnl",
+   "trips",
+   "liqs",
+   "volume"
+  ],
+  "rows": {
+   "momentum": [
+    10,
+    -436,
+    58,
+    0,
+    2352922
+   ],
+   "meanrev": [
+    10,
+    -1342,
+    59,
+    0,
+    2043676
+   ],
+   "breakout": [
+    8,
+    -565,
+    45,
+    0,
+    2750488
+   ],
+   "scalper": [
+    10,
+    373,
+    55,
+    0,
+    7440300
+   ],
+   "swing": [
+    8,
+    486,
+    48,
+    0,
+    619053
+   ],
+   "pairs": [
+    8,
+    -7070,
+    49,
+    0,
+    2130193
+   ],
+   "carry": [
+    8,
+    -292,
+    45,
+    0,
+    858694
+   ],
+   "dated": [
+    8,
+    7546,
+    54,
+    0,
+    1665326
+   ],
+   "maker": [
+    8,
+    -295,
+    47,
+    0,
+    1754663
+   ],
+   "degen": [
+    8,
+    -5740,
+    52,
+    9,
+    12077777
+   ],
+   "hedger": [
+    7,
+    -496,
+    52,
+    0,
+    1374136
+   ],
+   "wallet": [
+    7,
+    840,
+    41,
+    0,
+    753302
+   ]
+  }
+ },
+ "checks": {
+  "positions": 0,
+  "orders": 0,
+  "flat": true,
+  "engineBalance": 0,
+  "totalClaimable": 0,
+  "engineOk": true,
+  "vaultBalance": 5006701.600541,
+  "houseBalance": 5006701.600504,
+  "pendingStakerYield": 0.000037,
+  "vaultOk": true,
+  "agents": 993007.218038,
+  "deployer": 0,
+  "keeper": 291.181421,
+  "publisher": 0,
+  "sum": 6000000,
+  "minted": 6000000,
+  "conserved": true
+ },
+ "anomalies": [
+  {
+   "kind": "marketOrderNotFilled",
+   "n": 1,
+   "firstS": 220,
+   "lastS": 220,
+   "sample": "#31 order 378 EUR-USD short limit 1.081237 now 1.061880"
+  },
+  {
+   "kind": "feedClosed",
+   "n": 1,
+   "firstS": 284,
+   "lastS": 284,
+   "sample": "XAU"
+  },
+  {
+   "kind": "feedReopened",
+   "n": 1,
+   "firstS": 309,
+   "lastS": 309,
+   "sample": "XAU"
+  }
+ ]
+}

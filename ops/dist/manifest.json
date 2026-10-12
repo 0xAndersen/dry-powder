@@ -1,0 +1,24 @@
+{
+  "chunks": 3,
+  "chunkChars": [
+    24000,
+    24000,
+    21614
+  ],
+  "bootChars": 821,
+  "totalChars": 70435,
+  "jsBytes": 77983,
+  "bytecodeBytes": 52332,
+  "deflatedBytes": 52070,
+  "checksum": 1471210402,
+  "bytecodeSha256": "fdf0ba75f434190b5330a1f54b1aec409674a5bfcdc74d2cf7428b347d88c06c",
+  "contracts": {
+    "TestUSDC": 2540,
+    "PublisherOracle": 2759,
+    "PythOracle": 1613,
+    "HouseVault": 9002,
+    "RewardToken": 5366,
+    "PerpEngine": 24271,
+    "EngineLens": 6781
+  }
+}

@@ -3,9 +3,11 @@ pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 
+import {EngineLens} from "../src/EngineLens.sol";
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PythOracle} from "../src/PythOracle.sol";
+import {OpenParams, Position, PositionView} from "../src/Types.sol";
 import {IHouseVault} from "../src/interfaces/IHouseVault.sol";
 import {IRewardToken} from "../src/interfaces/IRewardToken.sol";
 import {Base} from "./Base.t.sol";
@@ -16,6 +18,9 @@ contract PerpEngineTest is Base {
     function test_constructor_wiring() public view {
         assertEq(address(engine.usdc()), address(usdc));
         assertEq(address(engine.pyth()), address(pyth));
+        assertEq(address(engine.oracle()), address(oracle));
+        assertEq(address(oracle.pyth()), address(pyth));
+        assertEq(address(lens.engine()), address(engine));
         assertEq(address(engine.vault()), address(vault));
         assertEq(address(engine.rewardToken()), address(house));
         assertEq(engine.owner(), owner);
@@ -24,20 +29,23 @@ contract PerpEngineTest is Base {
         assertEq(engine.LIQUIDATION_THRESHOLD_BPS(), 9_000);
         assertEq(engine.LIQUIDATOR_FEE_BPS(), 200);
         bytes32[] memory ids = engine.getMarketIds();
-        assertEq(ids.length, 4);
+        assertEq(ids.length, 6);
         assertEq(ids[0], BTC);
         assertEq(ids[3], JPY);
+        assertEq(ids[4], ETHBTC);
+        assertEq(ids[5], FUT);
+        assertEq(engine.MAX_MARKETS(), 64);
     }
 
     function test_constructor_rejectsZeroAddresses() public {
         IERC20 u = IERC20(address(usdc));
-        IPyth p = IPyth(address(pyth));
+        PythOracle p = oracle;
         IHouseVault v = IHouseVault(address(vault));
         IRewardToken r = IRewardToken(address(house));
         vm.expectRevert(PerpEngine.ZeroAddress.selector);
         new PerpEngine(IERC20(address(0)), p, v, r, owner);
         vm.expectRevert(PerpEngine.ZeroAddress.selector);
-        new PerpEngine(u, IPyth(address(0)), v, r, owner);
+        new PerpEngine(u, PythOracle(address(0)), v, r, owner);
         vm.expectRevert(PerpEngine.ZeroAddress.selector);
         new PerpEngine(u, p, IHouseVault(address(0)), r, owner);
         vm.expectRevert(PerpEngine.ZeroAddress.selector);
@@ -57,25 +65,28 @@ contract PerpEngineTest is Base {
         emit PerpEngine.PositionOpened(key, alice, BTC, true, 1_000e6, 10_000e6, P100K, fee);
         assertEq(_open(alice, BTC, true, 1_000e6, 10_000e6), key);
 
-        PerpEngine.Position memory pos = engine.getPosition(alice, BTC);
+        Position memory pos = engine.getPosition(alice, BTC);
         assertEq(pos.margin, 1_000e6);
         assertEq(pos.size, 10_000e6);
         assertEq(pos.entryPrice, P100K);
         assertTrue(pos.isLong);
         assertEq(pos.priceId, BTC);
         assertEq(pos.trader, alice);
-        assertEq(pos.openedAt, block.timestamp);
+        assertEq(pos.openedAt, vm.getBlockTimestamp());
         assertEq(pos.tpOrderId, 0);
         assertEq(pos.slOrderId, 0);
+        assertEq(pos.closeOrderId, 0);
         assertEq(engine.getPositionByKey(key).margin, 1_000e6);
 
         assertEq(usdc.balanceOf(alice), aliceBefore - 1_000e6 - fee);
         assertEq(usdc.balanceOf(address(engine)), 1_000e6);
         assertEq(vault.totalHouseBalance(), LP_SEED + fee);
         assertEq(vault.totalFeesCollected(), fee);
-        (,,,,,, uint256 longOi, uint256 shortOi,) = engine.markets(BTC);
-        assertEq(longOi, 10_000e6);
-        assertEq(shortOi, 0);
+        assertEq(_market(BTC).longOi, 10_000e6);
+        assertEq(_market(BTC).shortOi, 0);
+        // 10,000 USDC of notional at 100,000 is 0.1 BTC, tracked at 1e36 precision for mark-to-market.
+        assertEq(_market(BTC).longUnits, 0.1e24);
+        assertEq(_market(BTC).shortUnits, 0);
         assertEq(engine.totalOpenInterest(), 10_000e6);
         assertEq(engine.positionCount(), 1);
         _assertEngineSolvent();
@@ -83,12 +94,12 @@ contract PerpEngineTest is Base {
 
     function test_open_short() public {
         _open(alice, ETH, false, 2_000e6, 10_000e6);
-        PerpEngine.Position memory pos = engine.getPosition(alice, ETH);
+        Position memory pos = engine.getPosition(alice, ETH);
         assertFalse(pos.isLong);
         assertEq(pos.entryPrice, 4_000e18);
-        (,,,,,, uint256 longOi, uint256 shortOi,) = engine.markets(ETH);
-        assertEq(longOi, 0);
-        assertEq(shortOi, 10_000e6);
+        assertEq(_market(ETH).longOi, 0);
+        assertEq(_market(ETH).shortOi, 10_000e6);
+        assertEq(_market(ETH).shortUnits, 2.5e24);
     }
 
     function test_open_atOneTimesAndAtMaxLeverage() public {
@@ -114,7 +125,7 @@ contract PerpEngineTest is Base {
     }
 
     function test_open_validations() public {
-        PerpEngine.OpenParams memory p = _params(bytes32(uint256(1)), true, 1_000e6, 10_000e6);
+        OpenParams memory p = _params(bytes32(uint256(1)), true, 1_000e6, 10_000e6);
         vm.startPrank(alice);
         vm.expectRevert(PerpEngine.MarketNotFound.selector);
         engine.openPosition(p, _noBytes());
@@ -190,7 +201,7 @@ contract PerpEngineTest is Base {
 
     function test_open_slippageGuard() public {
         _setPrice(BTC, 100_000e8, 50e8, -8); // ask 100,050 / bid 99,950
-        PerpEngine.OpenParams memory p = _params(BTC, true, 1_000e6, 10_000e6);
+        OpenParams memory p = _params(BTC, true, 1_000e6, 10_000e6);
         p.acceptablePrice = 100_050e18 - 1;
         vm.prank(alice);
         vm.expectRevert(PerpEngine.SlippageExceeded.selector);
@@ -299,8 +310,8 @@ contract PerpEngineTest is Base {
         // One Pyth tick up: 10k * 1e-8 / 1e5 = 0.001 micro-USDC. The long's gain floors to 0, the short's
         // loss ceils to 1.
         _setPrice(BTC, 100_000e8 + 1, 0, -8);
-        (int256 longPnl,,,) = engine.getPositionState(engine.positionKey(alice, BTC), 100_000e18 + 1e10);
-        (int256 shortPnl,,,) = engine.getPositionState(engine.positionKey(bob, BTC), 100_000e18 + 1e10);
+        (int256 longPnl,,,) = lens.getPositionState(engine.positionKey(alice, BTC), 100_000e18 + 1e10);
+        (int256 shortPnl,,,) = lens.getPositionState(engine.positionKey(bob, BTC), 100_000e18 + 1e10);
         assertEq(longPnl, 0);
         assertEq(shortPnl, -1);
         _close(bob, BTC);
@@ -402,7 +413,7 @@ contract PerpEngineTest is Base {
         skip(1 days);
         int256 index1 = rate1 * 1 days;
         assertEq(engine.currentFundingIndex(BTC), index1);
-        (, int256 owed,,) = engine.getPositionState(aliceKey, P100K);
+        (, int256 owed,,) = lens.getPositionState(aliceKey, P100K);
         assertEq(owed, (500_000e6 * index1) / 1e18);
         assertApproxEqAbs(owed, 342.465753e6, 1e3); // 25% a year on 500k is ~342.47 a day
 
@@ -414,8 +425,8 @@ contract PerpEngineTest is Base {
 
         skip(1 days);
         _setBtc(100_000);
-        (, int256 bobOwed,,) = engine.getPositionState(bobKey, P100K);
-        (, int256 aliceOwed,,) = engine.getPositionState(aliceKey, P100K);
+        (, int256 bobOwed,,) = lens.getPositionState(bobKey, P100K);
+        (, int256 aliceOwed,,) = lens.getPositionState(aliceKey, P100K);
         assertLt(bobOwed, 0);
         assertEq(bobOwed, -((100_000e6 * (rate2 * (1 days + 1))) / 1e18)); // +1s from the price refresh
         assertGt(aliceOwed, -bobOwed);
@@ -423,7 +434,7 @@ contract PerpEngineTest is Base {
         uint256 navBefore = vault.totalHouseBalance();
         uint256 bobBefore = usdc.balanceOf(bob);
         _close(bob, BTC);
-        (, aliceOwed,,) = engine.getPositionState(aliceKey, P100K);
+        (, aliceOwed,,) = lens.getPositionState(aliceKey, P100K);
         uint256 aliceBefore = usdc.balanceOf(alice);
         _close(alice, BTC);
 
@@ -466,7 +477,7 @@ contract PerpEngineTest is Base {
     }
 
     function _fundingIndex(bytes32 id) internal view returns (int256 index) {
-        (,,,,,,,, index) = engine.markets(id);
+        index = _market(id).fundingIndex;
     }
 
     // ───────────────────────────── Multi-market ─────────────────────────────
@@ -479,7 +490,7 @@ contract PerpEngineTest is Base {
         // USD/JPY 150 -> JPY/USD 0.00666..., rounded up because a buy executes at the ask.
         uint256 entry = uint256(1e36) / 150e18 + 1;
         assertEq(engine.getPosition(alice, JPY).entryPrice, entry);
-        assertEq(engine.getTraderPositions(alice).length, 2);
+        assertEq(lens.getTraderPositions(alice).length, 2);
 
         uint256 before = usdc.balanceOf(alice);
         // The yen strengthens: USD/JPY 150 -> 148.5, so JPY/USD rises ~1.0101% and the long gains.
@@ -503,15 +514,15 @@ contract PerpEngineTest is Base {
         _open(bob, BTC, false, 1_000e6, 10_000e6);
         _open(bob, ETH, true, 1_000e6, 10_000e6);
 
-        assertEq(engine.getPositions(0, 10).length, 3);
-        assertEq(engine.getPositions(1, 1).length, 1);
-        assertEq(engine.getPositions(2, 10).length, 1);
-        assertEq(engine.getPositions(3, 10).length, 0);
-        PerpEngine.PositionView[] memory bobs = engine.getTraderPositions(bob);
+        assertEq(lens.getPositions(0, 10).length, 3);
+        assertEq(lens.getPositions(1, 1).length, 1);
+        assertEq(lens.getPositions(2, 10).length, 1);
+        assertEq(lens.getPositions(3, 10).length, 0);
+        PositionView[] memory bobs = lens.getTraderPositions(bob);
         assertEq(bobs.length, 2);
         assertEq(bobs[0].key, engine.positionKey(bob, BTC));
         assertEq(bobs[1].position.priceId, ETH);
-        assertEq(engine.getTraderPositions(carol).length, 0);
+        assertEq(lens.getTraderPositions(carol).length, 0);
     }
 
     function test_views_positionStateAndLiquidationPrice() public {
@@ -520,25 +531,25 @@ contract PerpEngineTest is Base {
         bytes32 shortKey = _open(bob, BTC, false, 1_000e6, 10_000e6);
 
         // 90% of margin = 900 = 9% of notional.
-        (int256 pnl, int256 owed, uint256 liq, bool liquidatable) = engine.getPositionState(longKey, 95_000e18);
+        (int256 pnl, int256 owed, uint256 liq, bool liquidatable) = lens.getPositionState(longKey, 95_000e18);
         assertEq(pnl, -500e6);
         assertEq(owed, 0);
         assertEq(liq, 91_000e18);
         assertFalse(liquidatable);
-        (,,, liquidatable) = engine.getPositionState(longKey, 91_000e18);
+        (,,, liquidatable) = lens.getPositionState(longKey, 91_000e18);
         assertTrue(liquidatable);
-        (,,, liquidatable) = engine.getPositionState(longKey, 91_000e18 + 1e13);
+        (,,, liquidatable) = lens.getPositionState(longKey, 91_000e18 + 1e13);
         assertFalse(liquidatable);
 
-        (pnl,, liq, liquidatable) = engine.getPositionState(shortKey, 95_000e18);
+        (pnl,, liq, liquidatable) = lens.getPositionState(shortKey, 95_000e18);
         assertEq(pnl, 500e6);
         assertEq(liq, 109_000e18);
         assertFalse(liquidatable);
-        (,,, liquidatable) = engine.getPositionState(shortKey, 109_000e18);
+        (,,, liquidatable) = lens.getPositionState(shortKey, 109_000e18);
         assertTrue(liquidatable);
 
-        vm.expectRevert(PerpEngine.PositionNotFound.selector);
-        engine.getPositionState(bytes32(0), 1e18);
+        vm.expectRevert(EngineLens.PositionNotFound.selector);
+        lens.getPositionState(bytes32(0), 1e18);
     }
 
     function test_views_unknownMarketReverts() public {
@@ -565,7 +576,7 @@ contract PerpEngineTest is Base {
         bytes32 key = _open(alice, BTC, isLong, margin, margin * leverage);
         _setPrice(BTC, int64(uint64(exitPrice)), 0, -8);
 
-        (,,, bool liquidatable) = engine.getPositionState(key, exitPrice * 1e10);
+        (,,, bool liquidatable) = lens.getPositionState(key, exitPrice * 1e10);
         if (liquidatable) {
             vm.prank(alice); // self-liquidation keeps the keeper fee inside the two-party total
             engine.liquidate(alice);
@@ -585,13 +596,13 @@ contract PerpEngineTest is Base {
         margin = bound(margin, 5e6, 20_000e6);
         leverage = bound(leverage, 2, 100);
         bytes32 key = _open(alice, BTC, isLong, margin, margin * leverage);
-        (,, uint256 liq,) = engine.getPositionState(key, P100K);
+        (,, uint256 liq,) = lens.getPositionState(key, P100K);
 
-        (,,, bool atLiq) = engine.getPositionState(key, liq);
+        (,,, bool atLiq) = lens.getPositionState(key, liq);
         assertTrue(atLiq, "not liquidatable at the liquidation price");
         // One part per million on the safe side of it the position is healthy.
         uint256 safe = isLong ? liq + liq / 1e6 : liq - liq / 1e6;
-        (,,, bool pastLiq) = engine.getPositionState(key, safe);
+        (,,, bool pastLiq) = lens.getPositionState(key, safe);
         assertFalse(pastLiq, "liquidatable on the safe side of the liquidation price");
     }
 }

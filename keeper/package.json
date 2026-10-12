@@ -1,8 +1,8 @@
 {
-  "name": "arc-house-keeper",
+  "name": "house-money-keeper",
   "version": "1.0.0",
   "private": true,
-  "description": "Liquidation and order-execution keeper for the Arc House perpetuals protocol",
+  "description": "Liquidation and order-execution keeper for the House Money perpetuals protocol",
   "type": "module",
   "engines": {
     "node": ">=22.14.0"

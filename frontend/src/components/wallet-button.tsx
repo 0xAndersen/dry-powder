@@ -32,7 +32,7 @@ export function WalletButton() {
     functionName: "balanceOf",
     args: wallet.address ? [wallet.address] : undefined,
     chainId: config.chainId,
-    query: { enabled: wallet.address !== undefined },
+    query: { enabled: wallet.address !== undefined, refetchInterval: 4_000 },
   });
 
   useEffect(() => {
@@ -51,6 +51,11 @@ export function WalletButton() {
     };
   }, [open]);
 
+  // The popover doubles as the connect-error surface; once connected it starts closed.
+  useEffect(() => {
+    if (wallet.connected) setOpen(false);
+  }, [wallet.connected]);
+
   const connector = connectors[0];
   const addOrSwitch = () => {
     resetSwitch();
@@ -62,7 +67,7 @@ export function WalletButton() {
       <div className="relative" ref={rootRef}>
         <button
           type="button"
-          className="btn btn-primary"
+          className="btn btn-primary h-8 px-2.5 sm:px-3.5"
           aria-label="Connect wallet"
           disabled={connecting || !connector}
           onClick={() => {
@@ -91,7 +96,7 @@ export function WalletButton() {
   return (
     <div className="relative flex items-center gap-2" ref={rootRef}>
       {wallet.wrongNetwork ? (
-        <button type="button" className="btn border-warn text-warn" onClick={addOrSwitch} disabled={switching}>
+        <button type="button" className="btn h-8 border-warn text-warn" onClick={addOrSwitch} disabled={switching}>
           {switching ? <span className="spinner" aria-hidden="true" /> : null}
           <span className="hidden sm:inline">Switch to {chain.name}</span>
           <span className="sm:hidden">Switch network</span>
@@ -99,13 +104,13 @@ export function WalletButton() {
       ) : null}
       <button
         type="button"
-        className="btn"
+        className="btn h-8"
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
         {!wallet.wrongNetwork && balance.data !== undefined ? (
-          <span className="num hidden text-muted sm:inline">{fmtUsdc(balance.data)} USDC</span>
+          <span className="num hidden text-muted lg:inline">{fmtUsdc(balance.data)} {config.collateralSymbol}</span>
         ) : null}
         <span className="num">{wallet.address ? shortAddress(wallet.address) : ""}</span>
       </button>
@@ -114,7 +119,7 @@ export function WalletButton() {
           <div className="px-2.5 py-2">
             <p className="text-xs text-muted">Wallet balance</p>
             <p className="num mt-0.5 text-base">
-              {wallet.wrongNetwork ? "—" : balance.data !== undefined ? `${fmtUsdc(balance.data)} USDC` : "…"}
+              {wallet.wrongNetwork ? "—" : balance.data !== undefined ? `${fmtUsdc(balance.data)} ${config.collateralSymbol}` : "…"}
             </p>
           </div>
           <div className="my-1 border-t border-line" />

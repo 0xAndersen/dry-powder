@@ -4,20 +4,15 @@ pragma solidity 0.8.28;
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {LimitParams, OpenParams, Order, OrderType, Position} from "../src/Types.sol";
 import {Base} from "./Base.t.sol";
-import {MockUSDC} from "./mocks/MockUSDC.sol";
 
 contract OrdersTest is Base {
-    function _exec(uint256 orderId) internal {
-        vm.prank(keeper);
-        engine.executeOrder(orderId, _noBytes());
-    }
-
     function _openWithBrackets(address who, bool isLong, uint256 margin, uint256 size, uint256 tp, uint256 sl)
         internal
         returns (bytes32)
     {
-        PerpEngine.OpenParams memory p = _params(BTC, isLong, margin, size);
+        OpenParams memory p = _params(BTC, isLong, margin, size);
         p.takeProfit = tp;
         p.stopLoss = sl;
         vm.prank(who);
@@ -29,19 +24,19 @@ contract OrdersTest is Base {
     function test_limit_create_escrowsMarginFeeBudgetAndExecutionFee() public {
         uint256 before = usdc.balanceOf(alice);
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderCreated(1, alice, BTC, PerpEngine.OrderType.LimitOpen, true, 99_000e18, 1_000e6, 10_000e6);
+        emit PerpEngine.OrderCreated(1, alice, BTC, OrderType.LimitOpen, true, 99_000e18, 1_000e6, 10_000e6);
         vm.prank(alice);
         uint256 id = engine.createLimitOrder(_limit(BTC, true, 1_000e6, 10_000e6, 99_000e18));
 
         assertEq(id, 1);
         // margin 1,000 + worst-case fee (5 + 10 bps of 10k = 15) + execution fee 0.10
         assertEq(before - usdc.balanceOf(alice), 1_000e6 + 15e6 + EXEC_FEE);
-        PerpEngine.Order memory o = engine.getOrder(1);
+        Order memory o = engine.getOrder(1);
         assertEq(o.trader, alice);
         assertEq(o.priceId, BTC);
-        assertEq(uint8(o.orderType), uint8(PerpEngine.OrderType.LimitOpen));
+        assertEq(uint8(o.orderType), uint8(OrderType.LimitOpen));
         assertTrue(o.isLong);
-        assertEq(o.createdAt, block.timestamp);
+        assertEq(o.createdAt, vm.getBlockTimestamp());
         assertEq(o.margin, 1_000e6);
         assertEq(o.size, 10_000e6);
         assertEq(o.triggerPrice, 99_000e18);
@@ -70,7 +65,7 @@ contract OrdersTest is Base {
         emit PerpEngine.OrderExecuted(id, alice, keeper, 98_900e18);
         _exec(id);
 
-        PerpEngine.Position memory pos = engine.getPosition(alice, BTC);
+        Position memory pos = engine.getPosition(alice, BTC);
         assertEq(pos.entryPrice, 98_900e18); // price improvement goes to the trader
         assertEq(pos.margin, 1_000e6);
         assertEq(pos.size, 10_000e6);
@@ -93,7 +88,7 @@ contract OrdersTest is Base {
 
         _setBtc(101_000);
         _exec(id);
-        PerpEngine.Position memory pos = engine.getPosition(alice, BTC);
+        Position memory pos = engine.getPosition(alice, BTC);
         assertFalse(pos.isLong);
         assertEq(pos.entryPrice, 101_000e18);
     }
@@ -112,7 +107,7 @@ contract OrdersTest is Base {
     }
 
     function test_limit_withBrackets_attachesThemOnFill() public {
-        PerpEngine.LimitParams memory p = _limit(BTC, true, 1_000e6, 10_000e6, 99_000e18);
+        LimitParams memory p = _limit(BTC, true, 1_000e6, 10_000e6, 99_000e18);
         p.takeProfit = 105_000e18;
         p.stopLoss = 97_000e18;
         uint256 before = usdc.balanceOf(alice);
@@ -122,13 +117,13 @@ contract OrdersTest is Base {
 
         _setBtc(99_000);
         _exec(id);
-        PerpEngine.Position memory pos = engine.getPosition(alice, BTC);
+        Position memory pos = engine.getPosition(alice, BTC);
         assertEq(pos.tpOrderId, 2);
         assertEq(pos.slOrderId, 3);
         assertEq(engine.getOrder(2).triggerPrice, 105_000e18);
-        assertEq(uint8(engine.getOrder(2).orderType), uint8(PerpEngine.OrderType.TakeProfit));
+        assertEq(uint8(engine.getOrder(2).orderType), uint8(OrderType.TakeProfit));
         assertEq(engine.getOrder(3).triggerPrice, 97_000e18);
-        assertEq(uint8(engine.getOrder(3).orderType), uint8(PerpEngine.OrderType.StopLoss));
+        assertEq(uint8(engine.getOrder(3).orderType), uint8(OrderType.StopLoss));
         assertEq(engine.orderCount(), 2);
         _assertEngineSolvent();
     }
@@ -156,7 +151,7 @@ contract OrdersTest is Base {
         engine.createLimitOrder(_limit(BTC, true, 1_000e6, 10_000e6, 0));
 
         // Brackets are validated against the limit price.
-        PerpEngine.LimitParams memory p = _limit(BTC, true, 1_000e6, 10_000e6, 99_000e18);
+        LimitParams memory p = _limit(BTC, true, 1_000e6, 10_000e6, 99_000e18);
         p.takeProfit = 99_000e18;
         vm.expectRevert(PerpEngine.InvalidTrigger.selector);
         engine.createLimitOrder(p);
@@ -247,7 +242,7 @@ contract OrdersTest is Base {
     // ───────────────────────────── Cancel ─────────────────────────────
 
     function test_cancel_limitRefundsEverything() public {
-        PerpEngine.LimitParams memory p = _limit(BTC, true, 1_000e6, 10_000e6, 99_000e18);
+        LimitParams memory p = _limit(BTC, true, 1_000e6, 10_000e6, 99_000e18);
         p.takeProfit = 105_000e18;
         p.stopLoss = 97_000e18;
         uint256 before = usdc.balanceOf(alice);
@@ -295,7 +290,7 @@ contract OrdersTest is Base {
         uint256 before = usdc.balanceOf(alice);
         _openWithBrackets(alice, true, 1_000e6, 10_000e6, 102_000e18, 98_000e18);
         assertEq(before - usdc.balanceOf(alice), 1_000e6 + 5e6 + 2 * EXEC_FEE);
-        PerpEngine.Position memory pos = engine.getPosition(alice, BTC);
+        Position memory pos = engine.getPosition(alice, BTC);
         assertEq(pos.tpOrderId, 1);
         assertEq(pos.slOrderId, 2);
         assertEq(engine.getOrder(1).trader, alice);
@@ -305,7 +300,7 @@ contract OrdersTest is Base {
     }
 
     function test_open_bracketValidation() public {
-        PerpEngine.OpenParams memory p = _params(BTC, true, 1_000e6, 10_000e6);
+        OpenParams memory p = _params(BTC, true, 1_000e6, 10_000e6);
         vm.startPrank(alice);
         p.takeProfit = 100_000e18; // long TP must be above entry
         vm.expectRevert(PerpEngine.InvalidTrigger.selector);
@@ -434,22 +429,22 @@ contract OrdersTest is Base {
 
         vm.startPrank(alice);
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderCreated(1, alice, BTC, PerpEngine.OrderType.TakeProfit, true, 103_000e18, 0, 0);
-        assertEq(engine.setTriggerOrder(BTC, PerpEngine.OrderType.TakeProfit, 103_000e18), 1);
-        assertEq(engine.setTriggerOrder(BTC, PerpEngine.OrderType.StopLoss, 97_000e18), 2);
+        emit PerpEngine.OrderCreated(1, alice, BTC, OrderType.TakeProfit, true, 103_000e18, 0, 0);
+        assertEq(engine.setTriggerOrder(BTC, OrderType.TakeProfit, 103_000e18), 1);
+        assertEq(engine.setTriggerOrder(BTC, OrderType.StopLoss, 97_000e18), 2);
         assertEq(before - usdc.balanceOf(alice), 2 * EXEC_FEE);
 
         // Moving an existing trigger reuses the order and its escrow.
         skip(1);
         vm.expectEmit(address(engine));
         emit PerpEngine.OrderUpdated(2, 100_500e18);
-        assertEq(engine.setTriggerOrder(BTC, PerpEngine.OrderType.StopLoss, 100_500e18), 2);
-        assertEq(engine.setTriggerOrder(BTC, PerpEngine.OrderType.TakeProfit, 104_000e18), 1);
+        assertEq(engine.setTriggerOrder(BTC, OrderType.StopLoss, 100_500e18), 2);
+        assertEq(engine.setTriggerOrder(BTC, OrderType.TakeProfit, 104_000e18), 1);
         vm.stopPrank();
 
         assertEq(before - usdc.balanceOf(alice), 2 * EXEC_FEE);
         assertEq(engine.getOrder(2).triggerPrice, 100_500e18);
-        assertEq(engine.getOrder(2).createdAt, block.timestamp);
+        assertEq(engine.getOrder(2).createdAt, vm.getBlockTimestamp());
         assertEq(engine.getOrder(1).triggerPrice, 104_000e18);
         assertEq(engine.orderCount(), 2);
 
@@ -463,10 +458,10 @@ contract OrdersTest is Base {
     function test_setTriggerOrder_movedTriggerNeedsAPriceNewerThanTheMove() public {
         _open(alice, BTC, true, 1_000e6, 10_000e6);
         vm.prank(alice);
-        engine.setTriggerOrder(BTC, PerpEngine.OrderType.StopLoss, 97_000e18);
+        engine.setTriggerOrder(BTC, OrderType.StopLoss, 97_000e18);
         skip(2);
         vm.prank(alice);
-        engine.setTriggerOrder(BTC, PerpEngine.OrderType.StopLoss, 100_000e18);
+        engine.setTriggerOrder(BTC, OrderType.StopLoss, 100_000e18);
         // The stored price (100,000, two seconds old) would satisfy the moved stop, but it predates the move.
         vm.prank(keeper);
         vm.expectRevert(PerpEngine.PriceBeforeOrder.selector);
@@ -476,11 +471,11 @@ contract OrdersTest is Base {
     function test_setTriggerOrder_validations() public {
         vm.startPrank(alice);
         vm.expectRevert(PerpEngine.NotTriggerOrderType.selector);
-        engine.setTriggerOrder(BTC, PerpEngine.OrderType.LimitOpen, 1e18);
+        engine.setTriggerOrder(BTC, OrderType.LimitOpen, 1e18);
         vm.expectRevert(PerpEngine.InvalidTrigger.selector);
-        engine.setTriggerOrder(BTC, PerpEngine.OrderType.TakeProfit, 0);
+        engine.setTriggerOrder(BTC, OrderType.TakeProfit, 0);
         vm.expectRevert(PerpEngine.PositionNotFound.selector);
-        engine.setTriggerOrder(BTC, PerpEngine.OrderType.TakeProfit, 1e18);
+        engine.setTriggerOrder(BTC, OrderType.TakeProfit, 1e18);
         vm.stopPrank();
     }
 
@@ -495,25 +490,37 @@ contract OrdersTest is Base {
         assertEq(usdc.balanceOf(address(engine)), 0);
     }
 
-    function test_blocklistedTrader_cannotBeClosedByKeeperButCanBeLiquidated() public {
+    function test_blocklistedTrader_keeperCloseDefersThePaymentAndLiquidationStillWorks() public {
         _flatFees();
         _openWithBrackets(alice, true, 100e6, 10_000e6, 100_500e18, 99_500e18);
         usdc.setBlocklisted(alice, true);
 
-        // Closing pays the trader, which Arc's USDC refuses; the keeper's call simply reverts.
+        // Closing pays the trader, which Arc's USDC refuses. The position is removed anyway and what she is
+        // owed (margin 100 - fee 5 + profit 50, plus the stop-loss escrow) is parked for her to claim.
         _setBtc(100_500);
-        vm.prank(keeper);
-        vm.expectRevert(abi.encodeWithSelector(MockUSDC.Blocklisted.selector, alice));
-        engine.executeOrder(1, _noBytes());
+        vm.expectEmit(address(engine));
+        emit PerpEngine.PaymentDeferred(alice, 145e6 + EXEC_FEE);
+        _exec(1);
+        assertEq(engine.positionCount(), 0);
+        assertEq(engine.orderCount(), 0);
+        assertEq(engine.claimable(alice), 145e6 + EXEC_FEE);
+        assertEq(engine.totalClaimable(), 145e6 + EXEC_FEE);
+        assertEq(usdc.balanceOf(keeper), EXEC_FEE);
+        _assertEngineSolvent();
 
-        // Liquidation never pays the trader, so the blocklist cannot shield a bad position.
+        // Liquidation never pays the trader, so the blocklist cannot shield a bad position either.
+        usdc.setBlocklisted(alice, false);
+        _openWithBrackets(alice, true, 100e6, 10_000e6, 101_500e18, 100_000e18);
+        usdc.setBlocklisted(alice, true);
         _setBtc(99_000);
         vm.prank(keeper);
         assertEq(engine.liquidate(alice), 1);
         assertEq(engine.positionCount(), 0);
         assertEq(engine.orderCount(), 0);
-        assertEq(vault.totalFeesCollected(), 5e6 + 2 * EXEC_FEE);
+        // two open fees, one close fee, and the two orphaned bracket escrows of the liquidated position
+        assertEq(vault.totalFeesCollected(), 15e6 + 2 * EXEC_FEE);
         assertEq(house.balanceOf(alice), 9_800e18);
+        assertEq(engine.claimable(alice), 145e6 + EXEC_FEE);
         _assertEngineSolvent();
     }
 
@@ -529,7 +536,7 @@ contract OrdersTest is Base {
     }
 
     function test_limit_doesNotFillThroughItsOwnStop() public {
-        PerpEngine.LimitParams memory p = _limit(BTC, true, 1_000e6, 10_000e6, 99_000e18);
+        LimitParams memory p = _limit(BTC, true, 1_000e6, 10_000e6, 99_000e18);
         p.stopLoss = 98_000e18;
         vm.prank(alice);
         uint256 id = engine.createLimitOrder(p);
@@ -552,7 +559,7 @@ contract OrdersTest is Base {
         skip(1);
         bytes[] memory newer = _fresh(BTC, 100_400e8, 0, -8);
 
-        PerpEngine.OpenParams memory p = _params(BTC, true, 10_000e6, 1_000_000e6);
+        OpenParams memory p = _params(BTC, true, 10_000e6, 1_000_000e6);
         p.takeProfit = 100_300e18;
         vm.startPrank(alice);
         engine.openPosition{value: PYTH_FEE}(p, older);
@@ -579,24 +586,24 @@ contract OrdersTest is Base {
         vm.prank(alice);
         engine.createLimitOrder(_limit(ETH, true, 1_000e6, 10_000e6, 3_900e18));
 
-        (uint256[] memory ids, PerpEngine.Order[] memory orders) = engine.getOrders(0, 10);
+        (uint256[] memory ids, Order[] memory orders) = lens.getOrders(0, 10);
         assertEq(ids.length, 3);
         assertEq(orders.length, 3);
         assertEq(ids[0], 1);
         assertEq(orders[1].trader, bob);
-        (ids, orders) = engine.getOrders(1, 1);
+        (ids, orders) = lens.getOrders(1, 1);
         assertEq(ids.length, 1);
         assertEq(ids[0], 2);
-        (ids, orders) = engine.getOrders(3, 10);
+        (ids, orders) = lens.getOrders(3, 10);
         assertEq(ids.length, 0);
         assertEq(orders.length, 0);
 
-        (ids, orders) = engine.getTraderOrders(alice);
+        (ids, orders) = lens.getTraderOrders(alice);
         assertEq(ids.length, 2);
         assertEq(ids[0], 1);
         assertEq(ids[1], 3);
         assertEq(orders[1].priceId, ETH);
-        (ids,) = engine.getTraderOrders(carol);
+        (ids,) = lens.getTraderOrders(carol);
         assertEq(ids.length, 0);
     }
 }

@@ -9,16 +9,17 @@ import { TxStatus } from "@/components/tx-status";
 import { useTx } from "@/hooks/use-tx";
 import { useWallet } from "@/hooks/use-wallet";
 import { rewardTokenAbi } from "@/lib/abi";
-import { TOKEN_DECIMALS, fmtPercent, fmtToken, fmtUsdc, parseAmount, toInputString } from "@/lib/format";
-import { ratio } from "@/lib/math";
+import { useChainNow } from "@/hooks/use-market-data";
+import { TOKEN_DECIMALS, fmtDuration, fmtPercent, fmtToken, fmtUsdc, parseAmount, toInputString } from "@/lib/format";
+import { ONE, ratio } from "@/lib/math";
 
 type Mode = "stake" | "unstake";
 
-function Figure({ label, value, unit, tone }: { label: string; value: React.ReactNode; unit?: string; tone?: "brass" }) {
+function Figure({ label, value, unit, tone }: { label: string; value: React.ReactNode; unit?: string; tone?: "neon" }) {
   return (
     <div className="min-w-0">
       <dt className="text-xs text-muted">{label}</dt>
-      <dd className={`num mt-0.5 truncate text-lg font-semibold ${tone === "brass" ? "text-brass" : ""}`}>
+      <dd className={`num mt-0.5 truncate text-lg font-semibold ${tone === "neon" ? "text-neon" : ""}`}>
         {value}
         {unit ? <span className="ml-1 text-xs font-normal text-muted">{unit}</span> : null}
       </dd>
@@ -34,6 +35,8 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
   const { switchChain, isPending: switching } = useSwitchChain();
   const tx = useTx();
   const id = useId();
+  const now = useChainNow();
+  const sym = cfg.collateralSymbol;
 
   const [mode, setMode] = useState<Mode>("stake");
   const [text, setText] = useState("");
@@ -49,7 +52,7 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
           { ...reward, functionName: "earned", args: [owner] },
         ]
       : [],
-    query: { enabled: owner !== undefined },
+    query: { enabled: owner !== undefined, refetchInterval: 2_500 },
   });
   const walletHouse = owner ? (account.data?.[0] as bigint | undefined) : undefined;
   const staked = owner ? (account.data?.[1] as bigint | undefined) : undefined;
@@ -95,7 +98,7 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
         return writeContract(wagmiConfig, request);
       });
       return isStake
-        ? `Staked ${fmtToken(amount)} HOUSE. It earns from the next inflow on.`
+        ? `Staked ${fmtToken(amount)} HOUSE. It earns its share of the yield stream from now on.`
         : `Unstaked ${fmtToken(amount)} HOUSE. Yield earned so far stays claimable.`;
     });
     if (ok) setText("");
@@ -113,7 +116,7 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
         });
         return writeContract(wagmiConfig, request);
       });
-      return `Claimed ${fmtUsdc(earned, 6)} USDC of staking yield.`;
+      return `Claimed ${fmtUsdc(earned, 6)} ${sym} of staking yield.`;
     });
   };
 
@@ -138,7 +141,7 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
     );
   } else {
     button = (
-      <button type="submit" className={`btn btn-lg ${blocking ? "" : "btn-primary"}`} disabled={blocking !== null || tx.busy}>
+      <button type="submit" className={`btn btn-lg ${blocking ? "" : "btn-primary"}`} disabled={blocking !== null || tx.busy} data-testid="stake-submit">
         {tx.busy ? <span className="spinner" aria-hidden="true" /> : null}
         <span className="truncate">{tx.busy ? "Working" : (blocking ?? (isStake ? "Stake HOUSE" : "Unstake HOUSE"))}</span>
       </button>
@@ -146,6 +149,11 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
   }
 
   const dash = "—";
+  const streamLeft = stats ? Math.max(0, Number(stats.periodFinish) - now) : 0;
+  const streaming = stats !== undefined && stats.yieldRate > 0n && streamLeft > 0;
+  const perDay = stats ? (stats.yieldRate * 86_400n) / ONE : 0n;
+  const leftInStream = stats ? (stats.yieldRate * BigInt(Math.floor(streamLeft))) / ONE : 0n;
+  const myPerDay = poolShare !== null ? (perDay * BigInt(Math.round(poolShare * 1e6))) / 1_000_000n : 0n;
   const canClaim = wallet.ready && earned !== undefined && earned > 0n && !tx.busy;
 
   return (
@@ -155,9 +163,10 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
           Loss rebates and staking
         </h2>
         <p className="mt-1.5 max-w-[62ch] text-[0.8125rem] text-muted">
-          Every 1 USDC a trader loses mints them 100 HOUSE. Stake HOUSE to share 15% of everything that flows into the
-          house (trader losses and fees), paid in USDC in proportion to your share of the staking pool. No approval is
-          needed to stake, and you can unstake at any time.
+          Every 1 {sym} a trader loses mints them 100 HOUSE. Staked HOUSE shares 15% of house profit above the vault&rsquo;s
+          high-water mark: each epoch&rsquo;s share is streamed to stakers second by second, in {sym}, in proportion to
+          their stake. Nothing is paid while the house is below its previous high. No approval is needed to stake, and you can
+          unstake at any time.
         </p>
       </div>
 
@@ -165,21 +174,43 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
         <Figure label="HOUSE in wallet" value={walletHouse !== undefined ? fmtToken(walletHouse) : dash} />
         <Figure label="HOUSE staked" value={staked !== undefined ? fmtToken(staked) : dash} />
         <Figure label="Your share of the pool" value={staked !== undefined ? (poolShare !== null ? fmtPercent(poolShare, 2) : "0.00%") : dash} />
-        <Figure label="Claimable yield" value={earned !== undefined ? fmtUsdc(earned, 4) : dash} unit="USDC" tone="brass" />
+        <Figure label="Claimable yield" value={earned !== undefined ? fmtUsdc(earned, 4) : dash} unit={sym} tone="neon" />
+      </dl>
+
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-b border-line bg-bg/40 px-4 py-3 text-[0.8125rem]" data-testid="yield-stream">
+        <div>
+          <dt className="text-xs text-muted">Yield stream</dt>
+          <dd className="num mt-0.5">
+            {stats ? (streaming ? `${fmtUsdc(perDay, 4)} ${sym} / day to all stakers` : "Not streaming") : "…"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted">{streaming ? "Ends in" : "Starts"}</dt>
+          <dd className="num mt-0.5">
+            {stats ? (streaming ? `${fmtDuration(streamLeft)} (${fmtUsdc(leftInStream, 4)} ${sym} left)` : "when an epoch settles with a gain") : "…"}
+          </dd>
+        </div>
+        {streaming && staked !== undefined && staked > 0n ? (
+          <div className="col-span-2 text-xs text-faint">
+            At your current share you earn about <span className="num text-text">{fmtUsdc(myPerDay, 4)} {sym}</span> a day while this stream runs. Each settled
+            epoch with a gain restarts the stream with whatever is left plus the new amount.
+          </div>
+        ) : null}
       </dl>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
         <p className="text-xs text-faint">
           {stats
             ? stats.totalStaked === 0n
-              ? "Nobody is staking yet, so the house currently keeps the full inflow."
-              : `${fmtUsdc(stats.stakerYieldAllocated)} USDC allocated to stakers since launch, ${fmtUsdc(stats.pendingStakerYield)} not yet claimed.`
+              ? "Nobody is staking yet, so the house keeps all of its profit."
+              : `${fmtUsdc(stats.stakerYieldAllocated)} ${sym} allocated to stakers since launch, ${fmtUsdc(stats.pendingStakerYield)} not yet claimed.`
             : "…"}
         </p>
         <button
           type="button"
           className="btn btn-primary"
           disabled={!canClaim}
+          data-testid="claim-yield"
           title={wallet.ready && earned === 0n ? "There is no yield to claim yet" : undefined}
           onClick={claim}
         >
@@ -229,6 +260,7 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
               id={`${id}-amount`}
               inputMode="decimal"
               autoComplete="off"
+              data-testid="stake-amount"
               placeholder="0"
               value={text}
               onChange={(event) => setText(event.target.value)}
@@ -239,6 +271,7 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
             <button
               type="button"
               className="chip"
+              data-testid="stake-max"
               disabled={available === undefined || available === 0n}
               onClick={() => available !== undefined && setText(toInputString(available, TOKEN_DECIMALS, TOKEN_DECIMALS))}
             >

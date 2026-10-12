@@ -1,0 +1,49 @@
+{
+ "usdc": "0x13BB508Ecf4CA09f59F01507578444B13917653C",
+ "pub": "0x804D0D8A28F7e0D9aA7b6f30B51299df55fc6004",
+ "oracle": "0x00666bB404c6f2d620c7692CB317B3123A3BeeB6",
+ "vault": "0xfEa313cCC274BFdE469376B849345Ce41368072d",
+ "token": "0x260dd7343D2AC988E09bE63b259Ac146f2367624",
+ "engine": "0xaa381f0d455a27d590dC7Ecf0Bd9c274852bF086",
+ "lens": "0x71479c42C93e2a286971B79B953392C2fbA66E5B",
+ "multicall3": "0xcA11bde05977b3631167028862bE2a173976CA11",
+ "publisher": "0xA0d81251a6DC83B90E72f2eadB117157f0F91eF7",
+ "keeper": "0x1bb175Bb4034555Fa5Da195d9343BFDa6dDf8ea6",
+ "deployer": "0x2Fb0Ef2540748c705FdC135Fc1cb5d8bec4571Be",
+ "markets": [
+  {
+   "symbol": "BTC-USD",
+   "id": "0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43"
+  },
+  {
+   "symbol": "ETH-USD",
+   "id": "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace"
+  },
+  {
+   "symbol": "SOL-USD",
+   "id": "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"
+  },
+  {
+   "symbol": "EUR-USD",
+   "id": "0xa995d00bb36a63cef7fd2c287dc105fc8f3d93779f062f09551b0af3e81ec30b"
+  },
+  {
+   "symbol": "JPY-USD",
+   "id": "0xef2c98c804ba503c6a707e38be4dfbb16683775f195b091252bf24693042fd52"
+  },
+  {
+   "symbol": "XAU-USD",
+   "id": "0x765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2"
+  },
+  {
+   "symbol": "ETH-BTC",
+   "id": "0xf5464e72d206a044762e3837bb6c37fd1f1f7484e2d7fa45348b6ea240be558d"
+  },
+  {
+   "symbol": "BTC-USD-1720Z",
+   "id": "0x0a0b4fda675bde92f486e35e116817d75f612812a13a119dc7c4f4d319ccfb5a",
+   "expiry": 1791825649
+  }
+ ],
+ "done": true
+}

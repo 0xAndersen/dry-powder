@@ -1,17 +1,22 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { QueryClient, QueryClientProvider, useQueryClient, type Query } from "@tanstack/react-query";
-import { WagmiProvider, createConfig, http, injected, useBlockNumber } from "wagmi";
+import { QueryClient, QueryClientProvider, type Query } from "@tanstack/react-query";
+import { WagmiProvider, createConfig, http, injected } from "wagmi";
 import type { Chain } from "viem";
 import type { RuntimeConfig } from "@/lib/config";
 import { buildChain } from "@/lib/chain";
-import { PriceStore } from "@/lib/pyth";
+import { KrakenStore } from "@/lib/kraken";
+import { HermesStore } from "@/lib/pyth";
+import { MarketDataProvider } from "@/hooks/use-market-data";
 
 type AppContextValue = {
   config: RuntimeConfig;
   chain: Chain;
-  prices: PriceStore;
+  /** Tape prices (publisher mode). */
+  kraken: KrakenStore | null;
+  /** Pyth prices and signed updates (pyth mode). */
+  hermes: HermesStore | null;
 };
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -34,17 +39,6 @@ export function isChainRead(query: Query): boolean {
   return typeof head === "string" && CHAIN_READ_KEYS.has(head);
 }
 
-/** Refetches every on-chain read whenever a new block is observed. */
-function ChainSync({ chainId }: { chainId: number }) {
-  const queryClient = useQueryClient();
-  const { data: blockNumber } = useBlockNumber({ chainId, watch: true });
-  useEffect(() => {
-    if (blockNumber === undefined) return;
-    void queryClient.invalidateQueries({ predicate: isChainRead });
-  }, [blockNumber, queryClient]);
-  return null;
-}
-
 export function Providers({ config, children }: { config: RuntimeConfig; children: ReactNode }) {
   const chain = useMemo(() => buildChain(config), [config]);
 
@@ -52,10 +46,10 @@ export function Providers({ config, children }: { config: RuntimeConfig; childre
     createConfig({
       chains: [chain],
       connectors: [injected({ shimDisconnect: true })],
-      transports: { [chain.id]: http(config.rpcUrl, { batch: { wait: 16 }, retryCount: 2 }) },
-      // No Multicall3 deployment is assumed on Arc; reads are batched at the JSON-RPC level instead.
+      // Reads issued in the same tick travel in one JSON-RPC batch; no Multicall deployment is assumed.
+      transports: { [chain.id]: http(config.rpcUrl, { batch: { wait: 12 }, retryCount: 2 }) },
       batch: { multicall: false },
-      pollingInterval: 4_000,
+      pollingInterval: 1_000,
       ssr: true,
     }),
   );
@@ -64,25 +58,29 @@ export function Providers({ config, children }: { config: RuntimeConfig; childre
     () =>
       new QueryClient({
         defaultOptions: {
-          queries: { staleTime: 2_000, refetchOnWindowFocus: false, retry: 1 },
+          queries: { staleTime: 800, refetchOnWindowFocus: false, retry: 1 },
         },
       }),
   );
 
-  const [prices] = useState(() => new PriceStore(config.hermesUrl));
+  const [kraken] = useState(() => (config.oracleMode === "publisher" ? new KrakenStore(config.krakenUrl) : null));
+  const [hermes] = useState(() => (config.oracleMode === "pyth" ? new HermesStore(config.hermesUrl, config.pythApiKey) : null));
   useEffect(() => {
-    prices.start();
-    return () => prices.stop();
-  }, [prices]);
+    kraken?.start();
+    hermes?.start();
+    return () => {
+      kraken?.stop();
+      hermes?.stop();
+    };
+  }, [kraken, hermes]);
 
-  const value = useMemo<AppContextValue>(() => ({ config, chain, prices }), [config, chain, prices]);
+  const value = useMemo<AppContextValue>(() => ({ config, chain, kraken, hermes }), [config, chain, kraken, hermes]);
 
   return (
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
         <AppContext.Provider value={value}>
-          <ChainSync chainId={chain.id} />
-          {children}
+          <MarketDataProvider>{children}</MarketDataProvider>
         </AppContext.Provider>
       </QueryClientProvider>
     </WagmiProvider>

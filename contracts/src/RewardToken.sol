@@ -70,7 +70,7 @@ contract RewardToken is ERC20, IRewardToken {
     error InsufficientStake();
     error NothingToClaim();
 
-    constructor(address vault_, address engine_, uint256 streamPeriod_) ERC20("Arc House", "HOUSE") {
+    constructor(address vault_, address engine_, uint256 streamPeriod_) ERC20("House Money", "HOUSE") {
         if (vault_ == address(0) || engine_ == address(0)) revert ZeroAddress();
         if (streamPeriod_ == 0) revert ZeroAmount();
         vault = IHouseVault(vault_);

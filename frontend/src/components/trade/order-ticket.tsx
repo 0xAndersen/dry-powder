@@ -1,0 +1,1145 @@
+"use client";
+
+import { forwardRef, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { keepPreviousData } from "@tanstack/react-query";
+import { useConnect, useReadContract, useSwitchChain } from "wagmi";
+import { useApp } from "@/components/providers";
+import { ConfirmDialog, type ConfirmLine } from "@/components/trade/confirm-dialog";
+import { TrackedOrders } from "@/components/trade/tracked-orders";
+import { TxStatus } from "@/components/tx-status";
+import type { AccountData, PositionView } from "@/hooks/use-account-data";
+import { useActionContext } from "@/hooks/use-action-context";
+import { useLocalStore } from "@/hooks/use-local-store";
+import { useMarketData, type MarketPrice } from "@/hooks/use-market-data";
+import { useTx } from "@/hooks/use-tx";
+import { useWallet, type AccountView } from "@/hooks/use-wallet";
+import { perpEngineAbi } from "@/lib/abi";
+import { marketableTrigger, type OpenRequest } from "@/lib/actions";
+import { UserFacingError } from "@/lib/errors";
+import { closeFlow, openFlow, waitFor } from "@/lib/flows";
+import { PRICE_DECIMALS, USDC_DECIMALS, fmtAge, fmtPercent, fmtPrice, fmtQty, fmtUsdc, numToPrice, parseAmount, toInputString } from "@/lib/format";
+import { isExpired, isSettled, type Instrument } from "@/lib/instruments";
+import { BPS, ONE, absDiff, baseFee, ceilDiv, liquidationPrice, maxOpenFee, notionalOf, pricePnl, profitCapPrice, ratio, unitsOf } from "@/lib/math";
+import { valuePosition } from "@/lib/position";
+import { MAX_SLIPPAGE_BPS, tradeSettings } from "@/lib/storage";
+
+type OrderKind = "market" | "limit";
+type QtyMode = "notional" | "margin" | "contracts" | "risk";
+type TpUnit = "price" | "pct" | "roe" | "r";
+type SlUnit = "price" | "pct" | "roe";
+
+export type TicketDraft = { isLong: boolean; limit: number | null; takeProfit: number | null; stopLoss: number | null };
+
+export type TicketHandle = {
+  setSide: (isLong: boolean) => void;
+  setKind: (kind: OrderKind) => void;
+  focusSize: () => void;
+  submit: () => void;
+  /** Receives a price picked on the chart. */
+  setPrice: (target: "limit" | "tp" | "sl", price: number) => void;
+  /** Closes the position in this market, through the confirmation step unless one-click trading is on. */
+  close: () => void;
+};
+
+/** Kept back when "Max" is used, so later execution fees stay covered. */
+const SLIPPAGE_PRESETS = [10, 30, 100] as const;
+const LEVERAGE_PRESETS = [2, 5, 10, 25, 50, 100] as const;
+/** In risk mode the stop must trigger well before liquidation: loss at the stop may use at most this share of the 90% threshold. */
+const STOP_SAFETY = 0.8;
+
+const QTY_MODES: { key: QtyMode; label: string; hint: string }[] = [
+  { key: "notional", label: "Size", hint: "Position size in the collateral token (margin x leverage)" },
+  { key: "margin", label: "Margin", hint: "Collateral you put up; size follows from leverage" },
+  { key: "contracts", label: "Contracts", hint: "Units of the underlying; fractions are fine" },
+  { key: "risk", label: "Risk", hint: "Choose how much you are willing to lose at your stop; size and leverage are computed" },
+];
+
+function Row({ label, value, hint, strong, tone }: { label: React.ReactNode; value: React.ReactNode; hint?: string; strong?: boolean; tone?: "long" | "short" | "warn" }) {
+  const color = tone === "long" ? "text-long" : tone === "short" ? "text-short" : tone === "warn" ? "text-warn" : "text-text";
+  return (
+    <div className="flex items-baseline justify-between gap-3" title={hint}>
+      <dt className={strong ? "text-text" : "text-muted"}>{label}</dt>
+      <dd className={`num text-right ${strong ? "font-semibold" : ""} ${color}`}>{value}</dd>
+    </div>
+  );
+}
+
+function priceInput(value: bigint, dp: number): string {
+  return toInputString(value, PRICE_DECIMALS, dp);
+}
+
+/** Visual strip placing liquidation, stop, entry and target on one axis. */
+function TradeMap({ isLong, entry, liq, stop, target, dp }: { isLong: boolean; entry: bigint; liq: bigint | null; stop: bigint | null; target: bigint | null; dp: number }) {
+  const points = [
+    { key: "liq", label: "Liq", value: liq, cls: "bg-neon" },
+    { key: "sl", label: "Stop", value: stop, cls: "bg-short" },
+    { key: "entry", label: "Entry", value: entry, cls: "bg-text" },
+    { key: "tp", label: "Target", value: target, cls: "bg-long" },
+  ].filter((p): p is { key: string; label: string; value: bigint; cls: string } => p.value !== null && p.value > 0n);
+  if (points.length < 2) return null;
+  const values = points.map((p) => Number(p.value) / 1e18);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const e = Number(entry) / 1e18;
+  const entryPct = ((e - min) / span) * 100;
+  return (
+    <div
+      className="trade-map"
+      role="img"
+      aria-label={`${isLong ? "Long" : "Short"} trade map: ${points.map((p) => `${p.label} ${fmtPrice(p.value, dp)}`).join(", ")}`}
+    >
+      <div className="trade-map-track">
+        <span className="trade-map-loss" style={isLong ? { left: 0, width: `${entryPct}%` } : { left: `${entryPct}%`, right: 0 }} />
+        <span className="trade-map-gain" style={isLong ? { left: `${entryPct}%`, right: 0 } : { left: 0, width: `${entryPct}%` }} />
+        {points.map((p, i) => (
+          <span key={p.key} className={`trade-map-tick ${p.cls}`} style={{ left: `${((values[i]! - min) / span) * 100}%` }} />
+        ))}
+      </div>
+      <div className="relative mt-1 h-7 text-2xs">
+        {points.map((p, i) => {
+          const pct = ((values[i]! - min) / span) * 100;
+          const align = pct < 12 ? "translate-x-0" : pct > 88 ? "-translate-x-full" : "-translate-x-1/2";
+          return (
+            <span key={p.key} className={`absolute top-0 flex flex-col leading-tight ${align} ${pct > 88 ? "items-end" : pct < 12 ? "items-start" : "items-center"}`} style={{ left: `${pct}%` }}>
+              <span className="text-faint">{p.label}</span>
+              <span className="num text-muted">{fmtPrice(p.value, dp)}</span>
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export const OrderTicket = forwardRef<
+  TicketHandle,
+  {
+    instrument: Instrument;
+    price: MarketPrice;
+    account: AccountData | undefined;
+    getAccount: () => AccountData | undefined;
+    view: AccountView;
+    position: PositionView | undefined;
+    chainNow: number;
+    onDraftChange: (draft: TicketDraft) => void;
+    onPickRequest: (target: "limit" | "tp" | "sl") => void;
+    onShowShortcuts: () => void;
+  }
+>(function OrderTicket({ instrument, price, account, getAccount, view, position, chainNow, onDraftChange, onPickRequest, onShowShortcuts }, ref) {
+  const { config: cfg, chain } = useApp();
+  const { params, error: paramsError } = useMarketData();
+  const wallet = useWallet();
+  const { connect, connectors, isPending: connecting } = useConnect();
+  const { switchChain, isPending: switching } = useSwitchChain();
+  const tx = useTx({ autoDismissMs: 12000 });
+  const actionContext = useActionContext();
+  const ids = useId();
+  const [settings, setSettings] = useLocalStore(tradeSettings);
+  const sym = cfg.collateralSymbol;
+  const dp = instrument.priceDecimals;
+  const publisher = cfg.oracleMode === "publisher";
+
+  const [kind, setKind] = useState<OrderKind>("market");
+  const [isLong, setIsLong] = useState(true);
+  const [qtyMode, setQtyMode] = useState<QtyMode>("notional");
+  const [qtyText, setQtyText] = useState("");
+  const [riskText, setRiskText] = useState("");
+  const [riskUnit, setRiskUnit] = useState<"usdc" | "pct">("usdc");
+  const [levX10, setLevX10] = useState(50);
+  const [levText, setLevText] = useState("5");
+  const [limitText, setLimitText] = useState("");
+  const [tpText, setTpText] = useState("");
+  const [tpUnit, setTpUnit] = useState<TpUnit>("price");
+  const [slText, setSlText] = useState("");
+  const [slUnit, setSlUnit] = useState<SlUnit>("price");
+  const [bracketsOpen, setBracketsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [slippageText, setSlippageText] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<null | "open" | "close" | "reverse">(null);
+  const sizeInputRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  const maxLeverage = instrument.maxLeverage;
+  const sideWord = isLong ? "long" : "short";
+  const expired = isExpired(instrument, chainNow);
+  const settled = isSettled(instrument);
+
+  // Keep leverage inside the market's range when switching markets.
+  useEffect(() => {
+    if (levX10 > maxLeverage * 10) {
+      setLevX10(maxLeverage * 10);
+      setLevText(String(maxLeverage));
+    }
+  }, [maxLeverage, levX10]);
+
+  // ── Entry reference ──
+  const reference = price.reference;
+  const limitPrice = parseAmount(limitText, PRICE_DECIMALS);
+  const marketEntry = reference ? (isLong ? reference.ask : reference.bid) : null;
+  const limitFillsNow = kind === "limit" && limitPrice && marketEntry ? (isLong ? marketEntry <= limitPrice : marketEntry >= limitPrice) : false;
+  const entry: bigint | null = kind === "market" ? marketEntry : limitPrice && limitPrice > 0n ? (limitFillsNow && marketEntry ? marketEntry : limitPrice) : null;
+  /** Price the engine validates brackets against when the order is created. */
+  const bracketRef: bigint | null =
+    kind === "limit" ? (limitPrice && limitPrice > 0n ? limitPrice : null) : reference ? (publisher ? marketableTrigger(reference, isLong, settings.slippageBps) : marketEntry) : null;
+
+  // ── Stop-loss (resolved first: risk sizing and R-multiples depend on it) ──
+  const slRaw = slText.trim();
+  const slNumber = slRaw === "" ? null : Number(slRaw);
+  const slInvalidNumber = slRaw !== "" && !(slNumber !== null && Number.isFinite(slNumber) && slNumber > 0);
+  const balance = account?.balance;
+
+  const riskAmount = (() => {
+    if (qtyMode !== "risk") return null;
+    if (riskUnit === "usdc") return parseAmount(riskText, USDC_DECIMALS);
+    const pct = parseAmount(riskText, 4);
+    if (pct === null || balance === undefined) return null;
+    return (balance * pct) / 1_000_000n;
+  })();
+
+  const stopFromDistance = (fraction: number): bigint | null => {
+    if (!entry || !(fraction > 0)) return null;
+    const scaled = BigInt(Math.round(fraction * 1e9));
+    if (isLong) return scaled >= 1_000_000_000n ? null : (entry * (1_000_000_000n - scaled)) / 1_000_000_000n;
+    return (entry * (1_000_000_000n + scaled)) / 1_000_000_000n;
+  };
+
+  // In risk mode leverage depends on the stop, so a stop given as ROE (which depends on leverage) is not offered.
+  const effectiveSlUnit: SlUnit = qtyMode === "risk" && slUnit === "roe" ? "pct" : slUnit;
+  const stopNoLeverage: bigint | null =
+    slRaw === "" || slInvalidNumber || slNumber === null
+      ? null
+      : effectiveSlUnit === "price"
+        ? parseAmount(slRaw, PRICE_DECIMALS)
+        : effectiveSlUnit === "pct"
+          ? stopFromDistance(slNumber / 100)
+          : null;
+
+  // ── Size, margin, leverage ──
+  const userLevX10 = levX10;
+  let size: bigint | null = null;
+  let margin: bigint | null = null;
+  let effLevX10 = userLevX10;
+  let riskNote: string | null = null;
+  let riskError: string | null = null;
+
+  if (qtyMode === "risk") {
+    if (riskAmount !== null && riskAmount > 0n && entry && stopNoLeverage && params) {
+      const distance = (absDiff(entry, stopNoLeverage) * ONE) / entry;
+      const feeShare = params.baseFeeBps * 2n * 10n ** 14n;
+      if (distance > 0n) {
+        size = (riskAmount * ONE) / (distance + feeShare);
+        const safeX10 = Number((BigInt(Math.round(STOP_SAFETY * 9_000)) * ONE) / (distance * 1_000n));
+        effLevX10 = Math.max(10, Math.min(userLevX10, safeX10, maxLeverage * 10));
+        if (effLevX10 < userLevX10) {
+          riskNote =
+            safeX10 < maxLeverage * 10
+              ? `Leverage held at ${(effLevX10 / 10).toFixed(1)}x so the stop triggers before liquidation.`
+              : null;
+        }
+        margin = ceilDiv(size * 10n, BigInt(effLevX10));
+        if (margin < params.minMargin) {
+          margin = params.minMargin;
+          if (size < margin) riskError = `That risk gives a position below the ${fmtUsdc(params.minMargin)} ${sym} minimum. Risk more or tighten the stop.`;
+          else effLevX10 = Math.max(10, Number((size * 10n) / margin));
+        }
+      }
+    }
+  } else {
+    const qty = qtyMode === "contracts" ? parseAmount(qtyText, 18) : parseAmount(qtyText, USDC_DECIMALS);
+    if (qty !== null) {
+      if (qtyMode === "margin") {
+        margin = qty;
+        size = (qty * BigInt(userLevX10)) / 10n;
+      } else {
+        size = qtyMode === "notional" ? qty : entry ? notionalOf(qty, entry) : null;
+        margin = size !== null ? ceilDiv(size * 10n, BigInt(userLevX10)) : null;
+      }
+    }
+  }
+  const leverage = effLevX10 / 10;
+  const units = size !== null && entry ? unitsOf(size, entry) : null;
+
+  // ── Brackets ──
+  const stopLoss: bigint | null =
+    slRaw === ""
+      ? 0n
+      : effectiveSlUnit === "roe"
+        ? slInvalidNumber || slNumber === null
+          ? null
+          : stopFromDistance(slNumber / 100 / leverage)
+        : stopNoLeverage;
+
+  const tpRaw = tpText.trim();
+  const tpNumber = tpRaw === "" ? null : Number(tpRaw);
+  const tpInvalidNumber = tpRaw !== "" && !(tpNumber !== null && Number.isFinite(tpNumber) && tpNumber > 0);
+  const takeProfit: bigint | null = (() => {
+    if (tpRaw === "") return 0n;
+    if (tpInvalidNumber || tpNumber === null) return null;
+    if (tpUnit === "price") return parseAmount(tpRaw, PRICE_DECIMALS);
+    if (!entry) return null;
+    let fraction: number;
+    if (tpUnit === "pct") fraction = tpNumber / 100;
+    else if (tpUnit === "roe") fraction = tpNumber / 100 / leverage;
+    else {
+      if (!stopLoss) return null;
+      fraction = tpNumber * ratio(absDiff(entry, stopLoss), entry);
+    }
+    const scaled = BigInt(Math.round(fraction * 1e9));
+    if (isLong) return (entry * (1_000_000_000n + scaled)) / 1_000_000_000n;
+    return scaled >= 1_000_000_000n ? null : (entry * (1_000_000_000n - scaled)) / 1_000_000_000n;
+  })();
+  const brackets = (takeProfit ? 1 : 0) + (stopLoss ? 1 : 0);
+
+  // ── Fees and totals ──
+  const feeQuote = useReadContract({
+    abi: perpEngineAbi,
+    address: cfg.perpEngine,
+    chainId: cfg.chainId,
+    functionName: "quoteOpenFee",
+    args: [instrument.id, size ?? 0n, isLong],
+    query: { enabled: size !== null && size > 0n, refetchInterval: 3_000, placeholderData: keepPreviousData },
+  });
+  const keeperOrder = kind === "limit" || publisher;
+  const feeCeiling = params && size !== null ? maxOpenFee(size, params.baseFeeBps, params.maxSkewFeeBps) : null;
+  const feeBase = params && size !== null ? baseFee(size, params.baseFeeBps) : null;
+  const openFee = size !== null && size > 0n ? (feeQuote.data ?? null) : null;
+  const skewFee = openFee !== null && feeBase !== null && openFee > feeBase ? openFee - feeBase : 0n;
+  const executionCount = brackets + (keeperOrder ? 1 : 0);
+  const executionFees = params ? params.executionFee * BigInt(executionCount) : null;
+  /** What the engine pulls now. Keeper orders escrow the fee ceiling and refund the difference on fill. */
+  const required = margin !== null && feeCeiling !== null && executionFees !== null ? margin + feeCeiling + executionFees : null;
+  const expectedCost = margin !== null && openFee !== null && executionFees !== null ? margin + openFee + executionFees : null;
+
+  const liq = entry && margin !== null && size !== null && size > 0n ? liquidationPrice(entry, margin, size, isLong) : null;
+  const capPrice = entry && margin !== null && size !== null && size > 0n && params ? profitCapPrice(entry, margin, size, isLong, params.maxProfitMultiple) : null;
+  const maxProfit = margin !== null && params ? margin * params.maxProfitMultiple : null;
+  const closeFeeEst = feeBase;
+  const tpPnl = entry && takeProfit && size ? pricePnl(size, entry, takeProfit, isLong) : null;
+  const slPnl = entry && stopLoss && size ? pricePnl(size, entry, stopLoss, isLong) : null;
+  const tpCapped = tpPnl !== null && maxProfit !== null && tpPnl > maxProfit;
+  const fundingPerHour = size !== null ? (size * instrument.fundingRate * 3_600n) / ONE : null;
+  const fundingForSide = fundingPerHour === null ? null : isLong ? fundingPerHour : -fundingPerHour;
+
+  // ── Field validation ──
+  const qtyError = (() => {
+    if (qtyMode === "risk") {
+      if (riskText.trim() === "") return null;
+      if (riskAmount === null) return riskUnit === "pct" && balance === undefined ? "Connect a wallet to size by % of balance" : "Enter a number";
+      if (riskAmount === 0n) return "Enter an amount greater than zero";
+      if (slRaw === "") return "Risk sizing needs a stop-loss below";
+      return riskError;
+    }
+    if (qtyText.trim() === "") return null;
+    if (size === null || margin === null) return qtyMode === "contracts" && !entry ? "Waiting for a price to convert contracts" : "Enter a number, for example 250";
+    if (params && margin < params.minMargin) {
+      return qtyMode === "margin"
+        ? `Minimum margin is ${fmtUsdc(params.minMargin)} ${sym}`
+        : `Too small: at ${leverage}x this needs ${fmtUsdc(margin)} ${sym} margin, the minimum is ${fmtUsdc(params.minMargin)}`;
+    }
+    return null;
+  })();
+
+  const levError = levX10 < 10 ? "Leverage starts at 1x" : levX10 > maxLeverage * 10 ? `${instrument.symbol} allows up to ${maxLeverage}x` : null;
+  const limitError = kind !== "limit" || limitText.trim() === "" ? null : !limitPrice ? "Enter a price greater than zero" : null;
+
+  const refLabel =
+    kind === "limit"
+      ? "your limit price"
+      : publisher
+        ? `${fmtPrice(bracketRef ?? 0n, dp)} (the ${isLong ? "ask" : "bid"} plus your ${(settings.slippageBps / 100).toFixed(2)}% slippage allowance, where the order rests)`
+        : `the current ${isLong ? "ask" : "bid"}`;
+  const tpError =
+    tpRaw === ""
+      ? null
+      : tpInvalidNumber
+        ? "Enter a positive number"
+        : tpUnit === "r" && !stopLoss
+          ? "An R-multiple needs a stop-loss: 1R is the distance to your stop"
+          : takeProfit === null || takeProfit === 0n
+            ? "That target is out of range"
+            : bracketRef && (isLong ? takeProfit <= bracketRef : takeProfit >= bracketRef)
+              ? `Take-profit must be ${isLong ? "above" : "below"} ${refLabel}`
+              : null;
+  const slError =
+    slRaw === ""
+      ? null
+      : slInvalidNumber
+        ? "Enter a positive number"
+        : stopLoss === null || stopLoss === 0n
+          ? "That stop is out of range"
+          : bracketRef && (isLong ? stopLoss >= bracketRef : stopLoss <= bracketRef)
+            ? `Stop-loss must be ${isLong ? "below" : "above"} ${kind === "limit" ? "your limit price" : `the ${isLong ? "ask" : "bid"}`}`
+            : entry && (isLong ? stopLoss >= entry : stopLoss <= entry)
+              ? `Stop-loss must be ${isLong ? "below" : "above"} the entry price`
+              : null;
+  const slBeyondLiq = !slError && stopLoss && liq !== null && liq > 0n ? (isLong ? stopLoss <= liq : stopLoss >= liq) : false;
+
+  const capProblem = (() => {
+    if (!params || size === null) return null;
+    const sideOi = isLong ? instrument.longOi : instrument.shortOi;
+    if (sideOi + size > instrument.maxOiPerSide) {
+      const room = instrument.maxOiPerSide > sideOi ? instrument.maxOiPerSide - sideOi : 0n;
+      return `Only ${fmtUsdc(room)} ${sym} of ${sideWord} open interest is left in this market`;
+    }
+    if ((params.totalOpenInterest + size) * BPS > params.vaultNav * params.maxOiToNavBps) {
+      const cap = (params.vaultNav * params.maxOiToNavBps) / BPS;
+      const room = cap > params.totalOpenInterest ? cap - params.totalOpenInterest : 0n;
+      return `The house vault can back only ${fmtUsdc(room)} ${sym} more open interest`;
+    }
+    return null;
+  })();
+
+  const restingOpen = account?.orders.find((o) => o.order.orderType === 0 && o.order.priceId.toLowerCase() === instrument.id);
+
+  const blocking: string | null = (() => {
+    if (view.watching) return "Watching: trading is off";
+    if (paramsError) return "Could not read the engine. Check the RPC";
+    if (!params) return "Loading market";
+    if (params.paused) return "Trading is paused";
+    if (settled) return "This future has settled";
+    if (expired) return "This future has expired";
+    if (!instrument.enabled) return `${instrument.symbol} is closed to new positions`;
+    if (kind === "market" && !reference) return "Waiting for a price";
+    if (kind === "market" && !publisher && price.status !== "live") return "Market closed: the price is stale";
+    if (qtyMode === "risk" ? riskText.trim() === "" : qtyText.trim() === "") return qtyMode === "risk" ? "Enter how much to risk" : "Enter a size";
+    if (kind === "limit" && limitText.trim() === "") return "Enter a limit price";
+    if (limitError) return limitError;
+    if (qtyError) return qtyError;
+    if (size === null || margin === null) return qtyMode === "risk" ? "Enter a stop-loss to size by risk" : "Enter a size";
+    if (levError) return levError;
+    if (size < margin) return "Size cannot be smaller than margin";
+    if (tpError) return tpError;
+    if (slError) return slError;
+    if (position && kind === "market") return "Close or reverse your open position first";
+    if (capProblem) return capProblem;
+    if (balance !== undefined && required !== null && required > balance) return `Not enough ${sym}: ${fmtUsdc(required)} needed`;
+    if (wallet.ready && balance === undefined) return "Loading balance";
+    return null;
+  })();
+
+  // ── Chart draft lines ──
+  const draftLimit = kind === "limit" && limitPrice ? Number(limitPrice) / 1e18 : null;
+  const draftTp = takeProfit && !tpError ? Number(takeProfit) / 1e18 : null;
+  const draftSl = stopLoss && !slError ? Number(stopLoss) / 1e18 : null;
+  useEffect(() => {
+    onDraftChange({ isLong, limit: draftLimit, takeProfit: draftTp, stopLoss: draftSl });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLong, draftLimit, draftTp, draftSl]);
+
+  // ── Helpers ──
+  const changeQtyMode = (next: QtyMode) => {
+    if (next === qtyMode) return;
+    // Carry the current quantity over so switching units never changes the order.
+    if (next !== "risk") {
+      if (size !== null && size > 0n && margin !== null) {
+        if (next === "notional") setQtyText(toInputString(size, USDC_DECIMALS, 2));
+        else if (next === "margin") setQtyText(toInputString(margin, USDC_DECIMALS, 2));
+        else if (units !== null) setQtyText(toInputString(units, 18, 6));
+      } else setQtyText("");
+      if (qtyMode === "risk") {
+        setLevX10(effLevX10);
+        setLevText(String(effLevX10 / 10));
+      }
+    }
+    setQtyMode(next);
+  };
+
+  const setLeverage = (x10: number) => {
+    const clamped = Math.max(10, Math.min(maxLeverage * 10, Math.round(x10)));
+    setLevX10(clamped);
+    setLevText(String(clamped / 10));
+  };
+
+  const setMax = () => {
+    if (balance === undefined || !params) return;
+    const fees = params.executionFee * BigInt(executionCount || 1);
+    const spendable = balance > fees ? balance - fees : 0n;
+    // margin + margin x leverage x feeBps / 1e4 <= spendable
+    const feeBps = params.baseFeeBps + params.maxSkewFeeBps;
+    const maxMargin = (spendable * 10n * BPS) / (10n * BPS + BigInt(levX10) * feeBps);
+    const safe = maxMargin > 2n ? maxMargin - 2n : 0n;
+    const maxSize = (safe * BigInt(levX10)) / 10n;
+    if (qtyMode === "margin") setQtyText(toInputString(safe, USDC_DECIMALS, 2));
+    else if (qtyMode === "contracts" && entry) setQtyText(toInputString(unitsOf(maxSize, entry), 18, 6));
+    else {
+      if (qtyMode !== "notional") setQtyMode("notional");
+      setQtyText(toInputString(maxSize, USDC_DECIMALS, 2));
+    }
+  };
+
+  const commitSlippage = () => {
+    if (slippageText === null) return;
+    const percent = parseAmount(slippageText, 2);
+    if (percent !== null) {
+      const bps = Number(percent);
+      if (bps >= 0 && bps <= MAX_SLIPPAGE_BPS) setSettings((s) => ({ ...s, slippageBps: bps }));
+    }
+    setSlippageText(null);
+  };
+
+  // ── Actions ──
+  const buildRequest = (): OpenRequest | null => {
+    if (blocking || margin === null || size === null || required === null || takeProfit === null || stopLoss === null) return null;
+    return {
+      instrument,
+      isLong,
+      margin,
+      size,
+      type: kind,
+      limitPrice: limitPrice ?? 0n,
+      reference,
+      slippageBps: settings.slippageBps,
+      takeProfit,
+      stopLoss,
+      required,
+    };
+  };
+
+  const runOpen = async () => {
+    const req = buildRequest();
+    if (!req) return;
+    const ok = await tx.run(async (api) => {
+      const ctx = actionContext(api);
+      if (!ctx) throw new UserFacingError("Connect your wallet first.");
+      return openFlow(ctx, req);
+    });
+    if (ok) {
+      setTpText("");
+      setSlText("");
+      if (kind === "limit") setLimitText("");
+    }
+  };
+
+  const runClose = () => {
+    if (!position || !params) return;
+    void tx.run(async (api) => {
+      const ctx = actionContext(api);
+      if (!ctx) throw new UserFacingError("Connect your wallet first.");
+      return closeFlow(ctx, { instrument, view: position, reference, slippageBps: settings.slippageBps, executionFee: params.executionFee, balance });
+    });
+  };
+
+  /** Close, wait for the keeper, then open the same size on the other side. Two orders, two confirmations. */
+  const runReverse = () => {
+    if (!position || !params) return;
+    const pos = position.position;
+    void tx.run(async (api) => {
+      const ctx = actionContext(api);
+      if (!ctx) throw new UserFacingError("Connect your wallet first.");
+      await closeFlow(ctx, { instrument, view: position, reference, slippageBps: settings.slippageBps, executionFee: params.executionFee });
+      api.preparing("Waiting for the keeper to close the position");
+      await waitFor(
+        () => {
+          const latest = getAccount();
+          return latest !== undefined && !latest.positions.some((p) => p.position.priceId.toLowerCase() === instrument.id);
+        },
+        60_000,
+        "The close order has not been executed yet. It is still resting; open the opposite side once it fills.",
+      );
+      const feeBudget = maxOpenFee(pos.size, params.baseFeeBps, params.maxSkewFeeBps);
+      return openFlow(ctx, {
+        instrument,
+        isLong: !pos.isLong,
+        margin: pos.margin,
+        size: pos.size,
+        type: "market",
+        limitPrice: 0n,
+        reference: getReference(),
+        slippageBps: settings.slippageBps,
+        takeProfit: 0n,
+        stopLoss: 0n,
+        required: pos.margin + feeBudget + (publisher ? params.executionFee : 0n),
+      });
+    });
+  };
+  const referenceRef = useRef(reference);
+  referenceRef.current = reference;
+  const getReference = () => referenceRef.current;
+
+  const requestOpen = () => {
+    if (blocking || tx.busy || !wallet.ready) return;
+    if (settings.oneClick) void runOpen();
+    else setConfirming("open");
+  };
+
+  useImperativeHandle(ref, () => ({
+    setSide: (long) => setIsLong(long),
+    setKind: (k) => setKind(k),
+    focusSize: () => {
+      sizeInputRef.current?.focus();
+      sizeInputRef.current?.select();
+    },
+    submit: () => requestOpen(),
+    close: () => {
+      if (!position || !view.canTrade || tx.busy) return;
+      if (settings.oneClick || settled) runClose();
+      else setConfirming("close");
+    },
+    setPrice: (target, value) => {
+      const text = priceInput(numToPrice(value), dp);
+      if (target === "limit") {
+        setKind("limit");
+        setLimitText(text);
+      } else if (target === "tp") {
+        setBracketsOpen(true);
+        setTpUnit("price");
+        setTpText(text);
+      } else {
+        setBracketsOpen(true);
+        setSlUnit("price");
+        setSlText(text);
+      }
+    },
+  }));
+
+  // ── Confirmation content ──
+  const confirmLines: ConfirmLine[] = useMemo(() => {
+    if (confirming === "open") {
+      return [
+        { label: "Order", value: `${kind === "market" ? (publisher ? "Market (keeper-filled)" : "Market") : "Limit"} ${sideWord} ${instrument.symbol}` },
+        { label: "Size", value: size !== null ? `${fmtUsdc(size)} ${sym}${units !== null ? ` (${fmtQty(units)} ${instrument.unitLabel})` : ""}` : "—" },
+        { label: "Margin and leverage", value: margin !== null ? `${fmtUsdc(margin)} ${sym} at ${leverage.toFixed(1)}x` : "—" },
+        { label: kind === "limit" ? "Limit price" : "Entry estimate", value: entry ? fmtPrice(entry, dp) : "—" },
+        ...(kind === "market" && publisher && bracketRef ? [{ label: "Worst fill accepted", value: fmtPrice(bracketRef, dp) }] : []),
+        { label: "Liquidation price", value: liq === null ? "—" : liq === 0n ? "None" : fmtPrice(liq, dp) },
+        ...(takeProfit ? [{ label: "Take-profit", value: fmtPrice(takeProfit, dp) }] : []),
+        ...(stopLoss ? [{ label: "Stop-loss", value: fmtPrice(stopLoss, dp) }] : []),
+        { label: "Taken from your wallet now", value: required !== null ? `${fmtUsdc(required)} ${sym}` : "—" },
+      ];
+    }
+    return [];
+  }, [confirming, kind, publisher, sideWord, instrument.symbol, instrument.unitLabel, size, units, margin, leverage, entry, bracketRef, liq, takeProfit, stopLoss, required, sym, dp]);
+
+  // ── Primary button ──
+  let button: React.ReactNode;
+  if (view.watching) {
+    button = (
+      <button type="button" className="btn btn-lg" disabled>
+        Watching: trading is off
+      </button>
+    );
+  } else if (!wallet.connected) {
+    const connector = connectors[0];
+    button = (
+      <button type="button" className="btn btn-primary btn-lg" disabled={connecting || !connector} onClick={() => connector && connect({ connector, chainId: chain.id })}>
+        {connecting ? "Connecting" : "Connect wallet to trade"}
+      </button>
+    );
+  } else if (wallet.wrongNetwork) {
+    button = (
+      <button type="button" className="btn btn-lg border-warn text-warn" disabled={switching} onClick={() => switchChain({ chainId: chain.id })}>
+        Switch to {chain.name}
+      </button>
+    );
+  } else {
+    const action = kind === "limit" ? `Place limit ${sideWord}` : `${isLong ? "Buy / Long" : "Sell / Short"} ${instrument.symbol}`;
+    button = (
+      <button
+        type="submit"
+        className={`btn btn-lg ${blocking ? "" : isLong ? "btn-long" : "btn-short"}`}
+        disabled={blocking !== null || tx.busy}
+        data-testid="ticket-submit"
+      >
+        {tx.busy ? <span className="spinner" aria-hidden="true" /> : null}
+        <span className="truncate">{tx.busy ? "Working" : (blocking ?? action)}</span>
+      </button>
+    );
+  }
+
+  const showBrackets = bracketsOpen || qtyMode === "risk" || tpRaw !== "" || slRaw !== "";
+  const positionValue = position && params ? valuePosition(position, price.mark, params.maxProfitMultiple) : null;
+  const slippagePct = (settings.slippageBps / 100).toFixed(2);
+  const qtyUnit = qtyMode === "contracts" ? instrument.unitLabel : sym;
+  const contractsHint =
+    instrument.quote === "USD"
+      ? `Units of ${instrument.base}; fractions are fine`
+      : `Positions are ${sym} notional even on a cross: one contract gains or loses 1 ${sym} for every 1.0 move in ${instrument.base}/${instrument.quote}`;
+  const awaiting = publisher && price.status === "awaiting";
+
+  return (
+    <section className="panel" aria-label={`Order ticket for ${instrument.symbol}`}>
+      <div className="flex items-center justify-between border-b border-line pr-2">
+        <div role="tablist" aria-label="Order type" className="tabs border-b-0">
+          {(["market", "limit"] as const).map((k) => (
+            <button key={k} type="button" role="tab" aria-selected={kind === k} className="tab" onClick={() => setKind(k)}>
+              {k === "market" ? "Market" : "Limit"}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-1">
+          <button type="button" className="chip" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((v) => !v)}>
+            Settings
+          </button>
+          <button type="button" className="chip" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick={onShowShortcuts}>
+            ?
+          </button>
+        </div>
+      </div>
+
+      {settingsOpen ? (
+        <div className="space-y-3 border-b border-line bg-bg/40 px-3 py-3 text-[0.8125rem]">
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted">Slippage tolerance</span>
+              <span className="num">{slippagePct}%</span>
+            </div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {SLIPPAGE_PRESETS.map((bps) => (
+                <button key={bps} type="button" className="chip" aria-pressed={settings.slippageBps === bps} onClick={() => { setSettings((s) => ({ ...s, slippageBps: bps })); setSlippageText(null); }}>
+                  {(bps / 100).toFixed(1)}%
+                </button>
+              ))}
+              <label className="flex items-center gap-1 text-xs text-muted">
+                Custom
+                <input
+                  className="mini-input num w-14"
+                  inputMode="decimal"
+                  aria-label="Custom slippage in percent"
+                  value={slippageText ?? slippagePct}
+                  onChange={(event) => setSlippageText(event.target.value)}
+                  onBlur={commitSlippage}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      commitSlippage();
+                    }
+                  }}
+                />
+                %
+              </label>
+            </div>
+            <p className="mt-1.5 text-xs text-faint">
+              How far past the current price a market order may fill. A keeper-filled market order rests at this bound, so a wider one fills
+              more reliably in a fast market.
+            </p>
+          </div>
+          <label className="flex items-start gap-2">
+            <input type="checkbox" className="check mt-0.5" checked={settings.oneClick} onChange={(event) => setSettings((s) => ({ ...s, oneClick: event.target.checked }))} />
+            <span>
+              <span className="text-text">One-click trading</span>
+              <span className="block text-xs text-faint">Skip the confirmation step. Your wallet still asks you to sign.</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2">
+            <input type="checkbox" className="check mt-0.5" checked={settings.approveUnlimited} onChange={(event) => setSettings((s) => ({ ...s, approveUnlimited: event.target.checked }))} />
+            <span>
+              <span className="text-text">Approve {sym} once</span>
+              <span className="block text-xs text-faint">Grants the engine a standing allowance so later orders need one signature. Off: approve the exact amount each time.</span>
+            </span>
+          </label>
+        </div>
+      ) : null}
+
+      {position && positionValue ? (
+        <div className="border-b border-line px-3 py-2.5" data-testid="ticket-position">
+          <div className="flex items-center justify-between gap-2 text-[0.8125rem]">
+            <span>
+              <span className={position.position.isLong ? "text-long" : "text-short"}>{position.position.isLong ? "Long" : "Short"}</span>{" "}
+              <span className="num">{fmtUsdc(position.position.size)} {sym}</span>{" "}
+              <span className="num text-faint">{positionValue.leverage.toFixed(1)}x</span>
+            </span>
+            <span className={`num font-semibold ${positionValue.pnl === null ? "" : positionValue.pnl >= 0n ? "text-long" : "text-short"}`}>
+              {positionValue.pnl === null ? "—" : `${fmtUsdc(positionValue.pnl, 2, { sign: true })} ${sym}`}
+            </span>
+          </div>
+          {view.canTrade ? (
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                className="btn btn-sm"
+                disabled={tx.busy}
+                onClick={() => (settings.oneClick || settled ? runClose() : setConfirming("close"))}
+                data-testid="ticket-close"
+              >
+                {settled ? "Settle & close" : position.position.closeOrderId !== 0n ? "Closing…" : "Close"}
+              </button>
+              <button type="button" className="btn btn-sm" disabled={tx.busy || settled || expired} onClick={() => setConfirming("reverse")} title="Close this position, then open the same size on the other side">
+                Reverse
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <form
+        ref={formRef}
+        className="flex flex-col gap-3 p-3"
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          requestOpen();
+        }}
+      >
+        <div className="grid grid-cols-2 gap-1 rounded-[3px] border border-line bg-bg p-1" role="group" aria-label="Direction">
+          <button type="button" aria-pressed={isLong} onClick={() => setIsLong(true)} className={`h-9 rounded-[2px] text-sm font-semibold transition-colors ${isLong ? "bg-long text-[#06231a]" : "text-muted hover:text-text"}`}>
+            Long
+          </button>
+          <button type="button" aria-pressed={!isLong} onClick={() => setIsLong(false)} className={`h-9 rounded-[2px] text-sm font-semibold transition-colors ${!isLong ? "bg-short text-[#2b060c]" : "text-muted hover:text-text"}`}>
+            Short
+          </button>
+        </div>
+
+        <p className="text-xs text-faint">
+          {kind === "market"
+            ? publisher
+              ? "Market (keeper-filled, ~1-2 s): a keeper fills your order at the next oracle price."
+              : "Market: opens in one transaction at the current Pyth price."
+            : `Limit: a keeper fills it when the ${isLong ? "ask falls to" : "bid rises to"} your price.`}
+        </p>
+
+        {kind === "limit" ? (
+          <div>
+            <div className="flex items-baseline justify-between">
+              <label className="field-label" htmlFor={`${ids}-limit`}>
+                Limit price
+              </label>
+              <span className="flex items-center gap-2 text-xs">
+                <button type="button" className="link" onClick={() => onPickRequest("limit")}>
+                  Pick on chart
+                </button>
+                <button type="button" className="num text-muted hover:text-text" disabled={!marketEntry} onClick={() => marketEntry && setLimitText(priceInput(marketEntry, dp))}>
+                  {marketEntry ? `${isLong ? "Ask" : "Bid"} ${fmtPrice(marketEntry, dp)}` : "No price"}
+                </button>
+              </span>
+            </div>
+            <div className="field" data-invalid={limitError !== null}>
+              <input id={`${ids}-limit`} inputMode="decimal" autoComplete="off" placeholder="0.00" value={limitText} onChange={(event) => setLimitText(event.target.value)} aria-invalid={limitError !== null} />
+              <span className="field-unit">{instrument.quote}</span>
+            </div>
+            {limitError ? <p className="mt-1 text-xs text-short">{limitError}</p> : null}
+            {limitFillsNow ? (
+              <p className="mt-1 text-xs text-warn">
+                The market is already {isLong ? "at or below" : "at or above"} this price, so a keeper fills it right away at about {marketEntry ? fmtPrice(marketEntry, dp) : "market"}.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex gap-1" role="group" aria-label="Quantity entered as">
+              {QTY_MODES.map((m) => (
+                <button key={m.key} type="button" className="chip" aria-pressed={qtyMode === m.key} title={m.hint} onClick={() => changeQtyMode(m.key)}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            {view.canTrade && balance !== undefined ? (
+              <span className="num truncate text-xs text-muted">
+                {fmtUsdc(balance)} {sym}
+              </span>
+            ) : null}
+          </div>
+
+          {qtyMode === "risk" ? (
+            <>
+              <label className="sr-only" htmlFor={`${ids}-risk`}>
+                Amount to risk at the stop-loss
+              </label>
+              <div className="field mt-1.5" data-invalid={qtyError !== null}>
+                <input id={`${ids}-risk`} ref={sizeInputRef} inputMode="decimal" autoComplete="off" placeholder={riskUnit === "usdc" ? "50" : "1"} value={riskText} onChange={(event) => setRiskText(event.target.value)} aria-invalid={qtyError !== null} />
+                <div className="flex gap-1" role="group" aria-label="Risk entered as">
+                  <button type="button" className="chip" aria-pressed={riskUnit === "usdc"} onClick={() => setRiskUnit("usdc")}>
+                    {sym}
+                  </button>
+                  <button type="button" className="chip" aria-pressed={riskUnit === "pct"} onClick={() => setRiskUnit("pct")}>
+                    % of balance
+                  </button>
+                </div>
+              </div>
+              <p className="mt-1 text-xs text-faint">
+                {size !== null && margin !== null
+                  ? `Risking ${riskAmount !== null ? fmtUsdc(riskAmount) : "—"} ${sym} to your stop gives ${fmtUsdc(size)} ${sym} size on ${fmtUsdc(margin)} margin (${leverage.toFixed(1)}x), fees included.`
+                  : "Set a stop-loss below (as a price or %). Size is chosen so that hitting the stop loses this amount, fees included."}
+              </p>
+              {riskNote ? <p className="mt-1 text-xs text-warn">{riskNote}</p> : null}
+            </>
+          ) : (
+            <>
+              <label className="sr-only" htmlFor={`${ids}-qty`}>
+                {qtyMode === "notional" ? "Position size" : qtyMode === "margin" ? "Margin" : `Contracts (${instrument.unitLabel})`}
+              </label>
+              <div className="field mt-1.5" data-invalid={qtyError !== null}>
+                <input id={`${ids}-qty`} ref={sizeInputRef} inputMode="decimal" autoComplete="off" placeholder={qtyMode === "contracts" ? "0.00" : "0.00"} value={qtyText} onChange={(event) => setQtyText(event.target.value)} aria-invalid={qtyError !== null} data-testid="ticket-qty" />
+                <span className="field-unit">{qtyUnit}</span>
+                <button type="button" className="chip" disabled={!view.canTrade || balance === undefined || !params} onClick={setMax}>
+                  Max
+                </button>
+              </div>
+              <p className="num mt-1 text-xs text-faint" data-testid="ticket-equivalents">
+                {size !== null && margin !== null && size > 0n ? (
+                  <>
+                    {qtyMode !== "notional" ? `Size ${fmtUsdc(size)} ${sym}` : null}
+                    {qtyMode !== "notional" && qtyMode !== "margin" ? " · " : null}
+                    {qtyMode !== "margin" ? `Margin ${fmtUsdc(margin)} ${sym}` : null}
+                    {qtyMode !== "contracts" && units !== null ? ` · ${fmtQty(units)} ${instrument.unitLabel}` : null}
+                  </>
+                ) : qtyMode === "contracts" ? (
+                  contractsHint
+                ) : (
+                  QTY_MODES.find((m) => m.key === qtyMode)?.hint
+                )}
+              </p>
+            </>
+          )}
+          {qtyError ? <p className="mt-1 text-xs text-short">{qtyError}</p> : null}
+        </div>
+
+        <div>
+          <div className="flex items-baseline justify-between">
+            <label className="field-label" htmlFor={`${ids}-lev-range`}>
+              {qtyMode === "risk" ? "Leverage limit" : "Leverage"}
+            </label>
+            <div className="field h-7 w-[5.25rem] px-2">
+              <input
+                aria-label={qtyMode === "risk" ? "Leverage limit" : "Leverage"}
+                inputMode="decimal"
+                value={levText}
+                onChange={(event) => {
+                  setLevText(event.target.value);
+                  const parsed = parseAmount(event.target.value, 1);
+                  if (parsed !== null && parsed >= 10n && parsed <= BigInt(maxLeverage * 10)) setLevX10(Number(parsed));
+                }}
+                onBlur={() => setLevText(String(levX10 / 10))}
+                className="text-right text-[0.8125rem]"
+              />
+              <span className="field-unit">x</span>
+            </div>
+          </div>
+          <input
+            id={`${ids}-lev-range`}
+            className="slider"
+            type="range"
+            min={1}
+            max={maxLeverage}
+            step={1}
+            value={Math.round(levX10 / 10)}
+            style={{ "--fill": `${((levX10 / 10 - 1) / Math.max(1, maxLeverage - 1)) * 100}%` } as React.CSSProperties}
+            onChange={(event) => setLeverage(Number(event.target.value) * 10)}
+            aria-valuetext={`${levX10 / 10}x`}
+          />
+          <div className="mt-0.5 flex flex-wrap gap-1">
+            {LEVERAGE_PRESETS.filter((x) => x <= maxLeverage).map((x) => (
+              <button key={x} type="button" className="chip" aria-pressed={levX10 === x * 10} onClick={() => setLeverage(x * 10)}>
+                {x}x
+              </button>
+            ))}
+          </div>
+          {levError ? <p className="mt-1 text-xs text-short">{levError}</p> : null}
+        </div>
+
+        {!showBrackets ? (
+          <button type="button" className="link self-start text-[0.8125rem]" onClick={() => setBracketsOpen(true)} data-testid="add-brackets">
+            Add take-profit / stop-loss
+          </button>
+        ) : (
+        <div className="grid gap-2">
+          <div>
+            <div className="flex items-baseline justify-between">
+              <label className="field-label" htmlFor={`${ids}-tp`}>
+                Take-profit <span className="text-faint">(optional)</span>
+              </label>
+              <button type="button" className="link text-xs" onClick={() => onPickRequest("tp")}>
+                Pick on chart
+              </button>
+            </div>
+            <div className="field" data-invalid={tpError !== null}>
+              <input id={`${ids}-tp`} inputMode="decimal" autoComplete="off" placeholder={tpUnit === "price" ? "Price" : tpUnit === "r" ? "2" : "5"} value={tpText} onChange={(event) => setTpText(event.target.value)} aria-invalid={tpError !== null} data-testid="ticket-tp" />
+              <select className="unit-select" aria-label="Take-profit entered as" value={tpUnit} onChange={(event) => { setTpUnit(event.target.value as TpUnit); setTpText(""); }}>
+                <option value="price">Price</option>
+                <option value="pct">% move</option>
+                <option value="roe">% ROE</option>
+                <option value="r">R multiple</option>
+              </select>
+            </div>
+            {tpError ? (
+              <p className="mt-1 text-xs text-short">{tpError}</p>
+            ) : takeProfit && tpPnl !== null && margin ? (
+              <p className="num mt-1 text-xs text-faint">
+                {tpUnit !== "price" ? `At ${fmtPrice(takeProfit, dp)}: ` : ""}
+                <span className="text-long">{fmtUsdc(tpCapped && maxProfit !== null ? maxProfit : tpPnl, 2, { sign: true })} {sym}</span> ({fmtPercent(ratio(tpCapped && maxProfit !== null ? maxProfit : tpPnl, margin), 0, true)} ROE)
+                {tpCapped ? ". Beyond the profit cap: the extra is not paid." : ""}
+              </p>
+            ) : null}
+          </div>
+          <div>
+            <div className="flex items-baseline justify-between">
+              <label className="field-label" htmlFor={`${ids}-sl`}>
+                Stop-loss <span className="text-faint">{qtyMode === "risk" ? "(needed for risk sizing)" : "(optional)"}</span>
+              </label>
+              <button type="button" className="link text-xs" onClick={() => onPickRequest("sl")}>
+                Pick on chart
+              </button>
+            </div>
+            <div className="field" data-invalid={slError !== null}>
+              <input id={`${ids}-sl`} inputMode="decimal" autoComplete="off" placeholder={effectiveSlUnit === "price" ? "Price" : "2"} value={slText} onChange={(event) => setSlText(event.target.value)} aria-invalid={slError !== null} data-testid="ticket-sl" />
+              <select className="unit-select" aria-label="Stop-loss entered as" value={effectiveSlUnit} onChange={(event) => { setSlUnit(event.target.value as SlUnit); setSlText(""); }}>
+                <option value="price">Price</option>
+                <option value="pct">% move</option>
+                {qtyMode !== "risk" ? <option value="roe">% ROE</option> : null}
+              </select>
+            </div>
+            {slError ? (
+              <p className="mt-1 text-xs text-short">{slError}</p>
+            ) : stopLoss && slPnl !== null && margin ? (
+              <p className="num mt-1 text-xs text-faint">
+                {effectiveSlUnit !== "price" ? `At ${fmtPrice(stopLoss, dp)}: ` : ""}
+                <span className="text-short">{fmtUsdc(slPnl, 2, { sign: true })} {sym}</span> ({fmtPercent(ratio(slPnl, margin), 0, true)} ROE) before fees
+              </p>
+            ) : null}
+            {slBeyondLiq ? <p className="mt-1 text-xs text-warn">This stop is past the liquidation price, so the position would be liquidated first. Lower the leverage or tighten the stop.</p> : null}
+          </div>
+        </div>
+        )}
+
+        {entry && size !== null && size > 0n ? <TradeMap isLong={isLong} entry={entry} liq={liq && liq > 0n ? liq : null} stop={stopLoss && !slError ? stopLoss : null} target={takeProfit && !tpError ? takeProfit : null} dp={dp} /> : null}
+
+        <dl className="grid gap-1.5 border-t border-line pt-3 text-[0.8125rem]">
+          <Row
+            label={kind === "limit" ? "Entry" : "Entry estimate"}
+            hint={kind === "market" ? "Buys fill at the oracle ask, sells at the bid. The fill is the price a keeper executes against, at most your slippage tolerance away." : undefined}
+            value={entry ? fmtPrice(entry, dp) : "—"}
+          />
+          <Row
+            label="Liquidation price"
+            hint="The oracle mid price at which losses plus funding reach 90% of margin. Past it, anyone can liquidate the position and the margin is lost."
+            value={liq === null ? "—" : liq === 0n ? "None" : `${fmtPrice(liq, dp)}${entry ? ` (${fmtPercent(ratio(absDiff(entry, liq), entry), 1)} away)` : ""}`}
+            tone={liq !== null && liq > 0n ? "warn" : undefined}
+          />
+          <Row
+            label="Fees to open"
+            hint="Open fee plus execution fees. The breakdown is under Details."
+            value={openFee !== null && executionFees !== null ? `${fmtUsdc(openFee + executionFees, 2)} ${sym}` : size !== null && size > 0n ? "…" : "—"}
+          />
+          <Row
+            label="Total required"
+            strong
+            hint="Taken from your wallet when you submit: margin, the fee escrow and execution fees."
+            value={required !== null ? `${fmtUsdc(required)} ${sym}` : "—"}
+          />
+        </dl>
+
+        <details className="ticket-details" open={settings.ticketDetails} onToggle={(event) => {
+          const open = (event.currentTarget as HTMLDetailsElement).open;
+          if (open !== settings.ticketDetails) setSettings((s) => ({ ...s, ticketDetails: open }));
+        }}>
+          <summary>Details: fees, funding, profit cap</summary>
+          <dl className="mt-2 grid gap-1.5 text-[0.8125rem]">
+            <Row
+              label="Open fee"
+              hint="Base fee on size, plus a surcharge when the trade makes the market more one-sided. Keeper-filled orders escrow the maximum and refund the difference on fill."
+              value={
+                openFee !== null
+                  ? `${fmtUsdc(openFee, 4)} ${sym}${skewFee > 0n ? ` (incl. ${fmtUsdc(skewFee, 4)} skew)` : ""}`
+                  : size !== null && size > 0n
+                    ? "…"
+                    : "—"
+              }
+            />
+            <Row
+              label={`Execution fee${executionCount === 1 ? "" : "s"}`}
+              hint="A flat fee per keeper-executed order: the open itself and each of take-profit / stop-loss. Bracket fees are refunded if you close by hand."
+              value={executionFees !== null ? (executionCount === 0 ? "None" : `${fmtUsdc(executionFees, 2)} ${sym} (${executionCount} x ${fmtUsdc(params?.executionFee ?? 0n, 2)})`) : "—"}
+            />
+            {keeperOrder && required !== null && expectedCost !== null && required > expectedCost ? (
+              <Row label="Fee escrow, refunded on fill" hint="Keeper-filled orders set aside the highest possible open fee; the unused part comes back when the order fills." value={`${fmtUsdc(required - expectedCost, 4)} ${sym}`} />
+            ) : null}
+            <Row label="Close fee, later" value={closeFeeEst !== null && size ? `${fmtUsdc(closeFeeEst, 4)} ${sym}` : "—"} />
+            <Row
+              label="Funding per hour"
+              hint="Paid or received continuously while the position is open, at the current rate. The rate moves with the long/short balance."
+              value={fundingForSide === null ? "—" : fundingForSide === 0n ? "0.00" : `${fundingForSide > 0n ? "pay" : "receive"} ${fmtUsdc(fundingForSide > 0n ? fundingForSide : -fundingForSide, 4)} ${sym}`}
+              tone={fundingForSide !== null && fundingForSide > 0n ? "short" : fundingForSide !== null && fundingForSide < 0n ? "long" : undefined}
+            />
+            <Row
+              label="Max profit"
+              hint={`Profit on a position is capped at ${params?.maxProfitMultiple.toString() ?? "10"} times its margin.`}
+              value={maxProfit !== null && margin ? `${fmtUsdc(maxProfit)} ${sym}${capPrice ? ` at ${fmtPrice(capPrice, dp)}` : ""}` : "—"}
+            />
+          </dl>
+        </details>
+
+        {awaiting && kind === "market" ? (
+          <p className="notice" data-tone="warn">
+            Awaiting an on-chain price{price.age !== null ? ` (last one is ${fmtAge(price.age)} old)` : ""}. You can still place the order: a keeper fills it once prices resume, within your slippage of the tape price shown.
+          </p>
+        ) : null}
+        {position && kind === "limit" ? (
+          <p className="notice" data-tone="warn">
+            You have a position in this market. One position per market: this limit order can only fill after that position is closed.
+          </p>
+        ) : null}
+        {restingOpen && !position ? (
+          <p className="notice">
+            Order #{restingOpen.id.toString()} is already resting in this market. Only one position can exist per market, so a second order would stay unfilled once the first one fills.
+          </p>
+        ) : null}
+
+        {button}
+        <TxStatus state={tx.state} onDismiss={tx.reset} />
+        <TrackedOrders marketId={instrument.id} dp={dp} />
+      </form>
+
+      {confirming === "open" ? (
+        <ConfirmDialog
+          title={`Confirm ${kind === "limit" ? "limit" : "market"} ${sideWord}`}
+          lines={confirmLines}
+          note={
+            kind === "market" && publisher
+              ? "A keeper fills this at the next oracle price, usually within 1-2 seconds. If the price runs past your worst fill, the order rests until it comes back or you cancel it."
+              : undefined
+          }
+          confirmLabel={kind === "limit" ? `Place limit ${sideWord}` : `${isLong ? "Buy / Long" : "Sell / Short"}`}
+          tone={isLong ? "long" : "short"}
+          allowSkip
+          onSkipChange={(skip) => setSettings((s) => ({ ...s, oneClick: skip }))}
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => {
+            setConfirming(null);
+            void runOpen();
+          }}
+        />
+      ) : null}
+      {confirming === "close" && position ? (
+        <ConfirmDialog
+          title={`Close ${instrument.symbol} ${position.position.isLong ? "long" : "short"}`}
+          lines={[
+            { label: "Size", value: `${fmtUsdc(position.position.size)} ${sym}` },
+            { label: "Unrealised PnL", value: positionValue?.pnl !== null && positionValue?.pnl !== undefined ? `${fmtUsdc(positionValue.pnl, 2, { sign: true })} ${sym}` : "—" },
+            { label: "Slippage tolerance", value: `${slippagePct}%` },
+          ]}
+          note={publisher ? "This places a close order that a keeper executes at the next oracle price. It costs one execution fee." : undefined}
+          confirmLabel="Close position"
+          allowSkip
+          onSkipChange={(skip) => setSettings((s) => ({ ...s, oneClick: skip }))}
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => {
+            setConfirming(null);
+            runClose();
+          }}
+        />
+      ) : null}
+      {confirming === "reverse" && position ? (
+        <ConfirmDialog
+          title={`Reverse to ${position.position.isLong ? "short" : "long"}`}
+          lines={[
+            { label: "Step 1", value: `Close ${position.position.isLong ? "long" : "short"} ${fmtUsdc(position.position.size)} ${sym}` },
+            { label: "Step 2", value: `Open ${position.position.isLong ? "short" : "long"} ${fmtUsdc(position.position.size)} ${sym} on ${fmtUsdc(position.position.margin)} margin` },
+          ]}
+          note={
+            publisher
+              ? "Reversing is two keeper orders, not one trade: first a close order, then, once a keeper has executed it, a market order the other way. You sign twice, pay fees on both, and the price can move in between. Take-profit and stop-loss are not carried over."
+              : "Reversing is two transactions: a close, then an open the other way. You sign twice and pay fees on both. Take-profit and stop-loss are not carried over."
+          }
+          confirmLabel="Reverse position"
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => {
+            setConfirming(null);
+            runReverse();
+          }}
+        />
+      ) : null}
+    </section>
+  );
+});

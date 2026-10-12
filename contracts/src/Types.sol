@@ -97,7 +97,7 @@ struct PositionView {
     bytes32 key;
     Position position;
     int256 fundingOwed; // positive: the position owes funding
-    uint256 liquidationPrice; // type(uint256).max / 0 when liquidatable at any price
+    uint256 liquidationPrice; // long: liquidatable at or below (0 = never); short: at or above (0 = always)
 }
 
 struct OraclePrice {

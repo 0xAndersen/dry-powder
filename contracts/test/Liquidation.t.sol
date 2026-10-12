@@ -13,7 +13,7 @@ contract LiquidationTest is Base {
 
     function test_threshold_isNinetyPercentOfMargin() public {
         bytes32 key = _open(alice, BTC, true, 1_000e6, 100_000e6); // 100x
-        (,, uint256 liq,) = engine.getPositionState(key, 100_000e18);
+        (,, uint256 liq,) = lens.getPositionState(key, 100_000e18);
         assertEq(liq, 99_100e18);
 
         _setBtc(99_101); // loss 899 < 900
@@ -40,11 +40,12 @@ contract LiquidationTest is Base {
 
         // 2% of margin to the liquidator.
         assertEq(usdc.balanceOf(keeper), 20e6);
-        // The other 98% to the vault: 85% to the house, 15% to HOUSE stakers.
+        // The other 98% to the vault, all of it to the house balance: stakers are paid from epoch profit
+        // only, never from an individual inflow.
         assertEq(vault.totalTraderLosses(), 980e6);
-        assertEq(vault.totalHouseBalance(), navBefore + 833e6);
-        assertEq(vault.pendingStakerYield(), 147e6 + 7.5e6); // 7.50 came from the 50 USDC open fee
-        assertEq(house.earned(bob), 154.5e6);
+        assertEq(vault.totalHouseBalance(), navBefore + 980e6);
+        assertEq(vault.pendingStakerYield(), 0);
+        assertEq(house.earned(bob), 0);
         // 100 HOUSE per USDC that reached the vault.
         assertEq(house.balanceOf(alice), 98_000e18);
         // The trader gets nothing back.
@@ -161,8 +162,8 @@ contract LiquidationTest is Base {
         assertEq(engine.totalOpenInterest(), 0);
         assertLt(engine.totalOpenInterest(), oiBefore);
         assertEq(usdc.balanceOf(address(engine)), 0);
-        (,,,,,, uint256 longOi,,) = engine.markets(BTC);
-        assertEq(longOi, 0);
+        assertEq(_market(BTC).longOi, 0);
+        assertEq(_market(BTC).longUnits, 0);
         _assertEngineSolvent();
     }
 
@@ -224,19 +225,33 @@ contract LiquidationTest is Base {
         // 0.9% of notional at 1000% a year takes just under 8 hours.
         skip(7 hours);
         _refreshAll();
-        (,, uint256 liq, bool liquidatable) = engine.getPositionState(longKey, 100_000e18);
+        (,, uint256 liq, bool liquidatable) = lens.getPositionState(longKey, 100_000e18);
         assertFalse(liquidatable);
         assertGt(liq, 99_100e18); // funding has pulled the liquidation price towards the market
         assertLt(liq, 100_000e18);
 
         skip(1 hours);
         _refreshAll();
-        (,, liq, liquidatable) = engine.getPositionState(longKey, 100_000e18);
+        int256 owed;
+        (, owed, liq, liquidatable) = lens.getPositionState(longKey, 100_000e18);
         assertTrue(liquidatable);
-        assertEq(liq, type(uint256).max); // liquidatable at any price
-        (,, liq, liquidatable) = engine.getPositionState(shortKey, 4_000e18);
+        // Funding owed is now 133.05 beyond the 9,000 threshold. The liquidation price has crossed to the
+        // profit side of entry: only a price gain of more than that excess would keep the position alive.
+        assertEq(owed, 9_133_054_287);
+        assertEq(liq, 100_000e18 + (100_000e18 * 133_054_287) / uint256(1_000_000e6));
+        assertEq(liq, 100_013.3054287e18);
+        (,,, liquidatable) = lens.getPositionState(longKey, liq);
         assertTrue(liquidatable);
-        assertEq(liq, 0);
+        (,,, liquidatable) = lens.getPositionState(longKey, liq + 1e15);
+        assertFalse(liquidatable);
+
+        (,, liq, liquidatable) = lens.getPositionState(shortKey, 4_000e18);
+        assertTrue(liquidatable);
+        assertEq(liq, 4_000e18 - (4_000e18 * 133_054_287) / uint256(1_000_000e6));
+        (,,, liquidatable) = lens.getPositionState(shortKey, liq);
+        assertTrue(liquidatable);
+        (,,, liquidatable) = lens.getPositionState(shortKey, liq - 1e13);
+        assertFalse(liquidatable);
 
         bytes32[] memory keys = new bytes32[](2);
         keys[0] = longKey;
@@ -252,7 +267,7 @@ contract LiquidationTest is Base {
         _open(bob, BTC, false, 100_000e6, 1_000_000e6);
         bytes32 key = _open(alice, BTC, true, 1_000e6, 1_000e6); // 1x long on the light side
         skip(5 days);
-        (, int256 owed, uint256 liq, bool liquidatable) = engine.getPositionState(key, 1);
+        (, int256 owed, uint256 liq, bool liquidatable) = lens.getPositionState(key, 1);
         assertLt(owed, -100e6);
         assertEq(liq, 0);
         assertFalse(liquidatable);
@@ -266,5 +281,56 @@ contract LiquidationTest is Base {
         engine.liquidate(alice);
         // She recovers only the 2% keeper fee of a margin she has otherwise lost.
         assertEq(usdc.balanceOf(alice), before + 20e6);
+    }
+}
+
+/// @notice Liquidation-price reporting when funding, not price, is what threatens the position.
+contract LiquidationPriceTest is Base {
+    function setUp() public override {
+        super.setUp();
+        vm.prank(owner);
+        engine.setFeeParams(5, 0, 317_097_919_837, EXEC_FEE); // 1000% a year at full skew
+    }
+
+    /// @dev A short whose funding debt exceeds the threshold by more than its whole notional is liquidatable
+    ///      at every price, and only then is 0 reported.
+    function test_short_liquidatableAtAnyPrice_reportsZero() public {
+        // 1x short on the heavy side of a fully skewed market: pays 1000% a year on its notional.
+        vm.prank(owner);
+        engine.setMarket(BTC, true, 100, MAX_OI_PER_SIDE, 1e6);
+        bytes32 key = _open(alice, BTC, false, 1_000e6, 1_000e6);
+        skip(80 days); // owes ~219% of notional: more than threshold (90%) plus the most a short can gain (100%)
+        (, int256 owed, uint256 liq, bool liquidatable) = lens.getPositionState(key, 1);
+        assertGt(owed, 1_900e6);
+        assertEq(liq, 0);
+        assertTrue(liquidatable); // even with the price at (almost) zero
+        (,,, liquidatable) = lens.getPositionState(key, 100_000e18);
+        assertTrue(liquidatable);
+    }
+
+    /// @dev A long in the same spot is never beyond rescue by price: there is always a price above which its
+    ///      gain covers the funding, and that price is what is reported.
+    function test_long_fundingBeyondThreshold_reportsThePriceThatRescuesIt() public {
+        vm.prank(owner);
+        engine.setMarket(BTC, true, 100, MAX_OI_PER_SIDE, 1e6);
+        bytes32 key = _open(alice, BTC, true, 1_000e6, 1_000e6);
+        skip(80 days);
+        (, int256 owed, uint256 liq, bool liquidatable) = lens.getPositionState(key, 100_000e18);
+        assertTrue(liquidatable);
+        // It needs a gain of (owed - 900) on a notional of 1,000.
+        assertEq(liq, 100_000e18 + (100_000e18 * (uint256(owed) - 900e6)) / 1_000e6);
+        assertGt(liq, 170_000e18);
+        (,,, liquidatable) = lens.getPositionState(key, liq);
+        assertTrue(liquidatable);
+        (,,, liquidatable) = lens.getPositionState(key, liq + liq / 1e6);
+        assertFalse(liquidatable);
+
+        // The engine agrees on both sides of that price.
+        _setPrice(BTC, int64(uint64(liq / 1e10 + 1e8)), 0, -8);
+        vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
+        engine.liquidate(alice);
+        _setPrice(BTC, int64(uint64(liq / 1e10 - 1e8)), 0, -8);
+        vm.prank(keeper);
+        assertEq(engine.liquidate(alice), 1);
     }
 }

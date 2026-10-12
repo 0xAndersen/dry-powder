@@ -1,30 +1,35 @@
 "use client";
 
-import { Fragment, useId, useMemo, useState } from "react";
-import { useConfig } from "wagmi";
-import { simulateContract, writeContract } from "wagmi/actions";
+import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from "react";
+import type { Hex } from "viem";
+import { AppLink } from "@/components/app-link";
 import { useApp } from "@/components/providers";
 import { TxStatus } from "@/components/tx-status";
-import type { EngineParams, OrderRow, PositionView } from "@/hooks/use-engine";
-import { usePriceState } from "@/hooks/use-prices";
-import { useSlippage } from "@/hooks/use-slippage";
-import { useTx } from "@/hooks/use-tx";
-import { useWallet } from "@/hooks/use-wallet";
-import { perpEngineAbi } from "@/lib/abi";
-import { ensureAllowance, freshOracleUpdate } from "@/lib/actions";
+import type { AccountData, OrderRow, PositionView } from "@/hooks/use-account-data";
+import { useActionContext } from "@/hooks/use-action-context";
+import { useLocalStore } from "@/hooks/use-local-store";
+import type { LogFeedHandle } from "@/hooks/use-log-feed";
+import { useMarketData, type MarketPrice } from "@/hooks/use-market-data";
+import { useTx, type TxHandle } from "@/hooks/use-tx";
+import type { AccountView } from "@/hooks/use-wallet";
+import { ORDER_TYPE, submitCancel, submitTrigger } from "@/lib/actions";
 import { UserFacingError } from "@/lib/errors";
-import { MAX_UINT256, PRICE_DECIMALS, fmtPercent, fmtPrice, fmtUsdc, parseAmount, toInputString } from "@/lib/format";
-import { marketById, type MarketInfo } from "@/lib/markets";
-import { BPS, LIQUIDATION_THRESHOLD_BPS, pricePnl, ratio, withSlippageDown, withSlippageUp } from "@/lib/math";
+import { orderTypeLabel } from "@/lib/events";
+import { closeFlow } from "@/lib/flows";
+import { PRICE_DECIMALS, fmtAge, fmtDateTime, fmtNum, fmtPercent, fmtPrice, fmtQty, fmtUsdc, parseAmount, shortAddress, toInputString } from "@/lib/format";
+import { buildHistory, historyCsv } from "@/lib/history";
+import { isSettled, type Instrument } from "@/lib/instruments";
+import { ratio, unitsOf } from "@/lib/math";
+import { valuePosition } from "@/lib/position";
+import { priceAlerts, tradeSettings, type PriceAlert } from "@/lib/storage";
 
-const ORDER_TYPE_LIMIT = 0;
-const ORDER_TYPE_TAKE_PROFIT = 1;
-const ORDER_TYPE_STOP_LOSS = 2;
+type Tab = "positions" | "orders" | "history" | "alerts";
 
-type TxHandle = ReturnType<typeof useTx>;
-type OrdersById = Map<bigint, OrderRow>;
-
-type Loadable<T> = { data: T | undefined; isLoading: boolean; isError: boolean; refetch: () => unknown };
+export type TablesHandle = {
+  /** Opens the take-profit / stop-loss editor of the position in `marketId`, prefilled (chart pick). */
+  editTrigger: (marketId: string, type: "tp" | "sl", price: number) => void;
+  show: (tab: Tab) => void;
+};
 
 function SideTag({ isLong }: { isLong: boolean }) {
   return <span className={isLong ? "text-long" : "text-short"}>{isLong ? "Long" : "Short"}</span>;
@@ -34,480 +39,386 @@ function Empty({ children }: { children: React.ReactNode }) {
   return <div className="px-4 py-10 text-center text-muted">{children}</div>;
 }
 
-function leverageOf(size: bigint, margin: bigint): string {
-  if (margin === 0n) return "—";
-  return `${(Number((size * 100n) / margin) / 100).toFixed(1)}×`;
-}
+type EditState = { marketId: string; type: "tp" | "sl"; text: string } | null;
 
-// ───────────────────────────── Take-profit / stop-loss editor ─────────────────────────────
-
-function TriggerField({
+function TriggerCell({
   kind,
-  market,
-  view,
   current,
-  mark,
-  params,
-  tx,
+  editing,
+  onEdit,
+  onText,
+  onSave,
+  onRemove,
+  onCancel,
+  error,
+  dp,
+  disabled,
+  canEdit,
+  symbol,
 }: {
   kind: "tp" | "sl";
-  market: MarketInfo;
-  view: PositionView;
-  current: OrderRow | undefined;
-  mark: bigint | undefined;
-  params: EngineParams | undefined;
-  tx: TxHandle;
+  current: bigint | null;
+  editing: string | null;
+  onEdit: () => void;
+  onText: (text: string) => void;
+  onSave: () => void;
+  onRemove: () => void;
+  onCancel: () => void;
+  error: string | null;
+  dp: number;
+  disabled: boolean;
+  canEdit: boolean;
+  symbol: string;
 }) {
-  const { config: cfg } = useApp();
-  const wagmiConfig = useConfig();
-  const wallet = useWallet();
-  const id = useId();
-  const pos = view.position;
-  const isTp = kind === "tp";
-  const name = isTp ? "Take-profit" : "Stop-loss";
-  const orderId = isTp ? pos.tpOrderId : pos.slOrderId;
-  const exists = orderId !== 0n;
-  const [text, setText] = useState(current ? toInputString(current.triggerPrice, PRICE_DECIMALS, market.priceDecimals) : "");
-
-  const price = text.trim() === "" ? null : parseAmount(text, PRICE_DECIMALS);
-  // A take-profit sits on the winning side of the mark, a stop-loss on the losing side; otherwise it fires at once.
-  const mustBeAbove = isTp ? pos.isLong : !pos.isLong;
-  const error =
-    text.trim() === ""
-      ? null
-      : price === null || price === 0n
-        ? "Enter a price greater than zero"
-        : mark !== undefined && (mustBeAbove ? price <= mark : price >= mark)
-          ? `${name} on a ${pos.isLong ? "long" : "short"} must be ${mustBeAbove ? "above" : "below"} the mark price, or it would trigger immediately`
-          : null;
-  const unchanged = current !== undefined && price === current.triggerPrice;
-  const canSave = wallet.ready && !tx.busy && price !== null && price > 0n && error === null && !unchanged && (exists || params !== undefined);
-
-  const save = () => {
-    const account = wallet.address;
-    if (!canSave || !account || price === null) return;
-    void tx.run(async (api) => {
-      if (!exists) {
-        if (!params) throw new UserFacingError("Engine parameters are still loading.");
-        await ensureAllowance(wagmiConfig, cfg, api, {
-          token: cfg.usdc,
-          owner: account,
-          spender: cfg.perpEngine,
-          amount: params.executionFee,
-          symbol: "USDC",
-        });
-      }
-      await api.send(`${exists ? "Move" : "Set"} ${name.toLowerCase()} on ${market.symbol}`, async () => {
-        const { request } = await simulateContract(wagmiConfig, {
-          abi: perpEngineAbi,
-          address: cfg.perpEngine,
-          functionName: "setTriggerOrder",
-          args: [market.id, isTp ? ORDER_TYPE_TAKE_PROFIT : ORDER_TYPE_STOP_LOSS, price],
-          account,
-          chainId: cfg.chainId,
-        });
-        return writeContract(wagmiConfig, request);
-      });
-      return `${name} ${exists ? "moved" : "set"} at ${fmtPrice(price, market.priceDecimals)}.`;
-    });
-  };
-
-  const remove = () => {
-    const account = wallet.address;
-    if (!exists || !account || tx.busy) return;
-    void tx
-      .run(async (api) => {
-        await api.send(`Remove ${name.toLowerCase()} on ${market.symbol}`, async () => {
-          const { request } = await simulateContract(wagmiConfig, {
-            abi: perpEngineAbi,
-            address: cfg.perpEngine,
-            functionName: "cancelOrder",
-            args: [orderId],
-            account,
-            chainId: cfg.chainId,
-          });
-          return writeContract(wagmiConfig, request);
-        });
-        return `${name} removed. Its keeper fee was refunded.`;
-      })
-      .then((ok) => {
-        if (ok) setText("");
-      });
-  };
-
+  const name = kind === "tp" ? "take-profit" : "stop-loss";
+  if (editing === null) {
+    if (!canEdit) return <span className="num">{current ? fmtPrice(current, dp) : "—"}</span>;
+    return (
+      <button type="button" className="num inline-edit" onClick={onEdit} aria-label={`${current ? "Edit" : "Add"} ${name} for ${symbol}`} data-testid={`edit-${kind}`}>
+        {current ? fmtPrice(current, dp) : <span className="text-faint">Add</span>}
+      </button>
+    );
+  }
   return (
-    <div className="min-w-0 flex-1">
-      <label className="field-label" htmlFor={id}>
-        {name} price
-      </label>
-      <div className="flex gap-2">
-        <div className="field h-9 min-w-0 flex-1" data-invalid={error !== null}>
-          <input
-            id={id}
-            inputMode="decimal"
-            autoComplete="off"
-            placeholder="None"
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            aria-invalid={error !== null}
-            aria-describedby={`${id}-help`}
-          />
-        </div>
-        <button type="button" className="btn h-9" disabled={!canSave} onClick={save}>
-          {exists ? "Move" : "Set"}
+    <form
+      className="flex items-center gap-1"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave();
+      }}
+    >
+      <input
+        autoFocus
+        className="mini-input num w-24"
+        inputMode="decimal"
+        aria-label={`${name} price for ${symbol}`}
+        aria-invalid={error !== null}
+        title={error ?? undefined}
+        value={editing}
+        onChange={(event) => onText(event.target.value)}
+        onKeyDown={(event) => event.key === "Escape" && onCancel()}
+        data-testid={`input-${kind}`}
+      />
+      <button type="submit" className="btn btn-sm btn-primary px-2" disabled={disabled || error !== null || editing.trim() === ""} title={error ?? `Set ${name}`} data-testid={`save-${kind}`}>
+        Set
+      </button>
+      {current ? (
+        <button type="button" className="btn btn-sm px-2" disabled={disabled} onClick={onRemove} title={`Remove ${name}`}>
+          Remove
         </button>
-        {exists ? (
-          <button type="button" className="btn btn-ghost h-9" disabled={!wallet.ready || tx.busy} onClick={remove}>
-            Remove
-          </button>
-        ) : null}
-      </div>
-      <p id={`${id}-help`} className={`mt-1 whitespace-normal text-xs ${error ? "text-short" : "text-faint"}`}>
-        {error ??
-          (exists
-            ? "Moving an existing trigger is free."
-            : `Setting one escrows a ${params ? fmtUsdc(params.executionFee) : "…"} USDC keeper fee, refunded if you remove it.`)}
-      </p>
-    </div>
+      ) : null}
+      <button type="button" className="btn btn-sm btn-ghost px-1.5" onClick={onCancel} aria-label="Cancel editing">
+        {"✕"}
+      </button>
+    </form>
   );
 }
-
-// ───────────────────────────── Positions ─────────────────────────────
 
 function PositionRow({
   view,
-  market,
+  instrument,
+  price,
   orders,
-  params,
   tx,
+  canTrade,
+  equity,
+  balance,
+  edit,
+  setEdit,
   onSelectMarket,
 }: {
   view: PositionView;
-  market: MarketInfo;
-  orders: OrdersById;
-  params: EngineParams | undefined;
+  instrument: Instrument | undefined;
+  price: MarketPrice | undefined;
+  orders: OrderRow[];
   tx: TxHandle;
-  onSelectMarket: (market: MarketInfo) => void;
+  canTrade: boolean;
+  equity: bigint | null;
+  balance: bigint | undefined;
+  edit: EditState;
+  setEdit: (edit: EditState) => void;
+  onSelectMarket: (instrument: Instrument) => void;
 }) {
-  const { config: cfg, prices } = useApp();
-  const wagmiConfig = useConfig();
-  const wallet = useWallet();
-  const [slippageBps] = useSlippage();
-  const [editing, setEditing] = useState(false);
-  const { tick, stale } = usePriceState(market.id);
+  const { config: cfg } = useApp();
+  const { params } = useMarketData();
+  const actionContext = useActionContext();
+  const [settings] = useLocalStore(tradeSettings);
   const pos = view.position;
-  const pd = market.priceDecimals;
+  const marketId = pos.priceId.toLowerCase();
+  const dp = instrument?.priceDecimals ?? 2;
+  const sym = cfg.collateralSymbol;
+  const symbol = instrument?.symbol ?? `${pos.priceId.slice(0, 10)}…`;
+  const mark = price?.mark ?? null;
+  const value = valuePosition(view, mark, params?.maxProfitMultiple ?? 10n);
+  const tp = orders.find((o) => o.id === pos.tpOrderId && pos.tpOrderId !== 0n)?.order.triggerPrice ?? null;
+  const sl = orders.find((o) => o.id === pos.slOrderId && pos.slOrderId !== 0n)?.order.triggerPrice ?? null;
+  const settled = instrument ? isSettled(instrument) : false;
+  const closing = pos.closeOrderId !== 0n;
 
-  const mark = tick?.mid;
-  const gross = mark !== undefined ? pricePnl(pos.size, pos.entryPrice, mark, pos.isLong) : undefined;
-  const net = gross !== undefined ? gross - view.fundingOwed : undefined;
-  const roe = net !== undefined && pos.margin > 0n ? ratio(net, pos.margin) : undefined;
-  const threshold = (pos.margin * LIQUIDATION_THRESHOLD_BPS) / BPS;
-  const liquidatableAlways = pos.isLong ? view.liquidationPrice === MAX_UINT256 : view.liquidationPrice === 0n;
-  const liquidatable = liquidatableAlways || (net !== undefined && net <= -threshold);
-  const noLiquidation = pos.isLong && view.liquidationPrice === 0n;
+  const editingFor = (type: "tp" | "sl") => (edit && edit.marketId === marketId && edit.type === type ? edit.text : null);
+  const parsed = edit && edit.marketId === marketId ? parseAmount(edit.text, PRICE_DECIMALS) : null;
+  const editError = (() => {
+    if (!edit || edit.marketId !== marketId || edit.text.trim() === "") return null;
+    if (!parsed) return "Enter a price greater than zero";
+    if (mark === null) return null;
+    // The engine does not check the side when a trigger is set on an open position; a trigger on the wrong
+    // side of the price would fire on the next keeper pass and close the position.
+    const wantsAbove = pos.isLong === (edit.type === "tp");
+    if (wantsAbove ? parsed <= mark : parsed >= mark) {
+      return `${edit.type === "tp" ? "Take-profit" : "Stop-loss"} must be ${wantsAbove ? "above" : "below"} the current price (${fmtPrice(mark, dp)}), or it would trigger at once`;
+    }
+    return null;
+  })();
 
-  const tp = pos.tpOrderId !== 0n ? orders.get(pos.tpOrderId) : undefined;
-  const sl = pos.slOrderId !== 0n ? orders.get(pos.slOrderId) : undefined;
+  const run = (job: Parameters<TxHandle["run"]>[0]) => void tx.run(job);
+  const withCtx = (api: Parameters<Parameters<TxHandle["run"]>[0]>[0]) => {
+    const ctx = actionContext(api);
+    if (!ctx) throw new UserFacingError("Connect your wallet first.");
+    return ctx;
+  };
 
+  const saveTrigger = () => {
+    if (!edit || !parsed || editError || !params) return;
+    const type = edit.type;
+    const existing = type === "tp" ? pos.tpOrderId : pos.slOrderId;
+    const name = type === "tp" ? "Take-profit" : "Stop-loss";
+    run(async (api) => {
+      await submitTrigger(withCtx(api), pos.priceId, type === "tp" ? ORDER_TYPE.TakeProfit : ORDER_TYPE.StopLoss, parsed, existing === 0n ? params.executionFee : 0n, `${existing === 0n ? "Set" : "Move"} ${name.toLowerCase()}`);
+      setEdit(null);
+      return `${name} ${existing === 0n ? "set" : "moved"} to ${fmtPrice(parsed, dp)} on ${symbol}.`;
+    });
+  };
+  const removeTrigger = (type: "tp" | "sl") => {
+    const id = type === "tp" ? pos.tpOrderId : pos.slOrderId;
+    if (id === 0n) return;
+    run(async (api) => {
+      await submitCancel(withCtx(api), id, `Remove ${type === "tp" ? "take-profit" : "stop-loss"}`);
+      setEdit(null);
+      return `${type === "tp" ? "Take-profit" : "Stop-loss"} removed from ${symbol}. Its execution fee was refunded.`;
+    });
+  };
   const close = () => {
-    const account = wallet.address;
-    const seen = tick;
-    if (!account || !seen || !params || tx.busy) return;
-    void tx.run(async (api) => {
-      // Closing a long sells at the bid, closing a short buys at the ask.
-      const acceptablePrice = pos.isLong
-        ? withSlippageDown(seen.bid, BigInt(slippageBps))
-        : withSlippageUp(seen.ask, BigInt(slippageBps));
-      api.preparing(`Fetching the latest ${market.symbol} price`);
-      const oracle = await freshOracleUpdate(wagmiConfig, cfg, prices, market, Number(params.maxPriceAge));
-      await api.send(`Close ${pos.isLong ? "long" : "short"} ${market.symbol}`, async () => {
-        const { request } = await simulateContract(wagmiConfig, {
-          abi: perpEngineAbi,
-          address: cfg.perpEngine,
-          functionName: "closePosition",
-          args: [market.id, acceptablePrice, oracle.updateData],
-          value: oracle.fee,
-          account,
-          chainId: cfg.chainId,
-        });
-        return writeContract(wagmiConfig, request);
-      });
-      return `${market.symbol} position closed.`;
+    if (!instrument || !params) return;
+    run((api) => closeFlow(withCtx(api), { instrument, view, reference: price?.reference ?? null, slippageBps: settings.slippageBps, executionFee: params.executionFee, balance }));
+  };
+  const cancelClose = () => {
+    run(async (api) => {
+      await submitCancel(withCtx(api), pos.closeOrderId, "Cancel close order");
+      return `Close order on ${symbol} cancelled.`;
     });
   };
 
-  const closeBlocked = !wallet.ready
-    ? "Connect to Arc to close"
-    : liquidatable
-      ? "Past the liquidation threshold: only a liquidation can settle this position"
-      : stale
-        ? "Market closed: the price is stale"
-        : !tick || !params
-          ? "Waiting for a price"
-          : null;
+  const liqNear = value.liquidationDistance !== null && value.liquidationDistance < 0.02;
 
   return (
-    <Fragment>
-      <tr>
-        <td>
-          <button type="button" className="wide font-semibold hover:text-brass" onClick={() => onSelectMarket(market)}>
-            {market.symbol}
-          </button>
-        </td>
-        <td>
-          <SideTag isLong={pos.isLong} />
-        </td>
-        <td className="r num">{fmtUsdc(pos.size)}</td>
-        <td className="r num">{fmtUsdc(pos.margin)}</td>
-        <td className="r num">{leverageOf(pos.size, pos.margin)}</td>
-        <td className="r num">{fmtPrice(pos.entryPrice, pd)}</td>
-        <td className={`r num ${stale ? "text-muted" : ""}`} title={stale ? "Market closed: last published price" : undefined}>
-          {mark !== undefined ? fmtPrice(mark, pd) : "…"}
-        </td>
-        <td className="r num">
-          {liquidatable ? (
-            <span className="text-short">Liquidatable</span>
-          ) : noLiquidation ? (
-            <span className="text-muted" title="Fully collateralised: no price liquidates this position">
-              None
-            </span>
-          ) : (
-            <span className="text-brass">{fmtPrice(view.liquidationPrice, pd)}</span>
-          )}
-        </td>
-        <td
-          className={`r num ${view.fundingOwed > 0n ? "text-short" : view.fundingOwed < 0n ? "text-long" : "text-muted"}`}
-          title={view.fundingOwed > 0n ? "Funding this position owes" : view.fundingOwed < 0n ? "Funding this position is owed" : undefined}
-        >
+    <tr data-testid={`position-${symbol}`}>
+      <td>
+        <button type="button" className="text-left hover:text-neon" disabled={!instrument} onClick={() => instrument && onSelectMarket(instrument)}>
+          <span className="wide font-semibold">{symbol}</span>
+        </button>
+        <span className="block text-xs">
+          <SideTag isLong={pos.isLong} /> <span className="num text-faint">{value.leverage.toFixed(1)}x</span>
+        </span>
+      </td>
+      <td className="r">
+        <span className="num">{fmtUsdc(pos.size)}</span>
+        <span className="num block text-xs text-faint">
+          {fmtQty(unitsOf(pos.size, pos.entryPrice))} {instrument?.unitLabel ?? ""}
+        </span>
+      </td>
+      <td className="r num">{fmtPrice(pos.entryPrice, dp)}</td>
+      <td className="r num">
+        {mark !== null ? fmtPrice(mark, dp) : "—"}
+        {price?.status === "awaiting" ? <span className="block text-xs text-warn">indicative</span> : price?.status === "settled" ? <span className="block text-xs text-neon">settled</span> : null}
+      </td>
+      <td className="r">
+        <span className={`num ${liqNear ? "text-short" : "text-neon"}`}>
+          {value.liquidatableNow ? "Now" : value.liquidationPrice === null ? "None" : fmtPrice(value.liquidationPrice, dp)}
+        </span>
+        {value.liquidationDistance !== null ? (
+          <span className={`num block text-xs ${liqNear ? "text-short" : "text-faint"}`}>{value.liquidationDistance <= 0 ? "past threshold" : `${fmtPercent(value.liquidationDistance, 2)} away`}</span>
+        ) : null}
+      </td>
+      <td className="r">
+        <span className={`num font-semibold ${value.pnl === null ? "" : value.pnl >= 0n ? "text-long" : "text-short"}`} data-testid="position-pnl">
+          {value.pnl === null ? "—" : fmtUsdc(value.pnl, 2, { sign: true })}
+        </span>
+        <span className={`num block text-xs ${value.roe === null ? "text-faint" : value.roe >= 0 ? "text-long" : "text-short"}`}>
+          {value.roe === null ? "" : `${fmtPercent(value.roe, 1, true)} ROE`}
+          {value.capped ? " (capped)" : ""}
+        </span>
+      </td>
+      <td className="r">
+        <span className={`num ${view.fundingOwed > 0n ? "text-short" : view.fundingOwed < 0n ? "text-long" : "text-muted"}`} title="Funding accrued since entry. Negative: you have been paid.">
           {fmtUsdc(-view.fundingOwed, 4, { sign: true })}
-        </td>
-        <td className="r num">
-          {net !== undefined && roe !== undefined ? (
-            <span className={net >= 0n ? "text-long" : "text-short"}>
-              {fmtUsdc(net, 2, { sign: true })}
-              <span className="ml-1.5 text-xs">{fmtPercent(roe, 2, true)}</span>
-            </span>
-          ) : (
-            "…"
-          )}
-        </td>
-        <td className="r num">
-          <span className={tp ? "text-long" : "text-faint"}>{tp ? fmtPrice(tp.triggerPrice, pd) : "—"}</span>
-          <span className="mx-1 text-faint">/</span>
-          <span className={sl ? "text-short" : "text-faint"}>{sl ? fmtPrice(sl.triggerPrice, pd) : "—"}</span>
-          <button
-            type="button"
-            className="chip ml-2"
-            aria-expanded={editing}
-            aria-label={`Edit take-profit and stop-loss for ${market.symbol}`}
-            onClick={() => setEditing((v) => !v)}
-          >
-            {editing ? "Done" : "Edit"}
-          </button>
-        </td>
-        <td className="r">
-          <button type="button" className="btn btn-sm" disabled={closeBlocked !== null || tx.busy} title={closeBlocked ?? undefined} onClick={close}>
-            Close
-          </button>
-        </td>
-      </tr>
-      {editing ? (
-        <tr>
-          <td colSpan={12} className="bg-bg/60">
-            <div className="flex max-w-3xl flex-col gap-4 py-1 sm:flex-row">
-              <TriggerField key={`tp-${pos.tpOrderId}-${tp?.triggerPrice ?? 0n}`} kind="tp" market={market} view={view} current={tp} mark={mark} params={params} tx={tx} />
-              <TriggerField key={`sl-${pos.slOrderId}-${sl?.triggerPrice ?? 0n}`} kind="sl" market={market} view={view} current={sl} mark={mark} params={params} tx={tx} />
-            </div>
-          </td>
-        </tr>
-      ) : null}
-    </Fragment>
-  );
-}
-
-/** A position in a market this UI has no price feed metadata for: shown read-only. */
-function UnknownPositionRow({ view }: { view: PositionView }) {
-  const pos = view.position;
-  return (
-    <tr>
-      <td className="num text-muted" title={pos.priceId}>
-        {pos.priceId.slice(0, 10)}
-        {"…"}
+        </span>
+      </td>
+      <td className="r">
+        <span className="num">{fmtUsdc(pos.margin)}</span>
+        {equity !== null && equity > 0n && value.pnl !== null ? (
+          <span className="num block text-xs text-faint" title="This position's margin plus open PnL as a share of the account value">
+            {fmtPercent(Math.max(0, ratio(pos.margin + value.pnl, equity)), 0)} of account
+          </span>
+        ) : null}
       </td>
       <td>
-        <SideTag isLong={pos.isLong} />
+        <div className="flex flex-col gap-1">
+          <span className="flex items-center gap-1.5">
+            <span className="w-5 text-xs text-long">TP</span>
+            <TriggerCell
+              kind="tp" current={tp} editing={editingFor("tp")} dp={dp} symbol={symbol} canEdit={canTrade && !settled} disabled={tx.busy} error={edit?.type === "tp" ? editError : null}
+              onEdit={() => setEdit({ marketId, type: "tp", text: tp ? toInputString(tp, PRICE_DECIMALS, dp) : "" })}
+              onText={(text) => setEdit({ marketId, type: "tp", text })}
+              onSave={saveTrigger} onRemove={() => removeTrigger("tp")} onCancel={() => setEdit(null)}
+            />
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-5 text-xs text-short">SL</span>
+            <TriggerCell
+              kind="sl" current={sl} editing={editingFor("sl")} dp={dp} symbol={symbol} canEdit={canTrade && !settled} disabled={tx.busy} error={edit?.type === "sl" ? editError : null}
+              onEdit={() => setEdit({ marketId, type: "sl", text: sl ? toInputString(sl, PRICE_DECIMALS, dp) : "" })}
+              onText={(text) => setEdit({ marketId, type: "sl", text })}
+              onSave={saveTrigger} onRemove={() => removeTrigger("sl")} onCancel={() => setEdit(null)}
+            />
+          </span>
+          {edit && edit.marketId === marketId && editError ? <span className="max-w-[16rem] whitespace-normal text-xs text-short">{editError}</span> : null}
+        </div>
       </td>
-      <td className="r num">{fmtUsdc(pos.size)}</td>
-      <td className="r num">{fmtUsdc(pos.margin)}</td>
-      <td className="r num">{leverageOf(pos.size, pos.margin)}</td>
-      <td className="r num">{fmtPrice(pos.entryPrice, 6)}</td>
-      <td colSpan={6} className="text-muted">
-        This market is not supported by this interface.
+      <td className="r">
+        {canTrade ? (
+          settled ? (
+            <button type="button" className="btn btn-sm btn-primary" disabled={tx.busy || !instrument} onClick={close} data-testid="settle-close">
+              Settle &amp; close
+            </button>
+          ) : closing ? (
+            <span className="flex items-center justify-end gap-1.5">
+              <span className="flex items-center gap-1 text-xs text-neon">
+                <span className="spinner" aria-hidden="true" /> Closing
+              </span>
+              <button type="button" className="btn btn-sm" disabled={tx.busy} onClick={cancelClose} title="Cancel the resting close order">
+                Cancel
+              </button>
+            </span>
+          ) : (
+            <button type="button" className="btn btn-sm" disabled={tx.busy || !instrument} onClick={close} data-testid="close-position">
+              Close
+            </button>
+          )
+        ) : closing ? (
+          <span className="text-xs text-neon">Closing</span>
+        ) : null}
       </td>
     </tr>
   );
 }
 
-function PositionsTable({
-  positions,
+function OrdersTable({
   orders,
-  params,
+  positions,
   tx,
+  canTrade,
+  chainNow,
   onSelectMarket,
 }: {
+  orders: OrderRow[];
   positions: readonly PositionView[];
-  orders: OrdersById;
-  params: EngineParams | undefined;
   tx: TxHandle;
-  onSelectMarket: (market: MarketInfo) => void;
+  canTrade: boolean;
+  chainNow: number;
+  onSelectMarket: (instrument: Instrument) => void;
 }) {
-  if (positions.length === 0) {
-    return <Empty>No open positions. Pick a market and place an order to open one.</Empty>;
-  }
-  return (
-    <div className="overflow-x-auto">
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th scope="col">Market</th>
-            <th scope="col">Side</th>
-            <th scope="col" className="r">Size (USDC)</th>
-            <th scope="col" className="r">Margin</th>
-            <th scope="col" className="r">Leverage</th>
-            <th scope="col" className="r">Entry</th>
-            <th scope="col" className="r">Mark</th>
-            <th scope="col" className="r">Liq. price</th>
-            <th scope="col" className="r">Funding</th>
-            <th scope="col" className="r">PnL / ROE</th>
-            <th scope="col" className="r">TP / SL</th>
-            <th scope="col" className="r">
-              <span className="sr-only">Actions</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {positions.map((view) => {
-            const market = marketById(view.position.priceId);
-            return market ? (
-              <PositionRow key={view.key} view={view} market={market} orders={orders} params={params} tx={tx} onSelectMarket={onSelectMarket} />
-            ) : (
-              <UnknownPositionRow key={view.key} view={view} />
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ───────────────────────────── Orders ─────────────────────────────
-
-function orderTypeLabel(order: OrderRow): string {
-  if (order.orderType === ORDER_TYPE_LIMIT) return "Limit";
-  return order.orderType === ORDER_TYPE_TAKE_PROFIT ? "Take-profit" : "Stop-loss";
-}
-
-function OrdersTable({ ids, orders, tx }: { ids: readonly bigint[]; orders: readonly OrderRow[]; tx: TxHandle }) {
   const { config: cfg } = useApp();
-  const wagmiConfig = useConfig();
-  const wallet = useWallet();
+  const { byId, prices } = useMarketData();
+  const actionContext = useActionContext();
+  const sym = cfg.collateralSymbol;
+  const sorted = useMemo(() => [...orders].sort((a, b) => (a.id < b.id ? 1 : -1)), [orders]);
 
-  if (ids.length === 0) {
-    return <Empty>No open orders. Limit orders, take-profits and stop-losses appear here until they fill.</Empty>;
-  }
+  if (sorted.length === 0) return <Empty>No open orders. Limit orders, take-profits, stop-losses and pending keeper orders appear here.</Empty>;
 
-  const cancel = (orderId: bigint, description: string) => {
-    const account = wallet.address;
-    if (!account || tx.busy) return;
+  const cancel = (row: OrderRow) => {
     void tx.run(async (api) => {
-      await api.send(`Cancel ${description}`, async () => {
-        const { request } = await simulateContract(wagmiConfig, {
-          abi: perpEngineAbi,
-          address: cfg.perpEngine,
-          functionName: "cancelOrder",
-          args: [orderId],
-          account,
-          chainId: cfg.chainId,
-        });
-        return writeContract(wagmiConfig, request);
-      });
-      return "Order cancelled. Everything escrowed for it was refunded.";
+      const ctx = actionContext(api);
+      if (!ctx) throw new UserFacingError("Connect your wallet first.");
+      await submitCancel(ctx, row.id, `Cancel order #${row.id}`);
+      return `Order #${row.id} cancelled. Everything escrowed for it was refunded.`;
     });
   };
 
   return (
-    <div className="overflow-x-auto">
+    <div className="relative overflow-x-auto">
       <table className="data-table">
         <thead>
           <tr>
-            <th scope="col">Type</th>
-            <th scope="col">Market</th>
-            <th scope="col">Side</th>
-            <th scope="col" className="r">Trigger price</th>
-            <th scope="col" className="r">Size (USDC)</th>
-            <th scope="col" className="r">Margin</th>
-            <th scope="col">Attached</th>
-            <th scope="col" className="r">
+            <th>Order</th>
+            <th>Market</th>
+            <th>Side</th>
+            <th className="r">Size</th>
+            <th className="r">Trigger</th>
+            <th>Brackets</th>
+            <th className="r">Escrow</th>
+            <th>State</th>
+            <th className="r">
               <span className="sr-only">Actions</span>
             </th>
           </tr>
         </thead>
         <tbody>
-          {ids.map((orderId, i) => {
-            const order = orders[i];
-            if (!order) return null;
-            const market = marketById(order.priceId);
-            const pd = market?.priceDecimals ?? 6;
-            const isLimit = order.orderType === ORDER_TYPE_LIMIT;
-            const symbol = market?.symbol ?? `${order.priceId.slice(0, 10)}…`;
-            const type = orderTypeLabel(order);
-            const condition = isLimit
-              ? order.isLong
-                ? "ask ≤"
-                : "bid ≥"
-              : (order.orderType === ORDER_TYPE_TAKE_PROFIT) === order.isLong
-                ? "mark ≥"
-                : "mark ≤";
+          {sorted.map((row) => {
+            const o = row.order;
+            const instrument = byId.get(o.priceId.toLowerCase());
+            const dp = instrument?.priceDecimals ?? 2;
+            const p = prices.get(o.priceId.toLowerCase());
+            const isOpen = o.orderType === 0;
+            const hasPosition = positions.some((v) => v.position.priceId.toLowerCase() === o.priceId.toLowerCase());
+            const escrow = isOpen ? o.margin + o.feeBudget + o.executionFee * BigInt(1 + (o.takeProfit !== 0n ? 1 : 0) + (o.stopLoss !== 0n ? 1 : 0)) : o.executionFee;
+            const now = p?.exec ? (o.isLong ? p.exec.ask : p.exec.bid) : null;
+            const marketable = isOpen && now !== null && (o.isLong ? now <= o.triggerPrice : now >= o.triggerPrice);
+            const state = isOpen
+              ? hasPosition
+                ? { text: "Blocked: a position is open in this market", tone: "text-warn" }
+                : marketable
+                  ? { text: "Marketable: waiting for a keeper", tone: "text-neon" }
+                  : { text: now !== null ? `Resting, ${fmtPercent(Math.abs(ratio(o.triggerPrice - now, now)), 2)} from price` : "Resting", tone: "text-muted" }
+              : o.orderType === 3
+                ? { text: "Closing: waiting for a keeper", tone: "text-neon" }
+                : { text: "Armed", tone: "text-muted" };
             return (
-              <tr key={orderId.toString()}>
-                <td>{type}</td>
-                <td className="wide font-semibold">{symbol}</td>
+              <tr key={row.id.toString()} data-testid={`order-${row.id}`}>
                 <td>
-                  {isLimit ? (
-                    <SideTag isLong={order.isLong} />
+                  <span className="num">#{row.id.toString()}</span> {orderTypeLabel(o.orderType)}
+                  <span className="num block text-xs text-faint">{fmtAge(Math.max(0, chainNow - Number(o.createdAt)))} ago</span>
+                </td>
+                <td>
+                  <button type="button" className="wide font-semibold hover:text-neon" disabled={!instrument} onClick={() => instrument && onSelectMarket(instrument)}>
+                    {instrument?.symbol ?? "Unknown"}
+                  </button>
+                </td>
+                <td>
+                  <SideTag isLong={o.isLong} />
+                </td>
+                <td className="r num">{isOpen ? fmtUsdc(o.size) : "Whole position"}</td>
+                <td className="r num">{o.triggerPrice === 0n ? "Any price" : fmtPrice(o.triggerPrice, dp)}</td>
+                <td className="num text-xs">
+                  {isOpen ? (
+                    <>
+                      <span className="text-long">TP</span> {o.takeProfit !== 0n ? fmtPrice(o.takeProfit, dp) : "—"}
+                      <br />
+                      <span className="text-short">SL</span> {o.stopLoss !== 0n ? fmtPrice(o.stopLoss, dp) : "—"}
+                    </>
                   ) : (
-                    <span className="text-muted">
-                      Close <SideTag isLong={order.isLong} />
-                    </span>
+                    "—"
                   )}
                 </td>
-                <td className="r num">
-                  <span className="mr-1.5 text-xs text-faint">{condition}</span>
-                  {fmtPrice(order.triggerPrice, pd)}
+                <td className="r num" title="Returned in full if you cancel">
+                  {fmtUsdc(escrow)} {sym}
                 </td>
-                <td className="r num">{isLimit ? fmtUsdc(order.size) : <span className="text-muted">Whole position</span>}</td>
-                <td className="r num">{isLimit ? fmtUsdc(order.margin) : "—"}</td>
-                <td className="num text-muted">
-                  {isLimit && (order.takeProfit !== 0n || order.stopLoss !== 0n)
-                    ? [
-                        order.takeProfit !== 0n ? `TP ${fmtPrice(order.takeProfit, pd)}` : null,
-                        order.stopLoss !== 0n ? `SL ${fmtPrice(order.stopLoss, pd)}` : null,
-                      ]
-                        .filter(Boolean)
-                        .join(", ")
-                    : "—"}
-                </td>
+                <td className={`text-xs ${state.tone}`}>{state.text}</td>
                 <td className="r">
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    disabled={!wallet.ready || tx.busy}
-                    onClick={() => cancel(orderId, `${type.toLowerCase()} on ${symbol}`)}
-                    aria-label={`Cancel ${type.toLowerCase()} order on ${symbol}`}
-                  >
-                    Cancel
-                  </button>
+                  {canTrade ? (
+                    <button type="button" className="btn btn-sm" disabled={tx.busy} onClick={() => cancel(row)} aria-label={`Cancel order ${row.id}`} data-testid="cancel-order">
+                      Cancel
+                    </button>
+                  ) : null}
                 </td>
               </tr>
             );
@@ -518,80 +429,350 @@ function OrdersTable({ ids, orders, tx }: { ids: readonly bigint[]; orders: read
   );
 }
 
-// ───────────────────────────── Panel ─────────────────────────────
+function HistoryTable({ feed, address }: { feed: LogFeedHandle; address: string }) {
+  const { config: cfg } = useApp();
+  const { byId } = useMarketData();
+  const [showOrders, setShowOrders] = useState(false);
+  const sym = cfg.collateralSymbol;
+  const { rows, summary } = useMemo(() => buildHistory(feed.events), [feed.events]);
+  const visible = showOrders ? rows : rows.filter((r) => !r.minor);
+  const symbolOf = (id: Hex | null) => (id ? (byId.get(id)?.symbol ?? id) : "");
+  const status = feed.status;
+  const coverage = status.loadedFromTime > 0 ? Math.max(0, Date.now() / 1000 - status.loadedFromTime) : 0;
 
-export function AccountTables({
-  positions,
-  orders,
-  params,
-  onSelectMarket,
-}: {
-  positions: Loadable<readonly PositionView[]>;
-  orders: Loadable<readonly [readonly bigint[], readonly OrderRow[]]>;
-  params: EngineParams | undefined;
-  onSelectMarket: (market: MarketInfo) => void;
-}) {
-  const wallet = useWallet();
-  const tx = useTx();
-  const [tab, setTab] = useState<"positions" | "orders">("positions");
-
-  const ordersById = useMemo<OrdersById>(() => {
-    const map: OrdersById = new Map();
-    const data = orders.data;
-    if (data) data[0].forEach((id, i) => {
-      const order = data[1][i];
-      if (order) map.set(id, order);
-    });
-    return map;
-  }, [orders.data]);
-
-  const positionCount = positions.data?.length;
-  const orderCount = orders.data?.[0].length;
-  const active = tab === "positions" ? positions : orders;
-
-  let body: React.ReactNode;
-  if (!wallet.connected) {
-    body = <Empty>Connect your wallet to see your positions and orders.</Empty>;
-  } else if (active.isError) {
-    body = (
-      <Empty>
-        <p>Your {tab === "positions" ? "positions" : "orders"} could not be read from the engine.</p>
-        <button type="button" className="btn btn-sm mt-3" onClick={() => void active.refetch()}>
-          Retry
-        </button>
-      </Empty>
-    );
-  } else if (active.data === undefined) {
-    body = (
-      <Empty>
-        <span className="inline-flex items-center gap-2" role="status">
-          <span className="spinner" aria-hidden="true" /> Loading
-        </span>
-      </Empty>
-    );
-  } else if (tab === "positions") {
-    body = <PositionsTable positions={positions.data ?? []} orders={ordersById} params={params} tx={tx} onSelectMarket={onSelectMarket} />;
-  } else {
-    body = <OrdersTable ids={orders.data?.[0] ?? []} orders={orders.data?.[1] ?? []} tx={tx} />;
-  }
+  const exportCsv = () => {
+    const blob = new Blob([historyCsv(rows, symbolOf, sym)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `house-money-history-${address.slice(0, 8)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
 
   return (
-    <section className="panel" aria-label="Your positions and orders">
-      <div role="tablist" aria-label="Account" className="tabs">
-        <button type="button" role="tab" aria-selected={tab === "positions"} className="tab" onClick={() => setTab("positions")}>
-          Positions{positionCount !== undefined && wallet.connected ? <span className="num ml-1.5 text-muted">{positionCount}</span> : null}
-        </button>
-        <button type="button" role="tab" aria-selected={tab === "orders"} className="tab" onClick={() => setTab("orders")}>
-          Open orders{orderCount !== undefined && wallet.connected ? <span className="num ml-1.5 text-muted">{orderCount}</span> : null}
-        </button>
+    <div>
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-line px-3 py-2 text-[0.8125rem]">
+        <span>
+          <span className="text-muted">Realised PnL</span>{" "}
+          <span className={`num font-semibold ${summary.realised > 0n ? "text-long" : summary.realised < 0n ? "text-short" : ""}`} data-testid="history-realised">{fmtUsdc(summary.realised, 2, { sign: true })}</span>
+        </span>
+        <span>
+          <span className="text-muted">Fees</span> <span className="num">{fmtUsdc(summary.fees, 2)}</span>
+        </span>
+        <span>
+          <span className="text-muted">Net</span>{" "}
+          <span className={`num font-semibold ${summary.net > 0n ? "text-long" : summary.net < 0n ? "text-short" : ""}`}>{fmtUsdc(summary.net, 2, { sign: true })} {sym}</span>
+        </span>
+        <span className="text-muted">
+          {summary.closes} closed{summary.closes > 0 ? `, ${fmtPercent(summary.wins / summary.closes, 0)} won` : ""}
+          {summary.liquidations > 0 ? `, ${summary.liquidations} liquidated` : ""}
+        </span>
+        <span className="ml-auto flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1.5 text-xs text-muted">
+            <input type="checkbox" className="check" checked={showOrders} onChange={(event) => setShowOrders(event.target.checked)} />
+            Order events
+          </label>
+          <button type="button" className="btn btn-sm" disabled={status.pending > 0 || status.loadedFrom <= 0} onClick={() => void feed.extend(Math.max(3_600, coverage))} title="Reads older event logs in bounded block ranges">
+            {status.pending > 0 ? `Loading (${status.pending})` : status.loadedFrom <= 0 && status.phase === "live" ? "All history loaded" : "Load earlier"}
+          </button>
+          <button type="button" className="btn btn-sm" disabled={rows.length === 0} onClick={exportCsv} data-testid="export-csv">
+            Export CSV
+          </button>
+        </span>
       </div>
-      {wallet.wrongNetwork ? (
-        <p className="notice m-3" data-tone="warn">
-          Your wallet is on another network. Switch to Arc to manage positions.
+      {status.phase === "error" ? (
+        <p className="notice m-3" data-tone="error" role="alert">
+          Event logs could not be read from the RPC ({status.error ?? "unknown error"}). Retrying.
         </p>
       ) : null}
-      {tx.state.phase !== "idle" ? <TxStatus state={tx.state} onDismiss={tx.reset} className="m-3" /> : null}
-      {body}
-    </section>
+      {visible.length === 0 ? (
+        <Empty>
+          {status.phase === "starting" || status.pending > 0
+            ? "Reading event logs…"
+            : `No trades from this account in the last ${fmtAge(coverage)}. Use Load earlier to look further back.`}
+        </Empty>
+      ) : (
+        <div className="relative max-h-[28rem] overflow-auto">
+          <table className="data-table">
+            <thead className="sticky top-0 bg-panel">
+              <tr>
+                <th>Time</th>
+                <th>Market</th>
+                <th>Event</th>
+                <th>Side</th>
+                <th className="r">Size</th>
+                <th className="r">Price</th>
+                <th className="r">PnL</th>
+                <th className="r">Fee</th>
+                <th className="r">Paid out</th>
+                <th className="r">Tx</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.slice(0, 400).map((r) => {
+                const instrument = r.marketId ? byId.get(r.marketId) : undefined;
+                const dp = instrument?.priceDecimals ?? 2;
+                return (
+                  <tr key={r.id} className={r.minor ? "text-muted" : ""} data-testid={`history-${r.action.toLowerCase().replace(/ /g, "-")}`}>
+                    <td className="num text-muted">{fmtDateTime(r.time)}</td>
+                    <td className="wide font-semibold">{symbolOf(r.marketId) ? (instrument?.symbol ?? "Unknown") : "—"}</td>
+                    <td>
+                      <span className={r.action === "Liquidation" ? "text-short" : ""}>{r.action}</span>
+                      <span className="block text-xs text-faint">{r.via}</span>
+                    </td>
+                    <td>{r.isLong === null ? "—" : <SideTag isLong={r.isLong} />}</td>
+                    <td className="r num">{r.size !== null ? fmtUsdc(r.size) : "—"}</td>
+                    <td className="r num">{r.price !== null ? fmtPrice(r.price, dp) : "—"}</td>
+                    <td className={`r num ${r.pnl === null ? "" : r.pnl > 0n ? "text-long" : r.pnl < 0n ? "text-short" : ""}`}>{r.pnl !== null ? fmtUsdc(r.pnl, 2, { sign: true }) : "—"}</td>
+                    <td className="r num">{r.fee !== null ? fmtUsdc(r.fee, 4) : "—"}</td>
+                    <td className="r num">{r.payout !== null ? fmtUsdc(r.payout) : "—"}</td>
+                    <td className="r">
+                      <a className="link num" href={`${cfg.explorerUrl}/tx/${r.tx}`} target="_blank" rel="noreferrer">
+                        {r.tx.slice(0, 8)}
+                      </a>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="border-t border-line px-3 py-1.5 text-2xs text-faint">
+        Built from on-chain event logs{coverage > 0 ? ` covering the last ${fmtAge(coverage)}` : ""}. PnL is after funding and the profit cap, before the close fee. Side and size of a close are shown when its open falls inside the loaded range.
+      </p>
+    </div>
   );
 }
+
+function AlertsPanel({ instrument, price, onPickAlert }: { instrument: Instrument; price: MarketPrice; onPickAlert: () => void }) {
+  const [alerts, setAlerts] = useLocalStore(priceAlerts);
+  const [settings, setSettings] = useLocalStore(tradeSettings);
+  const [text, setText] = useState("");
+  const dp = instrument.priceDecimals;
+  const level = Number(text);
+  const valid = text.trim() !== "" && Number.isFinite(level) && level > 0;
+  const notifications = typeof Notification === "undefined" ? "unsupported" : Notification.permission;
+
+  const add = () => {
+    if (!valid || price.display === null) return;
+    const alert: PriceAlert = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      marketId: instrument.id,
+      symbol: instrument.symbol,
+      price: level,
+      direction: level >= price.display ? "above" : "below",
+      createdAt: Date.now(),
+      firedAt: null,
+    };
+    setAlerts((prev) => [...prev, alert].slice(-50));
+    setText("");
+  };
+
+  const enableNotifications = async () => {
+    if (typeof Notification === "undefined") return;
+    const permission = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
+    setSettings((s) => ({ ...s, notify: permission === "granted" }));
+  };
+
+  return (
+    <div>
+      <form
+        className="flex flex-wrap items-end gap-2 border-b border-line px-3 py-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          add();
+        }}
+      >
+        <div>
+          <label className="field-label" htmlFor="alert-price">
+            Alert me when {instrument.symbol} reaches
+          </label>
+          <div className="field h-9 w-44">
+            <input id="alert-price" inputMode="decimal" autoComplete="off" placeholder={price.display !== null ? price.display.toFixed(dp) : "Price"} value={text} onChange={(event) => setText(event.target.value)} data-testid="alert-price" />
+          </div>
+        </div>
+        <button type="submit" className="btn btn-primary" disabled={!valid || price.display === null}>
+          {valid && price.display !== null ? `Add alert ${level >= price.display ? "above" : "below"}` : "Add alert"}
+        </button>
+        <button type="button" className="btn" onClick={onPickAlert}>
+          Pick on chart
+        </button>
+        <span className="ml-auto text-xs text-muted">
+          {notifications === "unsupported" ? (
+            "Alerts show as a message on this page."
+          ) : settings.notify && notifications === "granted" ? (
+            <button type="button" className="link" onClick={() => setSettings((s) => ({ ...s, notify: false }))}>
+              System notifications on. Turn off
+            </button>
+          ) : notifications === "denied" ? (
+            "System notifications are blocked in your browser settings."
+          ) : (
+            <button type="button" className="link" onClick={() => void enableNotifications()}>
+              Also send a system notification
+            </button>
+          )}
+        </span>
+      </form>
+      {alerts.length === 0 ? (
+        <Empty>No alerts. They are kept in this browser and fire while the app is open.</Empty>
+      ) : (
+        <ul className="divide-y divide-line/60">
+          {[...alerts].reverse().map((a) => (
+            <li key={a.id} className="flex items-center gap-3 px-3 py-2 text-[0.8125rem]" data-testid="alert-row">
+              <span className="wide w-28 font-semibold">{a.symbol}</span>
+              <span className="num flex-1">
+                {a.direction === "above" ? "At or above" : "At or below"} {fmtNum(a.price, a.marketId === instrument.id ? dp : Math.max(2, dp))}
+              </span>
+              <span className={`text-xs ${a.firedAt ? "text-warn" : "text-muted"}`}>{a.firedAt ? `Fired ${fmtDateTime(a.firedAt / 1000)}` : "Waiting"}</span>
+              <button type="button" className="btn btn-sm" onClick={() => setAlerts((prev) => prev.filter((x) => x.id !== a.id))} aria-label={`Remove alert at ${a.price}`}>
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export const AccountTables = forwardRef<
+  TablesHandle,
+  {
+    view: AccountView;
+    account: AccountData | undefined;
+    loading: boolean;
+    error: boolean;
+    feed: LogFeedHandle;
+    instrument: Instrument;
+    price: MarketPrice;
+    chainNow: number;
+    onSelectMarket: (instrument: Instrument) => void;
+    onPickAlert: () => void;
+  }
+>(function AccountTables({ view, account, loading, error, feed, instrument, price, chainNow, onSelectMarket, onPickAlert }, ref) {
+  const { byId, prices, params } = useMarketData();
+  const tx = useTx({ autoDismissMs: 10000 });
+  const [tab, setTab] = useState<Tab>("positions");
+  const [edit, setEdit] = useState<EditState>(null);
+  const rootRef = useRef<HTMLElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    editTrigger: (marketId, type, value) => {
+      setTab("positions");
+      const dp = byId.get(marketId)?.priceDecimals ?? 2;
+      setEdit({ marketId, type, text: value.toFixed(dp) });
+      rootRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    },
+    show: (next) => setTab(next),
+  }));
+
+  const positions = account?.positions ?? [];
+  const orders = account?.orders ?? [];
+  const equity = useMemo(() => {
+    if (!account || !params) return null;
+    let total = account.balance;
+    for (const p of account.positions) {
+      const v = valuePosition(p, prices.get(p.position.priceId.toLowerCase())?.mark ?? null, params.maxProfitMultiple);
+      total += p.position.margin + (v.pnl ?? 0n);
+    }
+    return total;
+  }, [account, prices, params]);
+
+  const tabs: { key: Tab; label: string }[] = [
+    { key: "positions", label: `Positions${account ? ` (${positions.length})` : ""}` },
+    { key: "orders", label: `Orders${account ? ` (${orders.length})` : ""}` },
+    { key: "history", label: "History" },
+    { key: "alerts", label: "Alerts" },
+  ];
+
+  const needsAccount = tab !== "alerts" && !view.address;
+
+  return (
+    <section ref={rootRef} className="panel" aria-label="Positions, orders, history and alerts">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pr-3">
+        <div role="tablist" aria-label="Account views" className="tabs border-b-0">
+          {tabs.map((t) => (
+            <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} className="tab" onClick={() => setTab(t.key)} data-testid={`tab-${t.key}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {view.watching && view.address ? (
+          <span className="text-xs text-muted">
+            Read-only view of <span className="num">{shortAddress(view.address)}</span>.{" "}
+            <AppLink route="activity" className="link">
+              Venue activity
+            </AppLink>
+          </span>
+        ) : null}
+      </div>
+
+      {tx.state.phase !== "idle" ? <TxStatus state={tx.state} onDismiss={tx.reset} className="m-3 mb-0" /> : null}
+
+      {needsAccount ? (
+        <Empty>Connect a wallet to see your positions, or watch any account from the header.</Empty>
+      ) : tab === "alerts" ? (
+        <AlertsPanel instrument={instrument} price={price} onPickAlert={onPickAlert} />
+      ) : tab === "history" && view.address ? (
+        <HistoryTable feed={feed} address={view.address} />
+      ) : error && !account ? (
+        <Empty>This account could not be read from the RPC. Retrying.</Empty>
+      ) : loading || !account ? (
+        <Empty>
+          <span className="inline-flex items-center gap-2">
+            <span className="spinner" aria-hidden="true" /> Loading account
+          </span>
+        </Empty>
+      ) : tab === "positions" ? (
+        positions.length === 0 ? (
+          <Empty>{view.watching ? "This account has no open positions." : "No open positions. Pick a market, choose a size and go long or short."}</Empty>
+        ) : (
+          <div className="relative overflow-x-auto">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Market</th>
+                  <th className="r">Size</th>
+                  <th className="r">Entry</th>
+                  <th className="r">Mark</th>
+                  <th className="r">Liquidation</th>
+                  <th className="r">PnL</th>
+                  <th className="r">Funding</th>
+                  <th className="r">Margin</th>
+                  <th>Take-profit / stop-loss</th>
+                  <th className="r">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {positions.map((v) => (
+                  <PositionRow
+                    key={v.key}
+                    view={v}
+                    instrument={byId.get(v.position.priceId.toLowerCase())}
+                    price={prices.get(v.position.priceId.toLowerCase())}
+                    orders={orders}
+                    tx={tx}
+                    canTrade={view.canTrade}
+                    equity={equity}
+                    balance={account.balance}
+                    edit={edit}
+                    setEdit={setEdit}
+                    onSelectMarket={onSelectMarket}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : (
+        <OrdersTable orders={orders} positions={positions} tx={tx} canTrade={view.canTrade} chainNow={chainNow} onSelectMarket={onSelectMarket} />
+      )}
+    </section>
+  );
+});

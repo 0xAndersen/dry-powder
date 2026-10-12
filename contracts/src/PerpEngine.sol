@@ -138,7 +138,9 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         bytes32 indexed priceId, string symbol, bytes32 feedId, bytes32 quoteFeedId, bool invert, uint64 expiry
     );
     event MarketSettled(bytes32 indexed priceId, uint256 settlementPrice);
-    event FeeParamsSet(uint256 baseFeeBps, uint256 maxSkewFeeBps, uint256 maxFundingRatePerSecond, uint256 executionFee);
+    event FeeParamsSet(
+        uint256 baseFeeBps, uint256 maxSkewFeeBps, uint256 maxFundingRatePerSecond, uint256 executionFee
+    );
     event RiskParamsSet(uint256 maxPriceAge, uint256 maxConfBps, uint256 maxOiToNavBps, uint256 minMargin);
     event MaxProfitMultipleSet(uint256 maxProfitMultiple);
     event PositionOpened(

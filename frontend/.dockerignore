@@ -1,5 +1,7 @@
 node_modules
 .next
+out
+e2e
 .git
 .env
 .env.*

@@ -39,17 +39,20 @@ library PositionMath {
         return pnl <= -((pos.margin * LIQUIDATION_THRESHOLD_BPS) / BPS).toInt256();
     }
 
-    /// @dev Mid price at which the position becomes liquidatable. For a long, max-uint means "at any price"
-    ///      and 0 "never"; for a short, 0 means "at any price".
+    /// @dev Mid price at which the position becomes liquidatable: a long is liquidatable at or below it, a
+    ///      short at or above it. Once funding owed alone exceeds the threshold the price lies on the profit
+    ///      side of entry (the position survives only while its price gain covers the excess). Zero means a
+    ///      long that no price can liquidate, or a short that every price does.
     function liquidationPrice(Position memory pos, int256 fundingIndex) internal pure returns (uint256) {
-        // Price loss the position can still absorb before it hits the threshold.
+        // Price loss the position can still absorb before it hits the threshold; negative once funding has
+        // taken it past the threshold, in which case it is the price gain it needs to stay alive.
         int256 room = ((pos.margin * LIQUIDATION_THRESHOLD_BPS) / BPS).toInt256() - fundingOwed(pos, fundingIndex);
-        if (room <= 0) return pos.isLong ? type(uint256).max : 0;
-        uint256 r = room.toUint256();
-        if (pos.isLong) {
-            return r >= pos.size ? 0 : Math.mulDiv(pos.entryPrice, pos.size - r, pos.size, Math.Rounding.Ceil);
-        }
-        return Math.mulDiv(pos.entryPrice, pos.size + r, pos.size);
+        int256 size = pos.size.toInt256();
+        int256 scaled = pos.isLong ? size - room : size + room;
+        if (scaled <= 0) return 0;
+        return Math.mulDiv(
+            pos.entryPrice, scaled.toUint256(), pos.size, pos.isLong ? Math.Rounding.Ceil : Math.Rounding.Floor
+        );
     }
 
     /// @dev Units of the underlying a position of `size` at `entryPrice` represents, scaled by UNIT_PRECISION.

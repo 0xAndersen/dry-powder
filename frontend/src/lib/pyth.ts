@@ -1,19 +1,7 @@
 import type { Hex } from "viem";
-import { MARKETS, marketById, type MarketInfo } from "./markets";
-import { ceilDiv } from "./math";
+import { pythToQuote, type Quote } from "./oracle";
 
-/** A price as the engine would see it: 18-decimal mid and the confidence band it executes against. */
-export type PriceTick = {
-  id: Hex;
-  mid: bigint;
-  /** Sells fill here (price − conf). */
-  bid: bigint;
-  /** Buys fill here (price + conf). */
-  ask: bigint;
-  /** Mid as a float, for charts only. */
-  midNum: number;
-  publishTime: number;
-};
+/** Pyth mode: live feed prices from Hermes and signed updates for transactions. */
 
 export type FeedStatus = "connecting" | "live" | "polling" | "offline";
 
@@ -27,57 +15,24 @@ type HermesResponse = {
   parsed?: HermesParsedPrice[] | null;
 };
 
-const ONE_E36 = 10n ** 36n;
-
-/**
- * Normalises a Pyth price to 18 decimals exactly as `PerpEngine._peekPrice` does, including the
- * reciprocal for inverted markets. Returns null for prices the engine would reject as invalid.
- */
-export function toTick(parsed: HermesParsedPrice, market: MarketInfo): PriceTick | null {
-  let raw: bigint;
-  let conf: bigint;
-  try {
-    raw = BigInt(parsed.price.price);
-    conf = BigInt(parsed.price.conf);
-  } catch {
-    return null;
-  }
-  const expo = parsed.price.expo;
-  if (raw <= 0n || !Number.isInteger(expo) || expo > 0 || expo < -18 || conf < 0n || conf >= raw) return null;
-
-  const scale = 10n ** BigInt(18 + expo);
-  let mid = raw * scale;
-  let bid = (raw - conf) * scale;
-  let ask = (raw + conf) * scale;
-  if (market.invert) {
-    const invertedBid = ONE_E36 / ask;
-    const invertedAsk = ceilDiv(ONE_E36, bid);
-    bid = invertedBid;
-    ask = invertedAsk;
-    mid = ONE_E36 / mid;
-    if (bid === 0n) return null;
-  }
-  return {
-    id: market.id,
-    mid,
-    bid,
-    ask,
-    midNum: Number(mid) / 1e18,
-    publishTime: parsed.price.publish_time,
-  };
-}
-
 function idsQuery(ids: readonly Hex[]): string {
   return ids.map((id) => `ids[]=${id}`).join("&");
 }
 
-function ticksFrom(response: HermesResponse): PriceTick[] {
-  const out: PriceTick[] = [];
+function authHeaders(apiKey: string): HeadersInit | undefined {
+  return apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined;
+}
+
+function quotesFrom(response: HermesResponse): Map<Hex, Quote> {
+  const out = new Map<Hex, Quote>();
   for (const entry of response.parsed ?? []) {
-    const market = marketById(`0x${entry.id.replace(/^0x/, "")}`);
-    if (!market) continue;
-    const tick = toTick(entry, market);
-    if (tick) out.push(tick);
+    const id = `0x${entry.id.replace(/^0x/, "").toLowerCase()}` as Hex;
+    try {
+      const quote = pythToQuote(BigInt(entry.price.price), BigInt(entry.price.conf), entry.price.expo, entry.price.publish_time);
+      if (quote) out.set(id, quote);
+    } catch {
+      // Malformed entry: skipped.
+    }
   }
   return out;
 }
@@ -85,42 +40,45 @@ function ticksFrom(response: HermesResponse): PriceTick[] {
 export type FreshUpdate = {
   /** `bytes[] priceUpdate` argument for the engine. */
   updateData: Hex[];
-  ticks: PriceTick[];
+  quotes: Map<Hex, Quote>;
 };
 
 /** Fetches the latest signed price update for `ids` from Hermes. */
 export async function fetchLatestUpdate(
   hermesUrl: string,
   ids: readonly Hex[],
+  apiKey: string,
   signal?: AbortSignal,
 ): Promise<FreshUpdate> {
   const url = `${hermesUrl}/v2/updates/price/latest?${idsQuery(ids)}&encoding=hex&parsed=true`;
-  const res = await fetch(url, { signal, cache: "no-store" });
+  const res = await fetch(url, { signal, cache: "no-store", headers: authHeaders(apiKey) });
+  if (res.status === 401 || res.status === 403) throw new Error("Pyth Hermes rejected the request: an API key is required");
   if (!res.ok) throw new Error(`Pyth Hermes returned HTTP ${res.status}`);
   const body = (await res.json()) as HermesResponse;
   const data = body.binary?.data ?? [];
   if (data.length === 0) throw new Error("Pyth Hermes returned no price update");
   return {
     updateData: data.map((d) => (d.startsWith("0x") ? (d as Hex) : (`0x${d}` as Hex))),
-    ticks: ticksFrom(body),
+    quotes: quotesFrom(body),
   };
 }
 
 const NOTIFY_INTERVAL_MS = 250;
 const STREAM_SILENCE_MS = 5_000;
 const STREAM_DEAD_MS = 20_000;
-const POLL_INTERVAL_MS = 2_000;
+const POLL_INTERVAL_MS = 1_500;
 
 /**
- * Live prices for every listed market: Hermes SSE stream with automatic reconnect, falling back to
- * polling `latest` whenever the stream has been silent for a few seconds.
+ * Live Pyth prices per feed id. Without an API key it uses the Hermes SSE stream and falls back to
+ * polling; with a key it polls only, because EventSource cannot send an Authorization header.
  */
-export class PriceStore {
+export class HermesStore {
   private readonly hermesUrl: string;
-  private readonly ids: readonly Hex[] = MARKETS.map((m) => m.id);
+  private readonly apiKey: string;
+  private ids: Hex[] = [];
   private readonly listeners = new Set<() => void>();
-  private visible = new Map<Hex, PriceTick>();
-  private pending = new Map<Hex, PriceTick>();
+  private visible = new Map<Hex, Quote>();
+  private pending = new Map<Hex, Quote>();
   private status: FeedStatus = "connecting";
   private skew = 0;
   private maxPublishSeen = 0;
@@ -133,10 +91,12 @@ export class PriceStore {
   private lastStreamAt = 0;
   private lastPollOkAt = 0;
   private streamOpenedAt = 0;
+  private startedAt = 0;
   private polling = false;
 
-  constructor(hermesUrl: string) {
+  constructor(hermesUrl: string, apiKey: string) {
     this.hermesUrl = hermesUrl;
+    this.apiKey = apiKey;
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -146,24 +106,34 @@ export class PriceStore {
     };
   };
 
-  getTick = (id: Hex): PriceTick | undefined => this.visible.get(id);
+  getQuotes = (): Map<Hex, Quote> => this.visible;
   getStatus = (): FeedStatus => this.status;
 
-  /** Seconds since `tick` was published, corrected for the difference between local and oracle clocks. */
-  ageOf(tick: PriceTick, nowMs: number = Date.now()): number {
-    return Math.max(0, nowMs / 1000 + this.skew - tick.publishTime);
+  /** Seconds since a price with `publishTime` was published, corrected for local clock error. */
+  ageOf(publishTime: number, nowMs: number = Date.now()): number {
+    return Math.max(0, nowMs / 1000 + this.skew - publishTime);
   }
 
-  /** Feeds a price obtained elsewhere (for example right before a transaction) into the store. */
-  ingest(ticks: readonly PriceTick[]): void {
+  setFeeds(ids: readonly Hex[]): void {
+    const next = [...new Set(ids.map((id) => id.toLowerCase() as Hex))].sort();
+    if (next.join(",") === this.ids.join(",")) return;
+    this.ids = next;
+    if (this.users > 0) {
+      this.connect();
+      void this.poll();
+    }
+  }
+
+  /** Feeds prices obtained elsewhere (for example right before a transaction) into the store. */
+  ingest(quotes: Map<Hex, Quote>): void {
     const nowSec = Date.now() / 1000;
-    for (const tick of ticks) {
-      const current = this.pending.get(tick.id);
-      if (current && current.publishTime > tick.publishTime) continue;
-      this.pending.set(tick.id, tick);
-      if (tick.publishTime > this.maxPublishSeen) {
-        this.maxPublishSeen = tick.publishTime;
-        this.skew = tick.publishTime - nowSec;
+    for (const [id, quote] of quotes) {
+      const current = this.pending.get(id);
+      if (current && current.publishTime > quote.publishTime) continue;
+      this.pending.set(id, quote);
+      if (quote.publishTime > this.maxPublishSeen) {
+        this.maxPublishSeen = quote.publishTime;
+        this.skew = quote.publishTime - nowSec;
       }
     }
     this.scheduleNotify();
@@ -172,6 +142,7 @@ export class PriceStore {
   start(): void {
     this.users += 1;
     if (this.users > 1) return;
+    this.startedAt = Date.now();
     this.connect();
     this.watchdog = setInterval(() => this.tick(), POLL_INTERVAL_MS);
     void this.poll();
@@ -190,8 +161,8 @@ export class PriceStore {
   }
 
   private connect(): void {
-    if (typeof EventSource === "undefined" || this.users === 0) return;
     this.closeSource();
+    if (this.apiKey || typeof EventSource === "undefined" || this.users === 0 || this.ids.length === 0) return;
     const url = `${this.hermesUrl}/v2/updates/price/stream?${idsQuery(this.ids)}&parsed=true&encoding=hex&allow_unordered=true`;
     let source: EventSource;
     try {
@@ -209,11 +180,11 @@ export class PriceStore {
       } catch {
         return;
       }
-      const ticks = ticksFrom(body);
-      if (ticks.length === 0) return;
+      const quotes = quotesFrom(body);
+      if (quotes.size === 0) return;
       this.lastStreamAt = Date.now();
       this.reconnectDelay = 1_000;
-      this.ingest(ticks);
+      this.ingest(quotes);
       this.setStatus("live");
     };
     source.onerror = () => {
@@ -242,26 +213,25 @@ export class PriceStore {
 
   private tick(): void {
     const now = Date.now();
-    const streamSilentFor = now - Math.max(this.lastStreamAt, this.streamOpenedAt);
     if (now - this.lastStreamAt > STREAM_SILENCE_MS) {
       void this.poll();
-      if (now - this.lastPollOkAt > 3 * POLL_INTERVAL_MS && this.lastPollOkAt !== 0) this.setStatus("offline");
-      if (this.lastPollOkAt === 0 && now - this.streamOpenedAt > 3 * POLL_INTERVAL_MS) this.setStatus("offline");
+      const reference = this.lastPollOkAt || this.startedAt || now;
+      if (now - reference > 4 * POLL_INTERVAL_MS) this.setStatus("offline");
     }
-    // A stream that is nominally open but silent is replaced.
+    const streamSilentFor = now - Math.max(this.lastStreamAt, this.streamOpenedAt);
     if (this.source && streamSilentFor > STREAM_DEAD_MS && !this.reconnectTimer) this.scheduleReconnect();
   }
 
   private async poll(): Promise<void> {
-    if (this.polling || this.users === 0) return;
+    if (this.polling || this.users === 0 || this.ids.length === 0) return;
     this.polling = true;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 4_000);
     try {
-      const update = await fetchLatestUpdate(this.hermesUrl, this.ids, controller.signal);
+      const update = await fetchLatestUpdate(this.hermesUrl, this.ids, this.apiKey, controller.signal);
       this.lastPollOkAt = Date.now();
-      this.ingest(update.ticks);
-      if (Date.now() - this.lastStreamAt > STREAM_SILENCE_MS) this.setStatus("polling");
+      this.ingest(update.quotes);
+      if (Date.now() - this.lastStreamAt > STREAM_SILENCE_MS) this.setStatus(this.apiKey ? "live" : "polling");
     } catch {
       // Status is downgraded by the watchdog once polls have been failing for a while.
     } finally {

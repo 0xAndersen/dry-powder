@@ -66,7 +66,8 @@ contract PythOracle {
         } catch {
             return (PriceStatus.Unavailable, px);
         }
-        uint256 age = block.timestamp > p.publishTime ? block.timestamp - p.publishTime : p.publishTime - block.timestamp;
+        uint256 age =
+            block.timestamp > p.publishTime ? block.timestamp - p.publishTime : p.publishTime - block.timestamp;
         if (age > maxAge) return (PriceStatus.Stale, px);
         if (p.price <= 0 || p.expo > 0 || p.expo < -18) return (PriceStatus.Invalid, px);
 

@@ -61,6 +61,28 @@ export function fmtPercent(fraction: number, dp = 2, sign = false): string {
   return `${body}%`;
 }
 
+/** A float price with a fixed number of decimals and separators (tape, chart legend). */
+export function fmtNum(value: number | null | undefined, dp: number): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  return value.toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
+}
+
+/** Quantity of the underlying (18 dec) with about five significant digits. */
+export function fmtQty(units: bigint): string {
+  const n = Number(formatUnits(units, 18));
+  if (!Number.isFinite(n)) return "—";
+  if (n === 0) return "0";
+  const magnitude = Math.floor(Math.log10(Math.abs(n)));
+  const dp = Math.min(8, Math.max(0, 4 - magnitude));
+  return n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: dp });
+}
+
+/** Decimals that show about six significant digits of `price`; used for crosses, inverted and unknown feeds. */
+export function autoDecimals(price: number): number {
+  if (!Number.isFinite(price) || price <= 0) return 2;
+  return Math.min(10, Math.max(2, 5 - Math.floor(Math.log10(price))));
+}
+
 /**
  * Parses user input into a fixed-point bigint. Returns null for anything that is not a plain
  * non-negative decimal number. Digits beyond `decimals` are dropped.
@@ -85,6 +107,21 @@ export function toInputString(value: bigint, unitDecimals: number, dp: number): 
   return frac ? `${intPart}.${frac}` : intPart;
 }
 
+/** Float -> 18-decimal bigint without exponent notation. */
+export function numToPrice(value: number): bigint {
+  if (!Number.isFinite(value) || value <= 0) return 0n;
+  const dp = Math.min(18, Math.max(0, 12 - Math.floor(Math.log10(value))));
+  return parseUnits(value.toFixed(dp), 18);
+}
+
+export function priceToNum(value: bigint): number {
+  return Number(formatUnits(value, PRICE_DECIMALS));
+}
+
+export function usdcToNum(value: bigint): number {
+  return Number(formatUnits(value, USDC_DECIMALS));
+}
+
 export function shortAddress(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
@@ -107,4 +144,35 @@ export function fmtAge(seconds: number): string {
   if (s < 5400) return `${Math.round(s / 60)} min`;
   if (s < 172800) return `${Math.round(s / 3600)} h`;
   return `${Math.round(s / 86400)} days`;
+}
+
+const TIME_FORMAT = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+const DATE_TIME_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  day: "2-digit",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+const UTC_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "UTC",
+});
+
+export function fmtClock(unixSeconds: number): string {
+  return TIME_FORMAT.format(new Date(unixSeconds * 1000));
+}
+
+export function fmtDateTime(unixSeconds: number): string {
+  return DATE_TIME_FORMAT.format(new Date(unixSeconds * 1000));
+}
+
+export function fmtUtc(unixSeconds: number): string {
+  return `${UTC_FORMAT.format(new Date(unixSeconds * 1000))} UTC`;
 }
