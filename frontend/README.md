@@ -1,12 +1,12 @@
-# House Money frontend
+# Dry Powder frontend
 
-Trading terminal, venue activity feed and house (vault + staking) pages for the House Money v2 protocol.
+Trading terminal, venue activity feed and house (vault + staking) pages for the Dry Powder v2 protocol.
 Next.js 15 (App Router), React 19, Tailwind 4, wagmi 2 / viem 2, lightweight-charts 5.
 
 - `/trade` &mdash; markets discovered from the chain, chart with indicators, order ticket, positions / orders /
   history / alerts. `?market=BTC-USD` selects a market, `?account=0x…` watches any account read-only.
 - `/activity` &mdash; live venue feed from event logs, totals, open interest, top traders.
-- `/house` &mdash; vault NAV and share price, epoch settlement, deposit / withdraw, HOUSE staking.
+- `/house` &mdash; vault NAV and share price, epoch settlement, deposit / withdraw, KEG staking.
 
 Nothing about a deployment is compiled in. The same build serves any set of contracts.
 
@@ -16,8 +16,8 @@ Nothing about a deployment is compiled in. The same build serves any set of cont
 
 ```sh
 npm ci && npm run build        # output: "standalone"
-docker build -t house-money-frontend .
-docker run --env-file .env -p 3000:3000 house-money-frontend
+docker build -t dry-powder-frontend .
+docker run --env-file .env -p 3000:3000 dry-powder-frontend
 ```
 
 Configuration is read from the container environment on every request; change it and restart, no rebuild.
@@ -76,7 +76,7 @@ Hosting notes:
 | `PERP_ENGINE_ADDRESS` | `perpEngineAddress` | `engine` | required | PerpEngine |
 | `ENGINE_LENS_ADDRESS` | `engineLensAddress` | `lens` | required | EngineLens (all aggregated reads) |
 | `HOUSE_VAULT_ADDRESS` | `houseVaultAddress` | `vault` | required | HouseVault |
-| `REWARD_TOKEN_ADDRESS` | `rewardTokenAddress` | `token` | required | RewardToken (HOUSE) |
+| `REWARD_TOKEN_ADDRESS` | `rewardTokenAddress` | `token` | required | RewardToken (KEG) |
 | `USDC_ADDRESS` | `usdcAddress` | `collateral` | `0x3600…0000` | collateral token (Arc USDC, or TestUSDC) |
 | `RPC_URL` | `rpcUrl` | `rpc` | `https://rpc.testnet.arc.network` | JSON-RPC endpoint (must allow browser origins) |
 | `CHAIN_ID` | `chainId` | `chain` | `5042002` | chain id |

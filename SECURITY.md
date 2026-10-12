@@ -33,7 +33,7 @@ Found and fixed while testing v2:
 ## Open
 
 **Medium**
-- **Rebates are minted on gross losses.** A hedged pair mints HOUSE for the cost of fees and can then take
+- **Rebates are minted on gross losses.** A hedged pair mints KEG for the cost of fees and can then take
   most of the staker stream (98.8% in the PoC). LPs are not harmed; honest stakers are diluted.
 - **The mark counts uncollectable losses.** Between a price gap and the liquidation, unrealised losses beyond
   margin inflate the vault's marked value and an LP can exit too high.

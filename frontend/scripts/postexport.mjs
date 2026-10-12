@@ -29,7 +29,7 @@ for (const name of existsSync(cssDir) ? readdirSync(cssDir) : []) {
 }
 
 const style =
-  "html{color-scheme:dark;background:#111014;color:#f3eff6;font:14px/1.45 system-ui,sans-serif}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px}a{color:#ff6b57}";
+  "html{color-scheme:dark;background:#1b1a18;color:#f1ebe0;font:14px/1.45 system-ui,sans-serif}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px}a{color:#ff7a1a}";
 
 writeFileSync(
   join(out, "index.html"),
@@ -38,13 +38,13 @@ writeFileSync(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>House Money</title>
+<title>Dry Powder</title>
 <link rel="icon" href="./favicon.svg">
 <style>${style}</style>
 <script>location.replace("./trade/" + location.search + location.hash);</script>
 <noscript><meta http-equiv="refresh" content="0; url=./trade/"></noscript>
 </head>
-<body><p>Opening <a href="./trade/">House Money trading</a>&hellip;</p></body>
+<body><p>Opening <a href="./trade/">Dry Powder trading</a>&hellip;</p></body>
 </html>
 `,
 );
@@ -56,13 +56,13 @@ writeFileSync(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Page not found | House Money</title>
+<title>Page not found | Dry Powder</title>
 <style>${style}</style>
 </head>
 <body>
 <div>
 <h1 style="font-size:22px;margin:0 0 8px">This page does not exist</h1>
-<p style="color:#a8a0b4;margin:0 0 16px">The address may be mistyped. Pages live at <code>trade/</code>, <code>activity/</code> and <code>house/</code>, with the trailing slash.</p>
+<p style="color:#b0a898;margin:0 0 16px">The address may be mistyped. Pages live at <code>trade/</code>, <code>activity/</code> and <code>house/</code>, with the trailing slash.</p>
 <p><a id="home" href="./trade/">Go to trading</a></p>
 </div>
 <script>

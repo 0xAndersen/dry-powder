@@ -213,7 +213,7 @@ function PositionRow({
   return (
     <tr data-testid={`position-${symbol}`}>
       <td>
-        <button type="button" className="text-left hover:text-neon" disabled={!instrument} onClick={() => instrument && onSelectMarket(instrument)}>
+        <button type="button" className="text-left hover:text-spark" disabled={!instrument} onClick={() => instrument && onSelectMarket(instrument)}>
           <span className="wide font-semibold">{symbol}</span>
         </button>
         <span className="block text-xs">
@@ -229,10 +229,10 @@ function PositionRow({
       <td className="r num">{fmtPrice(pos.entryPrice, dp)}</td>
       <td className="r num">
         {mark !== null ? fmtPrice(mark, dp) : "—"}
-        {price?.status === "awaiting" ? <span className="block text-xs text-warn">indicative</span> : price?.status === "settled" ? <span className="block text-xs text-neon">settled</span> : null}
+        {price?.status === "awaiting" ? <span className="block text-xs text-warn">indicative</span> : price?.status === "settled" ? <span className="block text-xs text-spark">settled</span> : null}
       </td>
       <td className="r">
-        <span className={`num ${liqNear ? "text-short" : "text-neon"}`}>
+        <span className={`num ${liqNear ? "text-short" : "text-spark"}`}>
           {value.liquidatableNow ? "Now" : value.liquidationPrice === null ? "None" : fmtPrice(value.liquidationPrice, dp)}
         </span>
         {value.liquidationDistance !== null ? (
@@ -292,7 +292,7 @@ function PositionRow({
             </button>
           ) : closing ? (
             <span className="flex items-center justify-end gap-1.5">
-              <span className="flex items-center gap-1 text-xs text-neon">
+              <span className="flex items-center gap-1 text-xs text-spark">
                 <span className="spinner" aria-hidden="true" /> Closing
               </span>
               <button type="button" className="btn btn-sm" disabled={tx.busy} onClick={cancelClose} title="Cancel the resting close order">
@@ -305,7 +305,7 @@ function PositionRow({
             </button>
           )
         ) : closing ? (
-          <span className="text-xs text-neon">Closing</span>
+          <span className="text-xs text-spark">Closing</span>
         ) : null}
       </td>
     </tr>
@@ -377,10 +377,10 @@ function OrdersTable({
               ? hasPosition
                 ? { text: "Blocked: a position is open in this market", tone: "text-warn" }
                 : marketable
-                  ? { text: "Marketable: waiting for a keeper", tone: "text-neon" }
+                  ? { text: "Marketable: waiting for a keeper", tone: "text-spark" }
                   : { text: now !== null ? `Resting, ${fmtPercent(Math.abs(ratio(o.triggerPrice - now, now)), 2)} from price` : "Resting", tone: "text-muted" }
               : o.orderType === 3
-                ? { text: "Closing: waiting for a keeper", tone: "text-neon" }
+                ? { text: "Closing: waiting for a keeper", tone: "text-spark" }
                 : { text: "Armed", tone: "text-muted" };
             return (
               <tr key={row.id.toString()} data-testid={`order-${row.id}`}>
@@ -389,7 +389,7 @@ function OrdersTable({
                   <span className="num block text-xs text-faint">{fmtAge(Math.max(0, chainNow - Number(o.createdAt)))} ago</span>
                 </td>
                 <td>
-                  <button type="button" className="wide font-semibold hover:text-neon" disabled={!instrument} onClick={() => instrument && onSelectMarket(instrument)}>
+                  <button type="button" className="wide font-semibold hover:text-spark" disabled={!instrument} onClick={() => instrument && onSelectMarket(instrument)}>
                     {instrument?.symbol ?? "Unknown"}
                   </button>
                 </td>
@@ -445,7 +445,7 @@ function HistoryTable({ feed, address }: { feed: LogFeedHandle; address: string 
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `house-money-history-${address.slice(0, 8)}.csv`;
+    a.download = `dry-powder-history-${address.slice(0, 8)}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();

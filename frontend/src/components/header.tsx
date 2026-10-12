@@ -20,13 +20,14 @@ const NAV: readonly { route: Route; label: string }[] = [
 
 function Wordmark() {
   return (
-    <AppLink route="trade" className="flex shrink-0 items-center gap-2 whitespace-nowrap" aria-label="House Money, go to trading">
-      <svg width="24" height="22" viewBox="0 0 24 22" aria-hidden="true">
-        <path d="M2.5 10.5 12 2.5l9.5 8V20h-19z" fill="none" stroke="var(--color-neon)" strokeWidth="2.2" strokeLinejoin="round" />
-        <circle cx="12" cy="13.5" r="3.6" fill="none" stroke="var(--color-long)" strokeWidth="1.8" strokeDasharray="2.3 1.47" />
-        <circle cx="12" cy="13.5" r="1" fill="var(--color-long)" />
+    <AppLink route="trade" className="flex shrink-0 items-center gap-2 whitespace-nowrap" aria-label="Dry Powder, go to trading">
+      <svg width="22" height="24" viewBox="0 0 22 24" aria-hidden="true">
+        <path d="M4 7h12v15H4z" fill="none" stroke="var(--color-text)" strokeWidth="2" />
+        <path d="M4 12h12M4 17h12" stroke="var(--color-text)" strokeWidth="2" />
+        <path d="M10 7V4.5c0-1.5 1.2-2.5 3-2.5h3" fill="none" stroke="var(--color-text)" strokeWidth="1.6" />
+        <path d="M18.8 0v1.5M18.8 3.3v1.5M16.5 2.4h1.4M19.8 2.4h1.4" stroke="var(--color-spark)" strokeWidth="1.6" strokeLinecap="square" />
       </svg>
-      <span className="wide glow hidden text-[1.0625rem] leading-none text-neon lg:inline">House Money</span>
+      <span className="wide glow hidden text-[1.25rem] leading-none lg:inline">Dry Powder</span>
     </AppLink>
   );
 }
@@ -175,7 +176,7 @@ export function Header() {
                 className={`relative flex items-center px-1.5 text-[0.8125rem] font-medium sm:px-3 sm:text-sm ${active ? "text-text" : "text-muted hover:text-text"}`}
               >
                 {item.label}
-                {active ? <span aria-hidden="true" className="absolute inset-x-2 bottom-0 h-0.5 bg-neon sm:inset-x-3" /> : null}
+                {active ? <span aria-hidden="true" className="absolute inset-x-2 bottom-0 h-0.5 bg-spark sm:inset-x-3" /> : null}
               </AppLink>
             );
           })}

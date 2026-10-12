@@ -13,11 +13,11 @@ import {IRewardToken} from "./interfaces/IRewardToken.sol";
 
 /// @title HouseVault
 /// @notice ERC-4626 USDC vault that is the counterparty to every trade on PerpEngine. Trader losses and fees
-///         flow in, trader profits flow out, and HOUSE stakers receive a performance share of what the house
+///         flow in, trader profits flow out, and KEG stakers receive a performance share of what the house
 ///         actually earns.
 ///
 /// @dev Accounting
-///  - The asset is Arc's native USDC through its 6-decimal ERC-20 interface. Shares (`hmUSDC`) have 18 decimals
+///  - The asset is Arc's native USDC through its 6-decimal ERC-20 interface. Shares (`dpUSDC`) have 18 decimals
 ///    via a 12-digit virtual offset, which also makes share-price inflation attacks uneconomic.
 ///  - `totalHouseBalance` is the realised balance owned by share holders, tracked internally and never read
 ///    from `balanceOf` (on Arc a native value transfer also changes the ERC-20 balance).
@@ -29,12 +29,12 @@ import {IRewardToken} from "./interfaces/IRewardToken.sol";
 ///
 /// @dev Staker yield
 ///  Once per epoch anyone may call {settleEpoch}. If the exit value per share is above its previous high-water
-///  mark, 15% of that gain is moved out of the house balance and streamed to HOUSE stakers. Losses must be
+///  mark, 15% of that gain is moved out of the house balance and streamed to KEG stakers. Losses must be
 ///  recovered before stakers earn again, and offsetting trades that leave the house flat earn them nothing.
 contract HouseVault is ERC4626, IHouseVault {
     using SafeERC20 for IERC20;
 
-    /// @notice Share of house profit above the high-water mark that goes to HOUSE stakers, in basis points.
+    /// @notice Share of house profit above the high-water mark that goes to KEG stakers, in basis points.
     uint256 public constant STAKER_SHARE_BPS = 1_500;
     uint256 internal constant BPS = 10_000;
     /// @dev Scale of the per-share high-water mark (assets per share unit).
@@ -42,7 +42,7 @@ contract HouseVault is ERC4626, IHouseVault {
 
     /// @notice The only contract allowed to push losses/fees in and pull profits out.
     address public immutable engine;
-    /// @notice HOUSE token; receives yield notifications and authorises yield payouts.
+    /// @notice KEG token; receives yield notifications and authorises yield payouts.
     IRewardToken public immutable rewardToken;
     /// @notice Seconds a depositor must wait after their latest deposit before withdrawing or transferring shares.
     uint256 public immutable withdrawLockPeriod;
@@ -53,7 +53,7 @@ contract HouseVault is ERC4626, IHouseVault {
 
     /// @notice Realised USDC owned by share holders.
     uint256 public totalHouseBalance;
-    /// @notice USDC allocated to HOUSE stakers and not yet claimed.
+    /// @notice USDC allocated to KEG stakers and not yet claimed.
     uint256 public pendingStakerYield;
     /// @notice Highest exit value per share at which staker yield has been settled, scaled by 1e30.
     uint256 public highWaterMark = HWM_PRECISION / 1e12;
@@ -95,7 +95,7 @@ contract HouseVault is ERC4626, IHouseVault {
 
     constructor(IERC20 usdc, address engine_, address rewardToken_, uint256 withdrawLockPeriod_, uint256 epochLength_)
         ERC4626(usdc)
-        ERC20("House Money USDC", "hmUSDC")
+        ERC20("Dry Powder USDC", "dpUSDC")
     {
         if (engine_ == address(0) || rewardToken_ == address(0)) revert ZeroAddress();
         engine = engine_;
@@ -217,7 +217,7 @@ contract HouseVault is ERC4626, IHouseVault {
     // ───────────────────────────── Staker yield ─────────────────────────────
 
     /// @notice Settles the epoch: if the exit value per share is above the high-water mark, 15% of the gain
-    ///         is set aside for HOUSE stakers. Anyone may call once `epochLength` has passed.
+    ///         is set aside for KEG stakers. Anyone may call once `epochLength` has passed.
     /// @return toStakers USDC moved from the house balance to staker yield.
     function settleEpoch() external returns (uint256 toStakers) {
         uint256 next = lastEpochTime + epochLength;

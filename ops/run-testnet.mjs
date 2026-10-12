@@ -35,7 +35,7 @@ const cfg = {
   rpcUrl: process.env.RPC_URL || "https://rpc.testnet.arc.network",
   chainId: 5042002,
   deployerKey: key,
-  seed: process.env.SEED || "house-money-testnet-1",
+  seed: process.env.SEED || "dry-powder-testnet-1",
   collateral: process.env.COLLATERAL || "test",
   agents: +(process.env.AGENTS || 100),
   agentCapital: 10000,

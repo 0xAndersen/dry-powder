@@ -25,7 +25,7 @@ export function TxStatus({ state, onDismiss, className = "" }: { state: TxState;
           : `${state.label}: waiting for confirmation`;
     return (
       <div className={`notice flex items-center gap-2 ${className}`} role="status" aria-live="polite">
-        <span className="spinner text-neon" aria-hidden="true" />
+        <span className="spinner text-spark" aria-hidden="true" />
         <span className="min-w-0 flex-1 text-text">{text}</span>
         {state.hash ? <ExplorerLink hash={state.hash} /> : null}
       </div>

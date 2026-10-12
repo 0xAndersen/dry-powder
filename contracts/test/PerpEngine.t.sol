@@ -257,7 +257,7 @@ contract PerpEngineTest is Base {
         assertEq(usdc.balanceOf(alice), afterOpen + 945e6);
         assertEq(vault.totalTraderLosses(), 50e6);
         assertEq(vault.totalHouseBalance(), LP_SEED + 5e6 + 50e6 + 5e6);
-        assertEq(house.balanceOf(alice), 5_000e18); // 100 HOUSE per USDC lost
+        assertEq(house.balanceOf(alice), 5_000e18); // 100 KEG per USDC lost
         _assertEngineSolvent();
     }
 

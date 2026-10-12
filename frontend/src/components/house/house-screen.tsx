@@ -128,7 +128,7 @@ export function HouseScreen() {
         <h1 className="wide text-2xl font-semibold leading-tight sm:text-[2rem]">The house takes the other side of every trade</h1>
         <p className="mt-2 max-w-[70ch] text-muted">
           Deposit into the vault to own a share of the house. It collects trader losses and fees and pays trader profits, so
-          returns are negative when traders win. Traders who lose are rebated in HOUSE, and staked HOUSE earns a share of what
+          returns are negative when traders win. Traders who lose are rebated in KEG, and staked KEG earns a share of what
           the house actually makes.
         </p>
       </div>

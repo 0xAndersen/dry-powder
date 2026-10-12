@@ -46,7 +46,7 @@ contract LiquidationTest is Base {
         assertEq(vault.totalHouseBalance(), navBefore + 980e6);
         assertEq(vault.pendingStakerYield(), 0);
         assertEq(house.earned(bob), 0);
-        // 100 HOUSE per USDC that reached the vault.
+        // 100 KEG per USDC that reached the vault.
         assertEq(house.balanceOf(alice), 98_000e18);
         // The trader gets nothing back.
         assertEq(usdc.balanceOf(alice), aliceBefore);

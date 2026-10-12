@@ -1,4 +1,4 @@
-# House Money v2: what changed and how it works
+# Dry Powder v2: what changed and how it works
 
 Source of truth is the Solidity in `contracts/src` (read the NatSpec). This file is the map.
 
@@ -16,8 +16,8 @@ The shell cannot reach any chain RPC, Hermes, exchanges or other internet hosts 
 | `PerpEngine` | margin custody, positions, orders, liquidation, settlement of dated markets |
 | `EngineLens` | all aggregated reads (positions, orders, markets with prices). Engine has only primitive getters |
 | `PythOracle` | stateless adapter: Pyth-shaped feed(s) -> validated 18-dec bid/mid/ask; crosses and inversion |
-| `HouseVault` | ERC-4626 vault (hmUSDC), counterparty; mark-to-market aware pricing; epoch staker yield |
-| `RewardToken` | HOUSE: 100 per USDC lost; staking with streamed USDC yield |
+| `HouseVault` | ERC-4626 vault (dpUSDC), counterparty; mark-to-market aware pricing; epoch staker yield |
+| `RewardToken` | KEG: 100 per USDC lost; staking with streamed USDC yield |
 | `testnet/PublisherOracle` | Pyth-compatible pull oracle fed by publisher-signed updates (testnet only) |
 | `testnet/TestUSDC` | open-mint 6-dec collateral for testnets (`mint(to, amount)`, max 1,000,000e6 per call) |
 | `Types.sol` | file-level structs/enums: `Position, Market, MarketConfig, Order, OrderType, OpenParams, LimitParams, PositionView, OraclePrice, PriceStatus` |

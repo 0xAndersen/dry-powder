@@ -245,13 +245,13 @@ contract KnownIssuesTest is Base {
     }
 
     // ───────────────────────── N-07 (new in v2, the staking side of the old H-01) ─────────────────────────
-    /// HOUSE is still minted on GROSS losses: 100 per USDC a position loses, whether or not the same person
-    /// holds the offsetting winner. A delta-neutral pair therefore manufactures HOUSE for the price of its
+    /// KEG is still minted on GROSS losses: 100 per USDC a position loses, whether or not the same person
+    /// holds the offsetting winner. A delta-neutral pair therefore manufactures KEG for the price of its
     /// trading fees. It no longer drains LPs (H-01 is fixed), but it lets a farmer out-stake the traders who
     /// really lost money and collect most of the 15% performance stream that was meant for them.
     function test_N07_houseIsFarmedWithHedgedPairsForTheCostOfFees() public {
         _flatFees();
-        // An honest trader really loses 1,000 USDC and stakes the 100,000 HOUSE that earned her.
+        // An honest trader really loses 1,000 USDC and stakes the 100,000 KEG that earned her.
         _open(carol, ETH, true, 2_000e6, 10_000e6);
         _setEth(3_600);
         _close(carol, ETH);

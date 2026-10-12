@@ -86,13 +86,13 @@ export function TradeScreen() {
       } else if (event.type === "liquidation" && event.time > startedAt.current - 5 && !announced.current.has(event.id)) {
         announced.current.add(event.id);
         const symbol = byId.get(event.marketId)?.symbol ?? "Position";
-        toast("error", `${symbol} position liquidated`, view.watching ? "The watched account lost the position's margin." : "Losses reached 90% of margin. The margin is lost; HOUSE was minted as a rebate.", 15_000);
+        toast("error", `${symbol} position liquidated`, view.watching ? "The watched account lost the position's margin." : "Losses reached 90% of margin. The margin is lost; KEG was minted as a rebate.", 15_000);
       } else if (event.type === "close" && event.orderId !== undefined && event.time > startedAt.current - 5 && !announced.current.has(event.id)) {
         // Take-profit and stop-loss fills were not placed in this session, so nothing is tracking them.
         announced.current.add(event.id);
         if (!resting.some((o) => o.orderId === event.orderId) && !orderTracker.get().some((o) => o.orderId === event.orderId)) {
           const inst = byId.get(event.marketId);
-          toast(event.pnl >= 0n ? "ok" : "warn", `${inst?.symbol ?? "Position"} closed by order #${event.orderId}`, `At ${fmtPrice(event.price, inst?.priceDecimals ?? 2)}${event.pnl > 0n ? ". That's house money now." : ""}`);
+          toast(event.pnl >= 0n ? "ok" : "warn", `${inst?.symbol ?? "Position"} closed by order #${event.orderId}`, `At ${fmtPrice(event.price, inst?.priceDecimals ?? 2)}${event.pnl > 0n ? ". More powder for the next one." : ""}`);
         }
       }
     }

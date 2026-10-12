@@ -13,8 +13,8 @@ contract HouseVaultTest is Base {
     uint256 internal constant OFFSET = 1e12; // virtual shares
 
     function test_metadata() public view {
-        assertEq(vault.name(), "House Money USDC");
-        assertEq(vault.symbol(), "hmUSDC");
+        assertEq(vault.name(), "Dry Powder USDC");
+        assertEq(vault.symbol(), "dpUSDC");
         assertEq(vault.decimals(), 18);
         assertEq(vault.asset(), address(usdc));
         assertEq(vault.engine(), address(engine));
@@ -35,7 +35,7 @@ contract HouseVaultTest is Base {
     }
 
     function test_deposit_mints18DecimalSharesAtPar() public view {
-        // 1 USDC (1e6) -> 1 hmUSDC (1e18)
+        // 1 USDC (1e6) -> 1 dpUSDC (1e18)
         assertEq(vault.balanceOf(lp), SHARES);
         assertEq(vault.totalAssets(), LP_SEED);
         assertEq(vault.totalHouseBalance(), LP_SEED);

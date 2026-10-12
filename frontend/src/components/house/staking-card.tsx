@@ -15,11 +15,11 @@ import { ONE, ratio } from "@/lib/math";
 
 type Mode = "stake" | "unstake";
 
-function Figure({ label, value, unit, tone }: { label: string; value: React.ReactNode; unit?: string; tone?: "neon" }) {
+function Figure({ label, value, unit, tone }: { label: string; value: React.ReactNode; unit?: string; tone?: "spark" }) {
   return (
     <div className="min-w-0">
       <dt className="text-xs text-muted">{label}</dt>
-      <dd className={`num mt-0.5 truncate text-lg font-semibold ${tone === "neon" ? "text-neon" : ""}`}>
+      <dd className={`num mt-0.5 truncate text-lg font-semibold ${tone === "spark" ? "text-spark" : ""}`}>
         {value}
         {unit ? <span className="ml-1 text-xs font-normal text-muted">{unit}</span> : null}
       </dd>
@@ -72,13 +72,13 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
           ? "Enter an amount greater than zero"
           : available !== undefined && amount > available
             ? isStake
-              ? `Your wallet holds ${fmtToken(available)} HOUSE`
-              : `You have ${fmtToken(available)} HOUSE staked`
+              ? `Your wallet holds ${fmtToken(available)} KEG`
+              : `You have ${fmtToken(available)} KEG staked`
             : null;
 
   const blocking: string | null = (() => {
-    if (owner && account.data === undefined) return account.isError ? "Could not read your HOUSE balances" : "Loading balances";
-    if (available === 0n) return isStake ? "No HOUSE in your wallet" : "No HOUSE staked";
+    if (owner && account.data === undefined) return account.isError ? "Could not read your KEG balances" : "Loading balances";
+    if (available === 0n) return isStake ? "No KEG in your wallet" : "No KEG staked";
     if (text.trim() === "") return "Enter an amount";
     return fieldError;
   })();
@@ -87,7 +87,7 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
     const who = wallet.address;
     if (blocking || !who || !wallet.ready || amount === null || amount === 0n) return;
     const ok = await tx.run(async (api) => {
-      const label = isStake ? "Stake HOUSE" : "Unstake HOUSE";
+      const label = isStake ? "Stake KEG" : "Unstake KEG";
       await api.send(label, async () => {
         const { request } = await simulateContract(wagmiConfig, {
           ...reward,
@@ -98,8 +98,8 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
         return writeContract(wagmiConfig, request);
       });
       return isStake
-        ? `Staked ${fmtToken(amount)} HOUSE. It earns its share of the yield stream from now on.`
-        : `Unstaked ${fmtToken(amount)} HOUSE. Yield earned so far stays claimable.`;
+        ? `Staked ${fmtToken(amount)} KEG. It earns its share of the yield stream from now on.`
+        : `Unstaked ${fmtToken(amount)} KEG. Yield earned so far stays claimable.`;
     });
     if (ok) setText("");
   };
@@ -143,7 +143,7 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
     button = (
       <button type="submit" className={`btn btn-lg ${blocking ? "" : "btn-primary"}`} disabled={blocking !== null || tx.busy} data-testid="stake-submit">
         {tx.busy ? <span className="spinner" aria-hidden="true" /> : null}
-        <span className="truncate">{tx.busy ? "Working" : (blocking ?? (isStake ? "Stake HOUSE" : "Unstake HOUSE"))}</span>
+        <span className="truncate">{tx.busy ? "Working" : (blocking ?? (isStake ? "Stake KEG" : "Unstake KEG"))}</span>
       </button>
     );
   }
@@ -163,7 +163,7 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
           Loss rebates and staking
         </h2>
         <p className="mt-1.5 max-w-[62ch] text-[0.8125rem] text-muted">
-          Every 1 {sym} a trader loses mints them 100 HOUSE. Staked HOUSE shares 15% of house profit above the vault&rsquo;s
+          Every 1 {sym} a trader loses mints them 100 KEG. Staked KEG shares 15% of house profit above the vault&rsquo;s
           high-water mark: each epoch&rsquo;s share is streamed to stakers second by second, in {sym}, in proportion to
           their stake. Nothing is paid while the house is below its previous high. No approval is needed to stake, and you can
           unstake at any time.
@@ -171,10 +171,10 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
       </div>
 
       <dl className="grid grid-cols-2 gap-x-4 gap-y-4 border-b border-line px-4 py-4">
-        <Figure label="HOUSE in wallet" value={walletHouse !== undefined ? fmtToken(walletHouse) : dash} />
-        <Figure label="HOUSE staked" value={staked !== undefined ? fmtToken(staked) : dash} />
+        <Figure label="KEG in wallet" value={walletHouse !== undefined ? fmtToken(walletHouse) : dash} />
+        <Figure label="KEG staked" value={staked !== undefined ? fmtToken(staked) : dash} />
         <Figure label="Your share of the pool" value={staked !== undefined ? (poolShare !== null ? fmtPercent(poolShare, 2) : "0.00%") : dash} />
-        <Figure label="Claimable yield" value={earned !== undefined ? fmtUsdc(earned, 4) : dash} unit={sym} tone="neon" />
+        <Figure label="Claimable yield" value={earned !== undefined ? fmtUsdc(earned, 4) : dash} unit={sym} tone="spark" />
       </dl>
 
       <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-b border-line bg-bg/40 px-4 py-3 text-[0.8125rem]" data-testid="yield-stream">
@@ -251,7 +251,7 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
             </label>
             {owner ? (
               <span className="num text-xs text-muted">
-                {available !== undefined ? `${isStake ? "Wallet" : "Staked"} ${fmtToken(available)} HOUSE` : "…"}
+                {available !== undefined ? `${isStake ? "Wallet" : "Staked"} ${fmtToken(available)} KEG` : "…"}
               </span>
             ) : null}
           </div>
@@ -267,7 +267,7 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
               aria-invalid={fieldError !== null}
               aria-describedby={fieldError ? `${id}-error` : undefined}
             />
-            <span className="field-unit">HOUSE</span>
+            <span className="field-unit">KEG</span>
             <button
               type="button"
               className="chip"

@@ -75,7 +75,7 @@ nothing about signing prompts is exercised.
 `trade`: sub-path load and chain market discovery, connect, test funds, approve + keeper-filled market long with
 TP/SL in %, inline TP edit (and refusal of a wrong-side trigger), limit price by chart click, cancel with refund,
 typed alternative to the chart click, keeper Close and history, risk-based sizing with a stop-loss fill that
-mints HOUSE. `instruments`: dated future in contracts, cross market, inverted FX and gold decimals, Reverse,
+mints KEG. `instruments`: dated future in contracts, cross market, inverted FX and gold decimals, Reverse,
 awaiting-price order. `extras`: shortcuts, indicators, alert toast, CSV. `watch`, `activity` (totals, filter,
 frame pacing, trader click-through), `settle` (expiry, Settle market, Settle & close), `house` (deposit, lock,
 withdraw, stake, settle epoch, claim), `responsive` (360 / 768 px, no wallet, URL-only config, bad config).

@@ -1,4 +1,4 @@
-# First-run report: 100 trader agents on House Money v2
+# First-run report: 100 trader agents on Dry Powder v2
 
 **Where this ran.** A local chain (anvil, chain id 5042002, 1 s blocks, base fee pinned at Arc's 20 gwei floor)
 running the real compiled v2 contracts, with test collateral (tUSDC) and a simulated price feed (random walk
@@ -51,7 +51,7 @@ Reading it:
 - **The degen cohort is the house's tail risk.** One agent made +7,280 on 10,000 (a 100x position that ran),
   and the group was the only profitable one, while also supplying all six liquidations. The 10x-margin profit
   cap did not bind in this run.
-- **Staking income mattered.** HOUSE rebates turned agent 0's -27 of trading PnL into +302 after yield. With
+- **Staking income mattered.** KEG rebates turned agent 0's -27 of trading PnL into +302 after yield. With
   only 32 stakers sharing 2,557, early stakers are over-rewarded (see finding 3).
 - **The keeper-only "wallet" path works**: 44 round trips, zero reverts, results in line with direct traders.
 
@@ -97,9 +97,9 @@ Ordered by how much they should change the next iteration.
    misses its slippage bound simply rests with the trader's margin escrowed; a bounded close order does the
    same. It happened once or twice per run in earlier runs (agents cancel after 25 s). Fix: an expiry on
    orders (auto-cancel and refund), and immediate-or-cancel semantics for market orders.
-3. **HOUSE is minted on gross losses, so the staker pool is cheap to capture.** A hedged long+short pair no
+3. **KEG is minted on gross losses, so the staker pool is cheap to capture.** A hedged long+short pair no
    longer drains LPs (that exploit is closed and has a regression test), but it still mints rebate tokens for
-   the price of the fees: one cycle minted 8M HOUSE for 2,000 of fees and then took 98.8% of the staker
+   the price of the fees: one cycle minted 8M KEG for 2,000 of fees and then took 98.8% of the staker
    stream. Fix: mint on net loss per account over an epoch, or weight rebates by fees paid rather than loss.
 4. **The mark counts losses the house cannot collect.** Unrealised trader losses beyond margin are counted in
    full, so in the window between a price gap and the liquidation an LP can redeem at a NAV that is too high

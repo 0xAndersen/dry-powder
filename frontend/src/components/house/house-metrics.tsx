@@ -147,10 +147,10 @@ export function HouseMetrics({ stats }: { stats: HouseStats | undefined }) {
           </ArcGauge>
         </div>
 
-        <Cell label="Loss rebates minted" note={stats ? `${fmtCompact(stats.totalStaked, TOKEN_DECIMALS)} HOUSE staked right now` : undefined}>
+        <Cell label="Loss rebates minted" note={stats ? `${fmtCompact(stats.totalStaked, TOKEN_DECIMALS)} KEG staked right now` : undefined}>
           {stats ? (
             <>
-              <Figure>{fmtCompact(stats.rebatesMinted, TOKEN_DECIMALS)}</Figure> <span className="text-muted">HOUSE</span>
+              <Figure>{fmtCompact(stats.rebatesMinted, TOKEN_DECIMALS)}</Figure> <span className="text-muted">KEG</span>
             </>
           ) : (
             loading

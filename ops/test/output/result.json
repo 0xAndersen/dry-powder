@@ -8,33 +8,33 @@
   "chunkChars": [
    24000,
    24000,
-   21614
+   21610
   ],
   "bootChars": 821,
-  "totalChars": 70435,
+  "totalChars": 70431,
   "jsBytes": 77983,
-  "bytecodeBytes": 52332,
-  "deflatedBytes": 52070,
-  "checksum": 1471210402,
-  "bytecodeSha256": "fdf0ba75f434190b5330a1f54b1aec409674a5bfcdc74d2cf7428b347d88c06c",
+  "bytecodeBytes": 52328,
+  "deflatedBytes": 52068,
+  "checksum": 4054104252,
+  "bytecodeSha256": "191879ecb9d4fcbb415f583f34572126f7b10fab3f279bf7013488035698b9ab",
   "contracts": {
    "TestUSDC": 2540,
    "PublisherOracle": 2759,
    "PythOracle": 1613,
-   "HouseVault": 9002,
-   "RewardToken": 5366,
+   "HouseVault": 9001,
+   "RewardToken": 5363,
    "PerpEngine": 24271,
    "EngineLens": 6781
   }
  },
- "maxStatusBytes": 1022,
- "maxReportPageBytes": 4578,
- "summaryBytes": 4448,
+ "maxStatusBytes": 1049,
+ "maxReportPageBytes": 4675,
+ "summaryBytes": 4682,
  "probe": {
   "mid": {
-   "vaultTotalAssetsGas": 215325,
-   "engineUnrealizedTraderPnlGas": 207135,
-   "openInterest": 1352163,
+   "vaultTotalAssetsGas": 249160,
+   "engineUnrealizedTraderPnlGas": 240441,
+   "openInterest": 1798701,
    "lensGetMarketsBytes": 6977
   },
   "flat": {
@@ -53,51 +53,51 @@
   "total": 717426533
  },
  "durations": {
-  "deployS": 21,
-  "runS": 417
+  "deployS": 20,
+  "runS": 467
  },
- "nativeSpent": 14.749567979999998,
+ "nativeSpent": 15.067826319000002,
  "returned": {
   "accounts": 102,
-  "usdc": 10.92772
+  "usdc": 10.851372
  },
  "krakenMock": {
-  "requests": 442,
-  "jumps": 42
+  "requests": 491,
+  "jumps": 62
  },
  "passes": [
   "preflight: chain id 5042002, balance sufficient, nothing sent",
   "multicall3 present",
   "deploy is idempotent (second call sends nothing)",
   "after reload the runtime is gone",
-  "resume: running again with progress intact [opens 282->289]",
-  "payload: chunks <= 24000 chars each [3 chunks, 70435 chars incl. boot]",
-  "status() always under 2 KB [1022]",
-  "summary() under 8 KB [4448]",
-  "report(page) under 8 KB, 20 agents per page [4578]",
-  "leaderboard() tiny [577]",
+  "resume: running again with progress intact [opens 278->279]",
+  "payload: chunks <= 24000 chars each [3 chunks, 70431 chars incl. boot]",
+  "status() always under 2 KB [1049]",
+  "summary() under 8 KB [4682]",
+  "report(page) under 8 KB, 20 agents per page [4675]",
+  "leaderboard() tiny [595]",
   "all 100 agents reported",
   "no agent failed [all done]",
   "every agent completed >= 5 round trips [min 5]",
-  "every agent's cumulative margin >= its capital [min 10038]",
+  "every agent's cumulative margin >= its capital [min 10035]",
   "every agent traded >= 2 markets",
-  "dated future settled on-chain [BTC-USD-1720Z @ 61623.415]",
+  "dated future settled on-chain [BTC-USD-2135Z @ 64064.174999999996]",
   "dated future positions were settled by the keeper [8]",
   "liquidations occurred [9]",
-  "keeper filled orders of every type [{\"limit\":88,\"takeProfit\":80,\"stopLoss\":77,\"close\":41}]",
-  "staking happened and yield was claimed [69 stakes, 70 claims]",
-  "vault epoch settled (with staker yield) [4 epochs, 746.79 to stakers]",
+  "keeper filled orders of every type [{\"limit\":93,\"takeProfit\":52,\"stopLoss\":81,\"close\":40}]",
+  "staking happened and yield was claimed [63 stakes, 107 claims]",
+  "vault epoch settled (with staker yield) [5 epochs, 5790.12 to stakers]",
   "LP agents deposited and redeemed",
   "every call path exercised [18 tx types]",
-  "cross, inverted and dated markets traded [ETH-BTC 8, JPY-USD 11, BTC-USD-1720Z 8 agents]",
+  "cross, inverted and dated markets traded [ETH-BTC 8, JPY-USD 11, BTC-USD-2135Z 8 agents]",
   "no agent positions or orders remain (chain) [0 positions, 0 orders]",
   "engine collateral == totalClaimable (chain) [0 vs 0]",
-  "vault collateral == totalHouseBalance + pendingStakerYield (chain) [5006701600541 vs 5006701600504+37]",
+  "vault collateral == totalHouseBalance + pendingStakerYield (chain) [5033023972667 vs 5032784207913+239764754]",
   "conservation: agents + deployer + keeper + publisher + vault + engine == total minted (chain) [6000000000000 vs 6000000000000]",
   "runtime's own checks agree",
   "resume() was exercised",
   "no uncaught page errors [0]",
-  "whole run fits the 40 USDC deployer budget at a pinned 20 gwei base fee [net native spent 14.7496 (deployer 14.322712127 before gas return, 25.25043202 after)]"
+  "whole run fits the 40 USDC deployer budget at a pinned 20 gwei base fee [net native spent 15.0678 (deployer 14.080801337 before gas return, 24.932173681 after)]"
  ],
  "fails": []
 }

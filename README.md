@@ -1,16 +1,16 @@
-# House Money (v2)
+# Dry Powder (v2)
 
 A synthetic derivatives venue for [Arc](https://docs.arc.io) built on a house-vault model: an ERC-4626 USDC
 vault is the counterparty to every trade. Traders post USDC margin and take leveraged exposure to oracle-priced
 instruments; losses and fees flow into the vault, profits are paid out of it, every USDC a trader loses mints
-them HOUSE, and HOUSE stakers receive 15% of the vault's profit above its high-water mark.
+them KEG, and KEG stakers receive 15% of the vault's profit above its high-water mark.
 
 > **Status.** Complete and tested locally; **not yet deployed to Arc Testnet** and not audited. `REPORT.md` has
 > the first 100-trader run and how to go live; `SECURITY.md` has what is fixed and what is still open.
 
 | Path | What it is |
 | --- | --- |
-| `contracts/` | Foundry project: engine, lens, oracle adapter, vault, HOUSE token, testnet oracle and test collateral; 314 tests |
+| `contracts/` | Foundry project: engine, lens, oracle adapter, vault, KEG token, testnet oracle and test collateral; 314 tests |
 | `ops/` | Runtime that deploys the protocol and runs the price publisher, the keeper and 100 trader agents; `run-testnet.mjs` runs it against Arc Testnet |
 | `frontend/` | Next.js trading terminal: `/trade`, `/activity`, `/house`, watch mode; server build and static bundle |
 | `keeper/` | Node keeper for the **v1** contracts. Not yet ported to v2; use the ops runtime meanwhile |
@@ -27,7 +27,7 @@ them HOUSE, and HOUSE stakers receive 15% of the vault's profit above its high-w
   inversion (JPY/USD), and an expiry (dated, cash-settled futures). Everything is sized in USDC notional, so
   every instrument is fractional. Launch set: BTC, ETH, SOL, EUR, JPY, gold, ETH-BTC and a dated BTC future.
 - **Staker yield from net profit.** Once per epoch, 15% of the vault's gain above its high-water mark is
-  streamed to HOUSE stakers. The old 15%-of-gross-losses split, which a hedged pair could farm, is gone.
+  streamed to KEG stakers. The old 15%-of-gross-losses split, which a hedged pair could farm, is gone.
 - **Mark-to-market share pricing.** Deposits buy in at the higher of realised and marked value, withdrawals
   leave at the lower, so nobody can deposit ahead of a liquidation or exit ahead of a winning trader.
 - **Keeper-executed market orders.** A marketable limit order opens and a `Close` order closes against the next

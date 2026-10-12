@@ -28,7 +28,7 @@ export function AlertWatcher() {
       toast("warn", title, body, 15_000);
       if (settings.notify && typeof Notification !== "undefined" && Notification.permission === "granted") {
         try {
-          new Notification(`House Money: ${title}`, { body, tag: alert.id });
+          new Notification(`Dry Powder: ${title}`, { body, tag: alert.id });
         } catch {
           // Some browsers only allow notifications from a service worker; the toast still shows.
         }

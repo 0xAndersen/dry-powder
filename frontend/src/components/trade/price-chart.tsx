@@ -33,25 +33,25 @@ export type PickTarget = "limit" | "tp" | "sl" | "alert";
 export const PICK_LABELS: Record<PickTarget, string> = { limit: "limit price", tp: "take-profit", sl: "stop-loss", alert: "alert" };
 
 const COLORS = {
-  text: "#a8a0b4",
-  grid: "#1f1c26",
-  border: "#2f2b38",
-  long: "#7df2c0",
-  short: "#ff4d94",
-  neon: "#ff6b57",
-  entry: "#f3eff6",
-  ema1: "#f5c15c",
+  text: "#b0a898",
+  grid: "#24221f",
+  border: "#3a3732",
+  long: "#a6d95a",
+  short: "#ff4f5e",
+  spark: "#ff7a1a",
+  entry: "#f1ebe0",
+  ema1: "#f2c94c",
   ema2: "#8fb4ff",
   sma: "#c79bf2",
-  bb: "#7d7690",
-  vwap: "#ffa24d",
+  bb: "#857e70",
+  vwap: "#e0a15a",
   volUp: "rgba(76, 201, 160, 0.32)",
   volDown: "rgba(240, 111, 127, 0.32)",
 } as const;
 
 const LINE_STYLE: Record<ChartLineTone, { color: string; style: LineStyle }> = {
   entry: { color: COLORS.entry, style: LineStyle.Solid },
-  liq: { color: COLORS.neon, style: LineStyle.Dashed },
+  liq: { color: COLORS.spark, style: LineStyle.Dashed },
   tp: { color: COLORS.long, style: LineStyle.Dashed },
   sl: { color: COLORS.short, style: LineStyle.Dashed },
   order: { color: COLORS.ema2, style: LineStyle.LargeDashed },

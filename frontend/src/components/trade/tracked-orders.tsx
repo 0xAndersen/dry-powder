@@ -18,7 +18,7 @@ export function TrackedOrders({ marketId, dp }: { marketId: string; dp: number }
         const waited = (((o.settledAt ?? now) - o.placedAt) / 1000).toFixed(1);
         return (
           <li key={o.orderId.toString()} className="notice flex items-center gap-2 py-1.5 text-xs" data-tone={o.status === "filled" ? "ok" : o.status === "cancelled" ? "warn" : undefined} data-status={o.status}>
-            {o.status === "resting" ? <span className="spinner text-neon" aria-hidden="true" /> : null}
+            {o.status === "resting" ? <span className="spinner text-spark" aria-hidden="true" /> : null}
             <span className="min-w-0 flex-1">
               <span className="num">#{o.orderId.toString()}</span> {what}:{" "}
               {o.status === "resting"

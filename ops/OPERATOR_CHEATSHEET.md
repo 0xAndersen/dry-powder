@@ -48,7 +48,7 @@ write it down. Everything omitted takes the defaults shown in the README.
 ```js
 await ArcOps.init({
   deployerKey: "0xREPLACE_WITH_DEPLOYER_PRIVATE_KEY",
-  seed: "house-money-run-1",
+  seed: "dry-powder-run-1",
   collateral: "test",
   agents: 100,
   agentCapital: 10000,

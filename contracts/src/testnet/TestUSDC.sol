@@ -13,7 +13,7 @@ contract TestUSDC is ERC20 {
 
     error MintTooLarge();
 
-    constructor() ERC20("Test USDC (House Money)", "tUSDC") {}
+    constructor() ERC20("Test USDC (Dry Powder)", "tUSDC") {}
 
     function decimals() public pure override returns (uint8) {
         return 6;

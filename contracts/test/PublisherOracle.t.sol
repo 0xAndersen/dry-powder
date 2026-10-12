@@ -372,7 +372,7 @@ contract TestUSDCTest is Test {
     }
 
     function test_metadata() public view {
-        assertEq(token.name(), "Test USDC (House Money)");
+        assertEq(token.name(), "Test USDC (Dry Powder)");
         assertEq(token.symbol(), "tUSDC");
         assertEq(token.decimals(), 6);
         assertEq(token.MAX_MINT(), 1_000_000e6);

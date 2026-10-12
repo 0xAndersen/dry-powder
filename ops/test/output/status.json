@@ -1,10 +1,10 @@
 {
  "v": "1.0.0",
  "phase": "ended",
- "uptimeS": 417,
+ "uptimeS": 467,
  "runS": 420,
- "head": 442,
- "indexed": 441,
+ "head": 491,
+ "indexed": 490,
  "baseFeeGwei": 20,
  "agents": {
   "n": 100,
@@ -12,30 +12,30 @@
   "active": 0,
   "failed": 0,
   "tripsMin": 5,
-  "tripsAvg": 6.05,
+  "tripsAvg": 6.03,
   "marginShort": 0
  },
  "trades": {
-  "opens": 605,
-  "closes": 596,
+  "opens": 603,
+  "closes": 594,
   "liqs": 9,
-  "orders": 648,
+  "orders": 675,
   "fills": {
-   "0": 88,
-   "1": 80,
-   "2": 77,
-   "3": 41
+   "0": 93,
+   "1": 52,
+   "2": 81,
+   "3": 40
   }
  },
- "volume": 35820531,
+ "volume": 34881980,
  "oi": 0,
  "openPos": 0,
  "openOrd": 0,
- "nav": 5006702,
+ "nav": 5032784,
  "publisher": {
-  "polls": 441,
+  "polls": 490,
   "pollErr": 0,
-  "pushes": 176,
+  "pushes": 198,
   "lastOkS": 1,
   "closed": [],
   "err": {}
@@ -43,42 +43,43 @@
  "keeper": {
   "liqs": 9,
   "fills": {
-   "limit": 88,
-   "tp": 80,
-   "sl": 77,
-   "close": 41
+   "limit": 92,
+   "tp": 52,
+   "sl": 81,
+   "close": 40
   },
   "settledMkt": 1,
   "settledPos": 8,
-  "epochs": 4,
+  "epochs": 5,
   "err": {}
  },
  "reverts": {
-  "PositionNotFound": 9,
-  "(revertedOnChain)": 2,
-  "OrderNotFound": 1
+  "PositionNotFound": 12,
+  "OrderNotFound": 9,
+  "(revertedOnChain)": 9
  },
- "txs": 2059,
+ "txs": 2135,
  "txErr": {
-  "revertedOnChain": 2
+  "revertedOnChain": 9
  },
- "gasUsdc": 14.59135,
+ "gasUsdc": 14.953444,
  "rpc": {
-  "req": 9092,
-  "http": 3289,
+  "req": 9695,
+  "http": 3443,
   "errors": 0,
   "errRate": 0,
   "retries": 0,
   "noBatch": false
  },
  "native": {
-  "keeper": 1.345605,
-  "publisher": 0.194887,
-  "deployer": 14.322712
+  "keeper": 1.401084,
+  "publisher": 0.160812,
+  "deployer": 14.080801
  },
- "topUps": 108,
+ "topUps": 114,
  "anomalies": {
-  "marketOrderNotFilled": 1,
+  "marketOrderNotFilled": 2,
+  "closeOrderNotExecuted": 1,
   "feedClosed": 1,
   "feedReopened": 1
  },

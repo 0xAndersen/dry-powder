@@ -1,6 +1,6 @@
-# House Money ops runtime (`ArcOps`)
+# Dry Powder ops runtime (`ArcOps`)
 
-One JavaScript program that runs inside a browser tab and, by itself, deploys the House Money protocol, publishes
+One JavaScript program that runs inside a browser tab and, by itself, deploys the Dry Powder protocol, publishes
 oracle prices, runs a keeper and runs a cohort of 100 autonomous trader agents, then reports on all of it.
 
 It exists because the operator's only route to Arc Testnet is a browser pane that can navigate, evaluate a
@@ -194,7 +194,7 @@ until it has used two markets. Archetypes:
 | hedger | BTC, ETH, SOL | 4-12 | long one, short a correlated one | both closed together |
 | wallet | BTC, ETH, EUR, XAU, JPY | 2-10 | marketable `createLimitOrder` | `setTriggerOrder(Close)` (keeper) |
 
-About a third of the agents (and every degen) stake the HOUSE they receive and claim yield after an epoch
+About a third of the agents (and every degen) stake the KEG they receive and claim yield after an epoch
 settles; five swing/carry agents also deposit into and later redeem from the vault. Before every direct open or
 close an agent takes the freshest signed update from the publisher. An unexpected revert is recorded under its
 decoded name and the agent carries on; 25 consecutive failures mark it `failed`.
@@ -209,7 +209,7 @@ decoded name and the agent carries on; 25 consecutive failures mark it `failed`.
 - `report(page)`: 20 agents per page (about 4.6 KB), columnar (`cols` + `rows`): id, address, strategy (with
   `+lp` / `+stk`), markets traded (`<market index>:<opens>`, indices into `markets`), opens, closes,
   liquidations, settled, orders, fills, round trips, target, cumulative margin, volume, PnL (balance + open
-  equity - capital), trade PnL, fees, funding, HOUSE earned and staked, yield claimed, best/worst trade, win %,
+  equity - capital), trade PnL, fees, funding, KEG earned and staked, yield claimed, best/worst trade, win %,
   reverts by name, median/p95 latency, gas spent, tx count, balance, state.
 - `leaderboard()`: top and bottom 10 by PnL. `gas()`: count / average / maximum gas per transaction type.
 - `agent(i)`: one agent in detail.

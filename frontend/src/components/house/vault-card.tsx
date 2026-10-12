@@ -229,14 +229,14 @@ export function VaultCard({ stats }: { stats: HouseStats | undefined }) {
   const lockPeriodText = stats ? fmtDuration(Number(stats.lockPeriod)) : "…";
   const preview = isDeposit
     ? amount && depositPreview.data !== undefined
-      ? `${fmtToken(depositPreview.data, 4)} hmUSDC`
+      ? `${fmtToken(depositPreview.data, 4)} dpUSDC`
       : "—"
     : redeemAll
       ? redeemPreview.data !== undefined && maxRedeem !== undefined
-        ? `${fmtUsdc(redeemPreview.data, 6)} ${sym} for ${fmtToken(maxRedeem, 4)} hmUSDC`
+        ? `${fmtUsdc(redeemPreview.data, 6)} ${sym} for ${fmtToken(maxRedeem, 4)} dpUSDC`
         : "—"
       : amount && withdrawPreview.data !== undefined
-        ? `${fmtToken(withdrawPreview.data, 4)} hmUSDC`
+        ? `${fmtToken(withdrawPreview.data, 4)} dpUSDC`
         : "—";
 
   return (
@@ -286,9 +286,9 @@ export function VaultCard({ stats }: { stats: HouseStats | undefined }) {
                       ? `${fmtUsdc(held)} ${sym}`
                       : "…"
             }
-            hint={shares !== undefined ? `${fmtToken(shares, 6)} hmUSDC` : undefined}
+            hint={shares !== undefined ? `${fmtToken(shares, 6)} dpUSDC` : undefined}
           />
-          <Row label="Your shares" value={owner && shares !== undefined ? `${fmtToken(shares, 4)} hmUSDC` : "—"} />
+          <Row label="Your shares" value={owner && shares !== undefined ? `${fmtToken(shares, 4)} dpUSDC` : "—"} />
           <Row
             label="Withdrawal lock"
             hint={`Shares are locked for ${lockPeriodText} after your latest deposit.`}

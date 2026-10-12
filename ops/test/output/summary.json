@@ -1,40 +1,40 @@
 {
  "run": {
   "phase": "ended",
-  "startedAt": "2026-10-12T17:17:17.445Z",
-  "seconds": 417,
+  "startedAt": "2026-10-12T21:31:49.527Z",
+  "seconds": 467,
   "chainId": 5042002,
   "agents": 100,
   "done": 100,
   "failed": 0,
   "blocks": [
    0,
-   441
+   490
   ]
  },
  "trades": {
-  "opens": 605,
-  "closes": 596,
+  "opens": 603,
+  "closes": 594,
   "liquidations": 9,
   "settledPositions": 8,
-  "ordersCreated": 648,
+  "ordersCreated": 675,
   "fills": {
-   "limit": 88,
-   "takeProfit": 80,
-   "stopLoss": 77,
-   "close": 41
+   "limit": 93,
+   "takeProfit": 52,
+   "stopLoss": 81,
+   "close": 40
   },
-  "roundTrips": 605,
+  "roundTrips": 603,
   "tripsMin": 5,
-  "forcedEntries": 66
+  "forcedEntries": 111
  },
- "volume": 35820531,
- "marginDeployed": 1024611,
+ "volume": 34881980,
+ "marginDeployed": 1025148,
  "agentsPnl": {
-  "total": -6993,
-  "best": 4586.48,
-  "worst": -4078.01,
-  "winners": 49
+  "total": -33376,
+  "best": 5658.88,
+  "worst": -4079.89,
+  "winners": 27
  },
  "openInterest": {
   "cols": [
@@ -50,199 +50,220 @@
    ],
    [
     10,
-    3062182,
-    5012209
+    2679960,
+    5013152
    ],
    [
     25,
-    2386256,
-    5011462
+    2615225,
+    5015422
    ],
    [
     40,
-    1878123,
-    5011554
+    1995174,
+    5019427
    ],
    [
     55,
-    689936,
-    5008124
+    1652384,
+    5019621
    ],
    [
     70,
-    1660563,
-    5002265
+    1509260,
+    5022130
    ],
    [
     85,
-    1862439,
-    5004980
+    2261633,
+    5021865
    ],
    [
     100,
-    1978896,
-    5004375
+    2684901,
+    5022711
    ],
    [
     115,
-    1420444,
-    4996547
+    1604627,
+    5025455
    ],
    [
     130,
-    1692353,
-    4997658
+    1236555,
+    5026283
    ],
    [
     145,
-    1767886,
-    4998618
+    1922797,
+    5027954
    ],
    [
-    153,
-    1079424,
-    4998711
+    154,
+    1814564,
+    5027565
    ],
    [
     169,
-    1531061,
-    4999352
+    1825616,
+    5028087
    ],
    [
     184,
-    1424108,
-    4999254
+    2173856,
+    5028992
    ],
    [
     199,
-    1562149,
-    4998915
+    1835769,
+    5029112
    ],
    [
     214,
-    1352163,
-    5001460
+    1798701,
+    5030639
    ],
    [
     229,
-    1359078,
-    4998425
+    1176008,
+    5032452
    ],
    [
     244,
-    1402197,
-    4991736
+    962235,
+    5028677
    ],
    [
     259,
-    1241957,
-    4993233
+    1107118,
+    5025341
    ],
    [
     274,
-    1580815,
-    4994562
+    1831425,
+    5025756
    ],
    [
     289,
-    1592503,
-    4994514
+    1529885,
+    5028512
    ],
    [
     304,
-    1401902,
-    4998135
+    1126754,
+    5029605
    ],
    [
     319,
-    831662,
-    5001200
+    869810,
+    5029905
    ],
    [
     334,
-    497805,
-    5002649
+    1047571,
+    5030601
    ],
    [
     349,
-    1364879,
-    5004237
+    1290679,
+    5031545
    ],
    [
     364,
-    1419203,
-    5004000
+    1423154,
+    5026743
    ],
    [
     379,
-    747937,
-    5005739
+    859978,
+    5032569
    ],
    [
     394,
-    24527,
-    5006509
+    52364,
+    5033127
    ],
    [
     409,
     0,
-    5006702
+    5033157
+   ],
+   [
+    424,
+    0,
+    5033157
+   ],
+   [
+    439,
+    0,
+    5033157
+   ],
+   [
+    454,
+    5268,
+    5032776
+   ],
+   [
+    467,
+    0,
+    5032784
    ]
   ],
-  "max": 3062182,
+  "max": 2727047,
   "last": 0
  },
  "vault": {
   "navStart": 5000000,
-  "navEnd": 5006701.6,
+  "navEnd": 5032784.21,
   "sharePriceStart": 1,
-  "sharePriceEnd": 1.00134,
-  "traderLosses": 57171.6,
-  "traderProfits": 72071.87,
-  "fees": 22324.67,
-  "housePnl": 7424.4,
-  "stakerYieldAllocated": 746.79,
-  "stakerYieldClaimed": 746.79,
-  "epochs": 4,
+  "sharePriceEnd": 1.006556,
+  "traderLosses": 64659.71,
+  "traderProfits": 47151.27,
+  "fees": 21110.77,
+  "housePnl": 38619.21,
+  "stakerYieldAllocated": 5790.12,
+  "stakerYieldClaimed": 5550.36,
+  "epochs": 5,
   "shortfall": 0,
-  "houseStaked": 2961952,
-  "stakes": 69,
-  "yieldClaims": 70,
-  "lpDeposits": 9718.41,
+  "houseStaked": 2244909,
+  "stakes": 63,
+  "yieldClaims": 107,
+  "lpDeposits": 10165.74,
   "lpRedeems": 5
  },
  "keeper": {
   "liquidations": 9,
-  "liquidationTxs": 8,
+  "liquidationTxs": 6,
   "fills": {
-   "limit": 88,
-   "tp": 80,
-   "sl": 77,
-   "close": 41
+   "limit": 92,
+   "tp": 52,
+   "sl": 81,
+   "close": 40
   },
-  "fillsWithoutUpdate": 60,
-  "medianDelayMs": 690,
-  "p95DelayMs": 1382,
+  "fillsWithoutUpdate": 48,
+  "medianDelayMs": 688,
+  "p95DelayMs": 1481,
   "lensRetries": 0,
   "marketsSettled": 1,
   "settleDelayS": 1.7,
   "positionsSettled": 8,
-  "epochs": 4,
+  "epochs": 5,
   "benign": {
-   "OrderNotFound": 2,
+   "OrderNotFound": 5,
+   "PositionExists": 1,
    "MarketAlreadySettled": 1,
-   "TriggerNotMet": 2
+   "TriggerNotMet": 1
   },
   "errors": {}
  },
  "publisher": {
-  "polls": 441,
+  "polls": 490,
   "pollErrors": 0,
-  "signed": 2675,
-  "pushes": 176,
-  "feedsPushed": 533,
-  "maxOnchainGapS": 31,
-  "maxStalenessSeenS": 16,
+  "signed": 2903,
+  "pushes": 198,
+  "feedsPushed": 610,
+  "maxOnchainGapS": 28,
+  "maxStalenessSeenS": 20,
   "staleSamples": 0,
   "feedClosures": {
    "XAU": 2
@@ -250,17 +271,17 @@
   "errors": {}
  },
  "reverts": {
-  "PositionNotFound": 9,
-  "(revertedOnChain)": 2,
-  "OrderNotFound": 1
+  "OrderNotFound": 9,
+  "(revertedOnChain)": 9,
+  "PositionNotFound": 12
  },
  "txErrors": {
-  "revertedOnChain": 2
+  "revertedOnChain": 9
  },
  "rpc": {
-  "calls": 9092,
-  "http": 3289,
-  "batches": 1005,
+  "calls": 9695,
+  "http": 3443,
+  "batches": 1049,
   "errors": {},
   "errorRate": 0,
   "retries": 0,
@@ -275,20 +296,20 @@
    "max"
   ],
   "decisionToInclusion": [
-   836,
-   1278,
-   1342,
-   1507,
-   1567
+   772,
+   1277,
+   1373,
+   1489,
+   1516
   ]
  },
  "gas": {
-  "total": 694826175,
-  "txs": 2059,
-  "paidUsdc": 14.59135,
-  "usdcAt20gwei": 13.8965,
-  "topUps": 108,
-  "topUpUsdc": 8.36,
+  "total": 712068754,
+  "txs": 2135,
+  "paidUsdc": 14.953444,
+  "usdcAt20gwei": 14.2414,
+  "topUps": 114,
+  "topUpUsdc": 8.72,
   "byType": {
    "addMarket": [
     8,
@@ -299,16 +320,16 @@
     46269
    ],
    "cancelOrder": [
-    89,
-    97066
+    106,
+    93355
    ],
    "claimYield": [
-    70,
-    86996
+    107,
+    81112
    ],
    "close": [
-    388,
-    217656
+    412,
+    227695
    ],
    "deploy:EngineLens": [
     1,
@@ -316,7 +337,7 @@
    ],
    "deploy:HouseVault": [
     1,
-    1800546
+    1800518
    ],
    "deploy:PerpEngine": [
     1,
@@ -332,71 +353,71 @@
    ],
    "deploy:RewardToken": [
     1,
-    1048900
+    1048864
    ],
    "deploy:TestUSDC": [
     1,
-    483961
+    483949
    ],
    "exec:close": [
-    41,
-    242674
+    40,
+    250936
    ],
    "exec:limit": [
-    88,
-    763861
+    92,
+    769759
    ],
    "exec:sl": [
-    77,
-    297383
+    81,
+    291630
    ],
    "exec:tp": [
-    80,
-    285185
+    52,
+    283703
    ],
    "fund:mint": [
     2,
-    1408782
+    1408764
    ],
    "fund:native": [
     3,
-    1269554
+    1269542
    ],
    "fund:topup": [
-    18,
-    92257
+    20,
+    88755
    ],
    "limit:marketable": [
-    42,
-    297798
+    43,
+    297797
    ],
    "limit:resting": [
-    134,
-    338203
+    148,
+    338637
    ],
    "liquidateBatch": [
-    8,
-    204929
+    6,
+    234562
    ],
    "lpDeposit": [
     5,
-    348546
+    344093
    ],
    "lpRedeem": [
     5,
-    372884
+    371832
    ],
    "open": [
-    357,
-    552400
+    350,
+    555829
    ],
    "open+brackets": [
-    157,
-    875891
+    160,
+    874492
    ],
    "push": [
-    176,
-    86770
+    198,
+    86831
    ],
    "seed:deposit": [
     1,
@@ -411,8 +432,8 @@
     39119
    ],
    "settleEpoch": [
-    4,
-    280162
+    5,
+    293507
    ],
    "settleMarket": [
     1,
@@ -420,23 +441,23 @@
    ],
    "settlePositions": [
     1,
-    651073
+    642094
    ],
    "stake": [
-    70,
-    71974
+    63,
+    84704
    ],
    "trigger:close": [
     41,
-    245191
+    248595
    ],
    "trigger:sl": [
-    62,
-    200562
+    54,
+    235908
    ],
    "trigger:tp": [
     16,
-    256706
+    256704
    ]
   }
  },
@@ -451,87 +472,87 @@
   "rows": {
    "momentum": [
     10,
-    -436,
-    58,
+    -3543,
+    63,
     0,
-    2352922
+    2583221
    ],
    "meanrev": [
     10,
-    -1342,
-    59,
+    -1535,
+    58,
     0,
-    2043676
+    2153055
    ],
    "breakout": [
     8,
-    -565,
-    45,
+    -8233,
+    47,
     0,
-    2750488
+    2455168
    ],
    "scalper": [
     10,
-    373,
+    -882,
     55,
     0,
-    7440300
+    6828478
    ],
    "swing": [
     8,
-    486,
-    48,
+    -201,
+    50,
     0,
-    619053
+    469440
    ],
    "pairs": [
     8,
-    -7070,
-    49,
+    -3661,
+    48,
     0,
-    2130193
+    2132755
    ],
    "carry": [
     8,
-    -292,
-    45,
+    -1711,
+    49,
     0,
-    858694
+    1340930
    ],
    "dated": [
     8,
-    7546,
-    54,
+    -2818,
+    45,
     0,
-    1665326
+    1652534
    ],
    "maker": [
     8,
-    -295,
-    47,
+    -1862,
+    52,
     0,
-    1754663
+    1646711
    ],
    "degen": [
     8,
-    -5740,
-    52,
+    -7148,
+    47,
     9,
-    12077777
+    11818659
    ],
    "hedger": [
     7,
-    -496,
-    52,
+    -759,
+    48,
     0,
-    1374136
+    1233875
    ],
    "wallet": [
     7,
-    840,
+    -1023,
     41,
     0,
-    753302
+    567155
    ]
   }
  },
@@ -542,13 +563,13 @@
   "engineBalance": 0,
   "totalClaimable": 0,
   "engineOk": true,
-  "vaultBalance": 5006701.600541,
-  "houseBalance": 5006701.600504,
-  "pendingStakerYield": 0.000037,
+  "vaultBalance": 5033023.972667,
+  "houseBalance": 5032784.207913,
+  "pendingStakerYield": 239.764754,
   "vaultOk": true,
-  "agents": 993007.218038,
+  "agents": 966624.400342,
   "deployer": 0,
-  "keeper": 291.181421,
+  "keeper": 351.626991,
   "publisher": 0,
   "sum": 6000000,
   "minted": 6000000,
@@ -557,23 +578,30 @@
  "anomalies": [
   {
    "kind": "marketOrderNotFilled",
+   "n": 2,
+   "firstS": 212,
+   "lastS": 271,
+   "sample": "#68 order 442 BTC-USD long limit 65635.62 now 66843.57"
+  },
+  {
+   "kind": "closeOrderNotExecuted",
    "n": 1,
-   "firstS": 220,
-   "lastS": 220,
-   "sample": "#31 order 378 EUR-USD short limit 1.081237 now 1.061880"
+   "firstS": 280,
+   "lastS": 280,
+   "sample": "#56 BTC-USD short bound 66518.69 now 66929.86"
   },
   {
    "kind": "feedClosed",
    "n": 1,
-   "firstS": 284,
-   "lastS": 284,
+   "firstS": 285,
+   "lastS": 285,
    "sample": "XAU"
   },
   {
    "kind": "feedReopened",
    "n": 1,
-   "firstS": 309,
-   "lastS": 309,
+   "firstS": 310,
+   "lastS": 310,
    "sample": "XAU"
   }
  ]

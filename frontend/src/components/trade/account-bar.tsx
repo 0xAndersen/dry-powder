@@ -23,7 +23,7 @@ function Cell({ label, children, hint }: { label: string; children: React.ReactN
   );
 }
 
-/** The account at a glance: collateral, margin in use, open PnL, anything claimable, HOUSE. */
+/** The account at a glance: collateral, margin in use, open PnL, anything claimable, KEG. */
 export function AccountBar({ view, account, loading }: { view: AccountView; account: AccountData | undefined; loading: boolean }) {
   const { config: cfg } = useApp();
   const { prices, params } = useMarketData();
@@ -103,9 +103,9 @@ export function AccountBar({ view, account, loading }: { view: AccountView; acco
           <Cell label="Account value" hint="Wallet balance + margin + order escrow + unrealised PnL.">
             {totals ? fmtUsdc(totals.equity) : dash}
           </Cell>
-          <Cell label="HOUSE" hint="Loss-rebate tokens: in the wallet, plus staked. Stake them on the House page to earn a share of house profit.">
+          <Cell label="KEG" hint="Loss-rebate tokens: in the wallet, plus staked. Stake them on the House page to earn a share of house profit.">
             {account ? (
-              <AppLink route="house" className="hover:text-neon">
+              <AppLink route="house" className="hover:text-spark">
                 {fmtCompact(account.house, TOKEN_DECIMALS)}
                 {account.houseStaked > 0n ? <span className="text-faint"> + {fmtCompact(account.houseStaked, TOKEN_DECIMALS)} staked</span> : null}
               </AppLink>

@@ -71,7 +71,7 @@ function priceInput(value: bigint, dp: number): string {
 /** Visual strip placing liquidation, stop, entry and target on one axis. */
 function TradeMap({ isLong, entry, liq, stop, target, dp }: { isLong: boolean; entry: bigint; liq: bigint | null; stop: bigint | null; target: bigint | null; dp: number }) {
   const points = [
-    { key: "liq", label: "Liq", value: liq, cls: "bg-neon" },
+    { key: "liq", label: "Liq", value: liq, cls: "bg-spark" },
     { key: "sl", label: "Stop", value: stop, cls: "bg-short" },
     { key: "entry", label: "Entry", value: entry, cls: "bg-text" },
     { key: "tp", label: "Target", value: target, cls: "bg-long" },
@@ -771,11 +771,11 @@ export const OrderTicket = forwardRef<
           requestOpen();
         }}
       >
-        <div className="grid grid-cols-2 gap-1 rounded-[3px] border border-line bg-bg p-1" role="group" aria-label="Direction">
-          <button type="button" aria-pressed={isLong} onClick={() => setIsLong(true)} className={`h-9 rounded-[2px] text-sm font-semibold transition-colors ${isLong ? "bg-long text-[#06231a]" : "text-muted hover:text-text"}`}>
+        <div className="grid grid-cols-2 gap-1 rounded-none border border-line bg-bg p-1" role="group" aria-label="Direction">
+          <button type="button" aria-pressed={isLong} onClick={() => setIsLong(true)} className={`h-9 rounded-none text-sm font-semibold transition-colors ${isLong ? "bg-long text-[#06231a]" : "text-muted hover:text-text"}`}>
             Long
           </button>
-          <button type="button" aria-pressed={!isLong} onClick={() => setIsLong(false)} className={`h-9 rounded-[2px] text-sm font-semibold transition-colors ${!isLong ? "bg-short text-[#2b060c]" : "text-muted hover:text-text"}`}>
+          <button type="button" aria-pressed={!isLong} onClick={() => setIsLong(false)} className={`h-9 rounded-none text-sm font-semibold transition-colors ${!isLong ? "bg-short text-[#2b060c]" : "text-muted hover:text-text"}`}>
             Short
           </button>
         </div>

@@ -4,7 +4,7 @@ import { IS_STATIC_BUILD } from "@/lib/config";
 export function NotConfigured({ problems }: { problems: string[] }) {
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col justify-center px-5 py-16">
-      <p className="wide text-lg font-semibold text-neon">House Money</p>
+      <p className="wide text-lg font-semibold text-spark">Dry Powder</p>
       <h1 className="wide mt-6 text-3xl font-semibold leading-tight">This deployment is not configured yet</h1>
       <p className="mt-4 max-w-prose text-muted">
         {IS_STATIC_BUILD

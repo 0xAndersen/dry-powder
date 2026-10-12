@@ -189,8 +189,8 @@ contract Deploy is Script {
         console2.log("Collateral:          ", d.usdc);
         console2.log("Pyth / publisher:    ", d.pyth);
         console2.log("PythOracle (adapter):", address(d.oracle));
-        console2.log("HouseVault  (hmUSDC):", address(d.vault));
-        console2.log("RewardToken (HOUSE): ", address(d.rewardToken));
+        console2.log("HouseVault  (dpUSDC):", address(d.vault));
+        console2.log("RewardToken (KEG): ", address(d.rewardToken));
         console2.log("PerpEngine:          ", address(d.engine));
         console2.log("EngineLens:          ", address(d.lens));
         console2.log("Dated future:        ", d.marketSymbols[7]);

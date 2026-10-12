@@ -1,25 +1,30 @@
-# House Money: brand ("Cashier's Cage")
+# Dry Powder: brand ("Powder Keg")
 
-A neon sign over the cage at 2 a.m. Coral glow for the brand, mint for wins.
+Capital held ready. Charcoal and bone, with one orange spark.
 
 | Token | Value | Use |
 | --- | --- | --- |
-| night | `#111014` | page background |
-| panel | `#1A181F` | cards and panels |
-| neon | `#FF6B57` | brand, primary action, selection, focus |
-| win | `#7DF2C0` | long, profit, positive |
-| short | `#FF4D94` | short, loss, liquidation (pink, so it is never confused with brand coral) |
-| warn | `#F5C15C` | warnings |
+| charcoal | `#1B1A18` | page background |
+| panel | `#262421` | cards and panels |
+| bone | `#F1EBE0` | text, the keg mark |
+| spark | `#FF7A1A` | brand, primary action, selection, focus |
+| long | `#A6D95A` | long, profit, positive |
+| short | `#FF4F5E` | short, loss, liquidation |
+| warn | `#F2C94C` | warnings |
 
-- Type: Bricolage Grotesque (variable). Heavy (800) for display, medium for text, tabular figures for numbers.
-- Mark: a house outline in neon with a mint chip inside (`frontend/public/favicon.svg`, `Wordmark` in `frontend/src/components/header.tsx`).
-- Glow is reserved for the wordmark and the one primary action on screen.
-- Voice: short, plain, a little wry. "Up 42 USDC. That's house money now."
-- Tokens: `HOUSE` (loss-rebate token, name "House Money"), `hmUSDC` (vault share, name "House Money USDC").
-- All colour tokens live in `frontend/src/app/globals.css` (`@theme`); chart colours in `frontend/src/components/trade/price-chart.tsx`.
+- Type: Anton (display, upper case), Barlow (text), Barlow Condensed (buttons and panel titles, upper case),
+  IBM Plex Mono (every number). Square corners throughout.
+- Mark: a bone keg with a lit fuse; the spark is the only orange in it
+  (`frontend/public/favicon.svg`, `Wordmark` in `frontend/src/components/header.tsx`).
+- Voice: dry, short, capital-markets plain. "More powder for the next one."
+- Tokens: `KEG` (loss-rebate token, name "Dry Powder"), `dpUSDC` (vault share, name "Dry Powder USDC").
+- Colour tokens live in `frontend/src/app/globals.css` (`@theme`); chart colours in
+  `frontend/src/components/trade/price-chart.tsx`.
 
 ## Name check (2026-10-12, web searches only; not legal advice)
 
-- US registration 4401067 HOUSE MONEY (SG Gaming, class 41: games of chance and side bets, online or in casinos) is live.
-  Different class from a derivatives venue, but the casino styling narrows the gap. Get counsel's view before mainnet.
-- The ticker HOUSE is used by Housecoin on Solana (listed on major exchanges). Consider a different ticker before mainnet.
+- No crypto protocol, exchange or token named Dry Powder was found.
+- "Dry powder" is an everyday finance term for uninvested capital. That makes conflicts unlikely and also makes the
+  words alone hard to register or defend as a trademark; protection would rest on the logo and the overall look.
+- The ticker KEG is used by a small token, Keystone Project. Check again before any listing.
+- Not checked: trademark registers directly (USPTO, EUIPO, UKIPO) and domains.

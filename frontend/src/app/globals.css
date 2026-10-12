@@ -1,21 +1,21 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #111014;
-  --color-panel: #1a181f;
-  --color-raised: #24212b;
-  --color-line: #2f2b38;
-  --color-line-strong: #463f54;
-  --color-text: #f3eff6;
-  --color-muted: #a8a0b4;
-  --color-faint: #877f95;
-  --color-neon: #ff6b57;
-  --color-neon-deep: #e2503d;
-  --color-long: #7df2c0;
-  --color-short: #ff4d94;
-  --color-warn: #f5c15c;
+  --color-bg: #1b1a18;
+  --color-panel: #262421;
+  --color-raised: #302d29;
+  --color-line: #3a3732;
+  --color-line-strong: #57524a;
+  --color-text: #f1ebe0;
+  --color-muted: #b0a898;
+  --color-faint: #8c8577;
+  --color-spark: #ff7a1a;
+  --color-spark-deep: #d95f0a;
+  --color-long: #a6d95a;
+  --color-short: #ff4f5e;
+  --color-warn: #f2c94c;
 
-  --font-sans: "Bricolage Grotesque Variable", "Bricolage Grotesque", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: "Barlow", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1rem;
@@ -34,18 +34,17 @@
     font-family: var(--font-sans);
     font-size: 0.875rem;
     line-height: 1.45;
-    font-stretch: 100%;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
 
   :focus-visible {
-    outline: 2px solid var(--color-neon);
+    outline: 2px solid var(--color-spark);
     outline-offset: 2px;
   }
 
   ::selection {
-    background: color-mix(in srgb, var(--color-neon) 35%, transparent);
+    background: color-mix(in srgb, var(--color-spark) 35%, transparent);
   }
 
   input[type="number"]::-webkit-outer-spin-button,
@@ -74,29 +73,31 @@
 @layer components {
   /* Figures: one family throughout; numerals are tabular and slightly condensed so columns stay tight. */
   .num {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
     font-variant-numeric: tabular-nums lining-nums;
-    font-stretch: 90%;
-    letter-spacing: 0.005em;
+    font-size: 0.93em;
+    letter-spacing: -0.03em;
   }
 
   .wide {
-    font-weight: 800;
-    letter-spacing: -0.02em;
+    font-family: "Anton", "Arial Narrow", sans-serif;
+    font-weight: 400 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
   }
 
-  /* Neon sign: the wordmark and the one primary action glow; nothing else does. */
+  /* The spark: only the wordmark carries it. */
   .glow {
-    text-shadow: 0 0 14px color-mix(in srgb, var(--color-neon) 55%, transparent);
+    text-shadow: none;
   }
 
   .panel {
     background: var(--color-panel);
     border: 1px solid var(--color-line);
-    border-radius: 3px;
+    border-radius: 0;
   }
 
   .panel-title {
-    font-stretch: 100%;
     font-weight: 600;
     font-size: 0.8125rem;
     color: var(--color-text);
@@ -115,14 +116,14 @@
     gap: 0.5rem;
     background: var(--color-bg);
     border: 1px solid var(--color-line);
-    border-radius: 3px;
+    border-radius: 0;
     padding: 0 0.625rem;
     height: 2.5rem;
     transition: border-color 120ms;
   }
 
   .field:focus-within {
-    border-color: var(--color-neon);
+    border-color: var(--color-spark);
   }
 
   .field[data-invalid="true"] {
@@ -139,7 +140,6 @@
     color: var(--color-text);
     font-size: 0.9375rem;
     font-variant-numeric: tabular-nums lining-nums;
-    font-stretch: 90%;
   }
 
   .field input::placeholder {
@@ -159,7 +159,7 @@
     gap: 0.4rem;
     height: 2.25rem;
     padding: 0 0.875rem;
-    border-radius: 3px;
+    border-radius: 0;
     border: 1px solid var(--color-line-strong);
     background: var(--color-raised);
     color: var(--color-text);
@@ -178,6 +178,13 @@
     cursor: not-allowed;
   }
 
+  .btn,
+  .panel-title {
+    font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
   .btn-sm {
     height: 1.75rem;
     padding: 0 0.6rem;
@@ -185,29 +192,28 @@
   }
 
   .btn-primary {
-    background: var(--color-neon);
-    border-color: var(--color-neon);
-    color: #240703;
+    background: var(--color-spark);
+    border-color: var(--color-spark);
+    color: #1b1a18;
     font-weight: 650;
-    box-shadow: 0 0 16px -4px color-mix(in srgb, var(--color-neon) 70%, transparent);
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: #ff8473;
-    border-color: #ff8473;
+    background: #ff9140;
+    border-color: #ff9140;
   }
 
   .btn-long {
     background: var(--color-long);
     border-color: var(--color-long);
-    color: #04261a;
+    color: #162106;
     font-weight: 650;
   }
 
   .btn-short {
     background: var(--color-short);
     border-color: var(--color-short);
-    color: #2b0316;
+    color: #2a0508;
     font-weight: 650;
   }
 
@@ -233,7 +239,7 @@
     align-items: center;
     height: 1.5rem;
     padding: 0 0.5rem;
-    border-radius: 2px;
+    border-radius: 0;
     border: 1px solid var(--color-line);
     background: transparent;
     color: var(--color-muted);
@@ -248,9 +254,9 @@
 
   .chip[aria-pressed="true"],
   .chip[aria-selected="true"] {
-    color: var(--color-neon);
-    border-color: color-mix(in srgb, var(--color-neon) 55%, transparent);
-    background: color-mix(in srgb, var(--color-neon) 10%, transparent);
+    color: var(--color-spark);
+    border-color: color-mix(in srgb, var(--color-spark) 55%, transparent);
+    background: color-mix(in srgb, var(--color-spark) 10%, transparent);
   }
 
   .tabs {
@@ -283,7 +289,7 @@
     right: 0.9rem;
     bottom: -1px;
     height: 2px;
-    background: var(--color-neon);
+    background: var(--color-spark);
   }
 
   .data-table {
@@ -318,7 +324,7 @@
   }
 
   .notice {
-    border-radius: 3px;
+    border-radius: 0;
     border: 1px solid var(--color-line);
     background: var(--color-bg);
     padding: 0.6rem 0.75rem;
@@ -342,14 +348,14 @@
   }
 
   .link {
-    color: var(--color-neon);
+    color: var(--color-spark);
     text-decoration: underline;
-    text-decoration-color: color-mix(in srgb, var(--color-neon) 45%, transparent);
+    text-decoration-color: color-mix(in srgb, var(--color-spark) 45%, transparent);
     text-underline-offset: 3px;
   }
 
   .link:hover {
-    text-decoration-color: var(--color-neon);
+    text-decoration-color: var(--color-spark);
   }
 
   .spinner {
@@ -366,7 +372,7 @@
     display: inline-block;
     min-width: 3rem;
     height: 0.9em;
-    border-radius: 2px;
+    border-radius: 0;
     background: var(--color-raised);
     vertical-align: middle;
   }
@@ -382,24 +388,24 @@
 
   .slider::-webkit-slider-runnable-track {
     height: 4px;
-    border-radius: 2px;
+    border-radius: 0;
     background: linear-gradient(
       to right,
-      var(--color-neon) 0 var(--fill, 0%),
+      var(--color-spark) 0 var(--fill, 0%),
       var(--color-line-strong) var(--fill, 0%) 100%
     );
   }
 
   .slider::-moz-range-track {
     height: 4px;
-    border-radius: 2px;
+    border-radius: 0;
     background: var(--color-line-strong);
   }
 
   .slider::-moz-range-progress {
     height: 4px;
-    border-radius: 2px;
-    background: var(--color-neon);
+    border-radius: 0;
+    background: var(--color-spark);
   }
 
   .slider::-webkit-slider-thumb {
@@ -409,7 +415,7 @@
     margin-top: -6px;
     border-radius: 9999px;
     background: var(--color-text);
-    border: 3px solid var(--color-neon);
+    border: 3px solid var(--color-spark);
   }
 
   .slider::-moz-range-thumb {
@@ -417,7 +423,7 @@
     height: 10px;
     border-radius: 9999px;
     background: var(--color-text);
-    border: 3px solid var(--color-neon);
+    border: 3px solid var(--color-spark);
   }
 }
 
@@ -456,7 +462,7 @@
     padding: 0 0.4rem;
     background: var(--color-bg);
     border: 1px solid var(--color-line);
-    border-radius: 2px;
+    border-radius: 0;
     color: var(--color-text);
     font-size: 0.8125rem;
     outline: none;
@@ -464,7 +470,7 @@
   }
 
   .mini-input:focus {
-    border-color: var(--color-neon);
+    border-color: var(--color-spark);
   }
 
   .mini-input[aria-invalid="true"] {
@@ -474,7 +480,7 @@
   .check {
     width: 0.875rem;
     height: 0.875rem;
-    accent-color: var(--color-neon);
+    accent-color: var(--color-spark);
     flex: none;
   }
 
@@ -482,14 +488,14 @@
     height: 1.625rem;
     background: var(--color-raised);
     border: 1px solid var(--color-line);
-    border-radius: 2px;
+    border-radius: 0;
     color: var(--color-muted);
     font-size: 0.75rem;
     padding: 0 0.25rem;
   }
 
   .unit-select:focus-visible {
-    outline: 2px solid var(--color-neon);
+    outline: 2px solid var(--color-spark);
     outline-offset: 1px;
   }
 
@@ -498,7 +504,7 @@
     align-items: center;
     height: 1.125rem;
     padding: 0 0.3rem;
-    border-radius: 2px;
+    border-radius: 0;
     font-size: 0.6875rem;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -511,9 +517,9 @@
     border-color: color-mix(in srgb, var(--color-warn) 45%, transparent);
   }
 
-  .tag[data-tone="neon"] {
-    color: var(--color-neon);
-    border-color: color-mix(in srgb, var(--color-neon) 45%, transparent);
+  .tag[data-tone="spark"] {
+    color: var(--color-spark);
+    border-color: color-mix(in srgb, var(--color-spark) 45%, transparent);
   }
 
   .kbd {
@@ -523,7 +529,7 @@
     padding: 0.05rem 0.35rem;
     border: 1px solid var(--color-line-strong);
     border-bottom-width: 2px;
-    border-radius: 3px;
+    border-radius: 0;
     background: var(--color-bg);
     font-size: 0.75rem;
     color: var(--color-text);
@@ -535,10 +541,10 @@
     gap: 0.4rem;
     height: 1.75rem;
     padding: 0 0.55rem;
-    border-radius: 3px;
-    border: 1px solid color-mix(in srgb, var(--color-neon) 60%, transparent);
-    background: color-mix(in srgb, var(--color-neon) 14%, transparent);
-    color: var(--color-neon);
+    border-radius: 0;
+    border: 1px solid color-mix(in srgb, var(--color-spark) 60%, transparent);
+    background: color-mix(in srgb, var(--color-spark) 14%, transparent);
+    color: var(--color-spark);
     font-size: 0.75rem;
     font-weight: 600;
     white-space: nowrap;
@@ -550,8 +556,8 @@
   }
 
   .inline-edit:hover {
-    border-bottom-color: var(--color-neon);
-    color: var(--color-neon);
+    border-bottom-color: var(--color-spark);
+    color: var(--color-spark);
   }
 
   /* Explanations that open on hover and on keyboard focus. */
@@ -584,7 +590,7 @@
     padding: 0.6rem 0.7rem;
     background: var(--color-raised);
     border: 1px solid var(--color-line-strong);
-    border-radius: 3px;
+    border-radius: 0;
     box-shadow: 0 12px 32px rgba(4, 8, 14, 0.55);
     color: var(--color-text);
     font-size: 0.75rem;
@@ -592,7 +598,6 @@
     line-height: 1.45;
     white-space: normal;
     text-align: left;
-    font-stretch: 100%;
   }
 
   .tip-body[data-align="right"] {
@@ -613,7 +618,7 @@
     background: var(--color-raised);
     border: 1px solid var(--color-line-strong);
     border-left-width: 3px;
-    border-radius: 3px;
+    border-radius: 0;
     box-shadow: 0 12px 32px rgba(4, 8, 14, 0.55);
     font-size: 0.8125rem;
   }
@@ -631,7 +636,7 @@
   }
 
   .toast[data-tone="info"] {
-    border-left-color: var(--color-neon);
+    border-left-color: var(--color-spark);
   }
 
   /* Chart pick mode: the instruction doubles as the keyboard alternative. */
@@ -650,13 +655,13 @@
     max-width: calc(100% - 1rem);
     padding: 0.45rem 0.6rem;
     background: color-mix(in srgb, var(--color-raised) 94%, transparent);
-    border: 1px solid var(--color-neon);
-    border-radius: 3px;
+    border: 1px solid var(--color-spark);
+    border-radius: 0;
     box-shadow: 0 12px 32px rgba(4, 8, 14, 0.55);
   }
 
   [data-picking="true"] {
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-neon) 55%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-spark) 55%, transparent);
   }
 
   /* Order ticket: liquidation, stop, entry and target on one axis. */
@@ -667,7 +672,7 @@
   .trade-map-track {
     position: relative;
     height: 6px;
-    border-radius: 3px;
+    border-radius: 0;
     background: var(--color-line);
   }
 
@@ -717,7 +722,7 @@
     position: relative;
     flex: 1;
     height: 5px;
-    border-radius: 2px;
+    border-radius: 0;
     background: var(--color-line);
     overflow: hidden;
   }
@@ -725,7 +730,7 @@
   .oi-bar > span {
     position: absolute;
     inset: 0 auto 0 0;
-    border-radius: 2px;
+    border-radius: 0;
     transition: width 400ms ease-out;
   }
 }
@@ -749,7 +754,7 @@
     display: inline-flex;
     width: 0.875rem;
     justify-content: center;
-    color: var(--color-neon);
+    color: var(--color-spark);
   }
 
   .ticket-details[open] > summary::before {
