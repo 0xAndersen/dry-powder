@@ -1,0 +1,11 @@
+node_modules
+.next
+.git
+.env
+.env.*
+!.env.example
+Dockerfile
+.dockerignore
+npm-debug.log*
+*.tsbuildinfo
+README.md

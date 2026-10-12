@@ -1,0 +1,42 @@
+# Runs the trading frontend and the keeper together.
+#
+#   cp .env.example .env    # fill in the three contract addresses and the keeper key
+#   docker compose up --build
+#
+# Frontend: http://localhost:3000
+
+services:
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      PERP_ENGINE_ADDRESS: ${PERP_ENGINE_ADDRESS:?set PERP_ENGINE_ADDRESS in .env}
+      HOUSE_VAULT_ADDRESS: ${HOUSE_VAULT_ADDRESS:?set HOUSE_VAULT_ADDRESS in .env}
+      REWARD_TOKEN_ADDRESS: ${REWARD_TOKEN_ADDRESS:?set REWARD_TOKEN_ADDRESS in .env}
+      USDC_ADDRESS: ${USDC_ADDRESS:-0x3600000000000000000000000000000000000000}
+      PYTH_ADDRESS: ${PYTH_ADDRESS:-0x2880aB155794e7179c9eE2e38200202908C17B43}
+      RPC_URL: ${RPC_URL:-https://rpc.testnet.arc.network}
+      HERMES_URL: ${HERMES_URL:-https://hermes.pyth.network}
+      CHAIN_ID: ${CHAIN_ID:-5042002}
+      EXPLORER_URL: ${EXPLORER_URL:-https://testnet.arcscan.app}
+
+  keeper:
+    build: ./keeper
+    restart: unless-stopped
+    environment:
+      PERP_ENGINE_ADDRESS: ${PERP_ENGINE_ADDRESS:?set PERP_ENGINE_ADDRESS in .env}
+      KEEPER_PRIVATE_KEY: ${KEEPER_PRIVATE_KEY:?set KEEPER_PRIVATE_KEY in .env}
+      PYTH_ADDRESS: ${PYTH_ADDRESS:-0x2880aB155794e7179c9eE2e38200202908C17B43}
+      RPC_URL: ${RPC_URL:-https://rpc.testnet.arc.network}
+      HERMES_URL: ${HERMES_URL:-https://hermes.pyth.network}
+      CHAIN_ID: ${CHAIN_ID:-5042002}
+      REFRESH_INTERVAL_MS: ${REFRESH_INTERVAL_MS:-2000}
+      TICK_INTERVAL_MS: ${TICK_INTERVAL_MS:-250}
+      LIQUIDATION_BATCH_SIZE: ${LIQUIDATION_BATCH_SIZE:-20}
+      EXECUTE_ORDERS: ${EXECUTE_ORDERS:-true}
+      PRIORITY_FEE_GWEI: ${PRIORITY_FEE_GWEI:-1}
+      MAX_FEE_GWEI: ${MAX_FEE_GWEI:-500}
+      DRY_RUN: ${DRY_RUN:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
