@@ -1,0 +1,60 @@
+name: App (GitHub Pages)
+
+# Builds the static trading app with config.json from deployments/arc-testnet.json and publishes it.
+on:
+  push:
+    branches: [main]
+    paths: ["frontend/**", "deployments/arc-testnet.json", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Deployment present?
+        id: dep
+        run: test -f deployments/arc-testnet.json && echo "ok=true" >> "$GITHUB_OUTPUT" || echo "No deployments/arc-testnet.json yet: run the 'Deploy to Arc Testnet' workflow first."
+      - uses: actions/setup-node@v4
+        if: steps.dep.outputs.ok == 'true'
+        with:
+          node-version: 22
+      - name: Build
+        if: steps.dep.outputs.ok == 'true'
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build:static
+          node scripts/config-from-deployment.mjs ../deployments/arc-testnet.json out/config.json
+          touch out/.nojekyll
+      - uses: actions/configure-pages@v5
+        if: steps.dep.outputs.ok == 'true'
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.dep.outputs.ok == 'true'
+        with:
+          path: frontend/out
+    outputs:
+      ok: ${{ steps.dep.outputs.ok }}
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.ok == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}trade/
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

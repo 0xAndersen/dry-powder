@@ -1,0 +1,78 @@
+name: Deploy to Arc Testnet
+
+# Deploys the venue with the ops runtime (contracts, markets, vault seed), runs the trader-agent cohort against
+# it, deploys the agent account factory, commits deployments/arc-testnet.json, then publishes the app and
+# starts the keeper. Needs the DEPLOYER_KEY secret: a throwaway key holding native USDC for gas
+# (https://faucet.circle.com). The role keys derive from it and never leave the runner.
+on:
+  workflow_dispatch:
+    inputs:
+      agents:
+        description: Trader agents in the launch cohort (0 to skip)
+        default: "100"
+      minutes:
+        description: Minutes the cohort trades
+        default: "30"
+
+concurrency:
+  group: deploy-arc-testnet
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build contracts
+        run: cd contracts && forge build --skip test --skip script
+      - name: Ops runtime and browser
+        working-directory: ops
+        run: |
+          npm ci
+          npm run build
+          npx playwright install --with-deps chromium
+      - name: Deploy and run the agent cohort
+        working-directory: ops
+        env:
+          DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}
+          AGENTS: ${{ inputs.agents }}
+          MINUTES: ${{ inputs.minutes }}
+        run: node run-testnet.mjs
+      - name: Agent account factory and deployment file
+        env:
+          DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}
+        run: |
+          cd keeper && npm ci && cd ..
+          node keeper/scripts/finish-deploy.mjs ops/output-testnet/addresses.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: testnet-run
+          path: ops/output-testnet
+      - name: Commit the deployment
+        run: |
+          git config user.name "dry-powder-deployer"
+          git config user.email "actions@users.noreply.github.com"
+          git add deployments
+          git commit -m "Arc Testnet deployment $(date -u +%Y-%m-%dT%H:%MZ)" || echo "nothing to commit"
+          git push
+
+  app:
+    needs: deploy
+    uses: ./.github/workflows/pages.yml
+
+  keeper:
+    needs: deploy
+    uses: ./.github/workflows/keeper.yml
+    secrets:
+      DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}

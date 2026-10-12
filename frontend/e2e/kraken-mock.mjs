@@ -6,6 +6,7 @@ import { FEEDS, PORTS, log } from "./lib.mjs";
 const byPair = Object.fromEntries(Object.entries(FEEDS).map(([key, f]) => [f.kraken, { key, resultKey: f.krakenKey }]));
 
 export function startKrakenMock(model) {
+  const frozenTicker = {};
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, "http://x");
     res.setHeader("access-control-allow-origin", "*");
@@ -44,7 +45,10 @@ export function startKrakenMock(model) {
     if (url.pathname === "/0/public/Ticker") {
       const result = {};
       for (const pair of pairs) {
-        const t = model.ticker(byPair[pair].key);
+        const key = byPair[pair].key;
+        // A frozen feed looks like a closed market on Kraken: the ticker stops changing.
+        if (!model.frozen.has(key)) delete frozenTicker[key];
+        const t = model.frozen.has(key) ? (frozenTicker[key] ??= { ...model.ticker(key) }) : model.ticker(key);
         result[byPair[pair].resultKey] = { a: [t.ask, "1", "1.000"], b: [t.bid, "1", "1.000"], c: [t.last, "0.01"] };
       }
       res.end(JSON.stringify({ error: [], result }));

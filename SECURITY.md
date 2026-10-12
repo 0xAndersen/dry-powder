@@ -61,3 +61,22 @@ Found and fixed while testing v2:
 - **Keepers.** Liquidation, order execution and settlement are permissionless but someone has to do them.
 - **Arc.** USDC can blocklist addresses; payouts to a blocklisted trader are parked, never redirected. If the
   engine or vault were blocklisted the system would stop; the wiring is immutable.
+
+## Agent accounts (added with the Nexus merge)
+
+`AgentAccount` lets approved agent keys trade for an owner within a policy; only the owner can move tokens out
+(fuzzed in `AgentAccount.t.sol`). What a policy does **not** stop, by design:
+
+- An agent can lose the account's money trading, up to its margin cap per position, in any allowed market.
+- An agent can execute the account's own triggered orders from its own address and collect the engine's
+  execution fee (0.1 USDC per order by default): the same fee any keeper earns.
+- Revoking an agent stops new actions at once; its open positions and orders stay for the owner to manage.
+- The factory lets anyone create the account for an owner; the owner is fixed at creation and nothing else is.
+
+The MCP server adds off-chain limits on top (notional cap, allowed markets, price band, confirmation) and refuses
+to run with the owner's key.
+
+## Testnet operations
+
+The deploy workflow derives every role key (publisher, keeper, agents) from `DEPLOYER_KEY`, so that one GitHub
+secret is the whole key set. It is a throwaway testnet key: rotate by redeploying with a new one.

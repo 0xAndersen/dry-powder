@@ -71,7 +71,9 @@ export async function deploy({ lockSeconds, epochSeconds, streamSeconds, expiryS
   await send(usdc, "TestUSDC", "approve", [vault, usd(vaultDeposit)]);
   await send(vault, "HouseVault", "deposit", [usd(vaultDeposit), DEPLOYER.address]);
 
-  const addresses = { publisherOracle, pythOracle, usdc, vault, token, engine, lens, expiry, datedSymbol, uiTrader: UI_TRADER.address, markets };
+  const agentFactory = await deployContract("AgentAccountFactory", [usdc, engine]);
+
+  const addresses = { publisherOracle, pythOracle, usdc, vault, token, engine, lens, agentFactory, expiry, datedSymbol, uiTrader: UI_TRADER.address, markets };
   log("deploy", `engine ${engine} lens ${lens} vault ${vault}; ${datedSymbol} expires in ${expirySeconds}s`);
   return addresses;
 }

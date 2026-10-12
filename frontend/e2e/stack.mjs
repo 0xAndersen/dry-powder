@@ -64,7 +64,11 @@ const addresses = await deploy({
 const model = new PriceModel({ volatility: env("VOLATILITY", 1) });
 model.start();
 const kraken = startKrakenMock(model);
-const bot = startBot({ addresses, model, settleDelaySeconds: env("SETTLE_DELAY", 20) });
+// EXTERNAL_KEEPER=1 leaves the publisher + keeper roles to the production keeper (keeper/src/main.mjs), which is
+// how CI checks it: run it against this stack with PUBLISHER_KEY/KEEPER_KEY = the BOT account.
+const external = process.env.EXTERNAL_KEEPER === "1";
+const idle = { stats: { published: "external", executed: "external", liquidated: "external", settled: "external" }, stop() {} };
+const bot = external ? idle : startBot({ addresses, model, settleDelaySeconds: env("SETTLE_DELAY", 20) });
 const web = startStaticServer(addresses);
 writeFileSync(ADDRESSES_FILE, `${JSON.stringify({ ...addresses, web: WEB_URL }, null, 2)}\n`);
 

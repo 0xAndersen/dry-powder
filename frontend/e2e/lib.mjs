@@ -43,7 +43,9 @@ export const FEEDS = {
 };
 
 export function artifact(name) {
-  const file = join(CONTRACTS_OUT, `${name}.sol`, `${name}.json`);
+  // Contracts that share a source file with another one.
+  const source = { AgentAccountFactory: "AgentAccount" }[name] ?? name;
+  const file = join(CONTRACTS_OUT, `${source}.sol`, `${name}.json`);
   if (!existsSync(file)) {
     throw new Error(`Missing ${file}. Build the contracts first: cd contracts && forge build --offline --skip test --skip script`);
   }

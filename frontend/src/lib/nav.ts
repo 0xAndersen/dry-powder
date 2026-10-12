@@ -1,6 +1,6 @@
 import { IS_STATIC_BUILD, STICKY_QUERY_KEYS } from "./config";
 
-export const ROUTES = ["trade", "activity", "house"] as const;
+export const ROUTES = ["trade", "activity", "house", "agents"] as const;
 export type Route = (typeof ROUTES)[number];
 
 /** The route the browser is on, whatever sub-path the app is served from. */

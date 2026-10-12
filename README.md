@@ -13,7 +13,11 @@ them KEG, and KEG stakers receive 15% of the vault's profit above its high-water
 | `contracts/` | Foundry project: engine, lens, oracle adapter, vault, KEG token, testnet oracle and test collateral; 314 tests |
 | `ops/` | Runtime that deploys the protocol and runs the price publisher, the keeper and 100 trader agents; `run-testnet.mjs` runs it against Arc Testnet |
 | `frontend/` | Next.js trading terminal: `/trade`, `/activity`, `/house`, watch mode; server build and static bundle |
-| `keeper/` | Node keeper for the **v1** contracts. Not yet ported to v2; use the ops runtime meanwhile |
+| `keeper/` | The always-on publisher + keeper for v2: Kraken prices to the oracle when needed, fills, liquidations, dated-market settlement, vault epochs |
+| `mcp/` | MCP server for AI agents: market data and guarded trading from an agent account |
+| `AGENTS.md` | How agents and bots trade the venue |
+| `MERGE.md` | What was taken from Project Nexus and what was left out |
+| `deployments/` | Live addresses (`arc-testnet.json`, written by the deploy workflow) |
 | `REPORT.md` | Results of the first 100-agent run, venue metrics, findings |
 | `UIUX.md` | UI/UX breakdown and priorities |
 | `BRAND.md` | Brand tokens, mark, voice and the name check |
@@ -23,6 +27,9 @@ them KEG, and KEG stakers receive 15% of the vault's profit above its high-water
 
 ## What v2 added
 
+- **Agent accounts (from Nexus).** `AgentAccount`: a wallet-owned account that approved agent keys can trade
+  from, within an on-chain policy (expiry, leverage, margin per order, markets), and never withdraw from. Managed
+  on the app's Agents page; used by the MCP server.
 - **Instruments.** A market is a price feed plus three switches: a quote feed (crosses such as ETH/BTC),
   inversion (JPY/USD), and an expiry (dated, cash-settled futures). Everything is sized in USDC notional, so
   every instrument is fractional. Launch set: BTC, ETH, SOL, EUR, JPY, gold, ETH-BTC and a dated BTC future.
@@ -40,6 +47,16 @@ them KEG, and KEG stakers receive 15% of the vault's profit above its high-water
   publisher-signed prices from Kraken's public tickers. It is testnet infrastructure: whoever holds the
   publisher key sets the price. Moving to real Pyth is configuration plus a Pyth API key.
 
+## Live on Arc Testnet
+
+Three GitHub Actions workflows run the venue where Arc is reachable:
+
+- **Deploy to Arc Testnet** (manual): deploys the contracts and markets, seeds the vault, runs the trader-agent
+  cohort, deploys the agent account factory and commits `deployments/arc-testnet.json`. Needs the
+  `DEPLOYER_KEY` secret (a throwaway key with testnet USDC for gas); every other key derives from it.
+- **Keeper (Arc Testnet)**: the publisher + keeper, restarted every 5 hours so one is always running.
+- **App (GitHub Pages)**: the static trading app with `config.json` built from the deployment file.
+
 ## Run it
 
 Prerequisites: [Foundry](https://getfoundry.sh), Node.js 22+.
@@ -52,8 +69,13 @@ forge coverage --ir-minimum --no-match-coverage "(test|script|lib)/"
 # 2. The 100-agent acceptance run on a local chain (about 9 minutes)
 cd ../ops && npm ci && npx playwright install chromium && npm test
 
-# 3. The same thing on Arc Testnet (needs a deployer with ~40 testnet USDC for gas)
+# 3. The same thing on Arc Testnet (needs a deployer with ~40 testnet USDC for gas), then the keeper
 DEPLOYER_KEY=0x... HEADLESS=0 node run-testnet.mjs
+cd .. && DEPLOYER_KEY=0x... node keeper/scripts/finish-deploy.mjs
+cd keeper && npm ci && DEPLOYER_KEY=0x... DEPLOYMENT=../deployments/arc-testnet.json node src/main.mjs
+
+# Whole system locally: chain, keeper, 34-step UI run, MCP server from an agent account
+cd frontend && e2e/with-keeper.sh
 
 # 4. The UI, pointed at whatever step 3 deployed (it prints the query string)
 cd ../frontend && npm ci && npm run build:static && npx serve out

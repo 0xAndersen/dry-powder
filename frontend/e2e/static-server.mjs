@@ -23,6 +23,7 @@ export function startStaticServer(addresses) {
     engineLensAddress: addresses.lens,
     houseVaultAddress: addresses.vault,
     rewardTokenAddress: addresses.token,
+    agentFactoryAddress: addresses.agentFactory,
     usdcAddress: addresses.usdc,
     rpcUrl: RPC_URL,
     chainId: 31337,

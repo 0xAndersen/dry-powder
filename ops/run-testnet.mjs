@@ -5,10 +5,11 @@
 //   cd ops && npm ci && npx playwright install chromium
 //   DEPLOYER_KEY=0x... node run-testnet.mjs            # add HEADLESS=0 to watch the tab
 //
-// Optional: AGENTS (100), MINUTES (30), EXPIRY_SECONDS (900), SEED, RPC_URL, COLLATERAL (test|usdc),
+// Optional: AGENTS (100), MINUTES (30), EXPIRY_SECONDS (900), SEED (default: derived from DEPLOYER_KEY), RPC_URL, COLLATERAL (test|usdc),
 // RESET=1 (discard a previous run stored in the browser profile). The profile is kept in ./.profile so a
 // crashed run can be continued by starting the script again with the same SEED.
 import { chromium } from "playwright";
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { inject, here } from "./test/harness.mjs";
@@ -35,7 +36,9 @@ const cfg = {
   rpcUrl: process.env.RPC_URL || "https://rpc.testnet.arc.network",
   chainId: 5042002,
   deployerKey: key,
-  seed: process.env.SEED || "dry-powder-testnet-1",
+  // Role keys (publisher, keeper, agents) derive from the seed, so it must be secret: by default it derives
+  // from the deployer key (the keeper uses the same rule, see keeper/src/main.mjs).
+  seed: process.env.SEED || "dp-" + createHash("sha256").update(key.toLowerCase() + "/dry-powder/seed").digest("hex"),
   collateral: process.env.COLLATERAL || "test",
   agents: +(process.env.AGENTS || 100),
   agentCapital: 10000,

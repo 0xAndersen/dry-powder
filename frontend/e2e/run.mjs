@@ -2,12 +2,12 @@
 // with TRADERS >= 5 so the activity feed and the house have something to show).
 //
 //   node e2e/run.mjs                 # everything
-//   node e2e/run.mjs trade,house     # only some sections: trade, instruments, watch, activity, settle, house, extras, responsive
+//   node e2e/run.mjs trade,house     # only some sections: trade, instruments, watch, activity, settle, house, extras, agents, responsive
 //
 // Exits non-zero if any step fails. Screenshots land in e2e/out/shots/.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { FIRST_SCRIPTED_TRADER, HERE, KRAKEN_URL, UI_TRADER, WEB_URL, account, artifact, log, publicClient, readAddresses, sleep } from "./lib.mjs";
+import { FIRST_SCRIPTED_TRADER, HERE, KRAKEN_URL, RPC_URL, UI_TRADER, WEB_URL, account, artifact, log, publicClient, readAddresses, sleep } from "./lib.mjs";
 import { launch, newPage } from "./browser.mjs";
 
 const addresses = readAddresses();
@@ -315,6 +315,8 @@ if (want("instruments")) {
   await step("awaiting price: a market with a stale on-chain price still takes a keeper order", async () => {
     await fetch(`${KRAKEN_URL}/control/freeze?feed=EUR&on=1`);
     try {
+      // A closed market is recognised by its ticker not changing; give the publisher time to notice.
+      await sleep(Number(process.env.FREEZE_SETTLE_MS ?? 8_000));
       await selectMarket("EUR-USD");
       await t("market-quote").getByText(/Awaiting on-chain price/).waitFor({ timeout: 20_000 });
       await setQty("Size", 300);
@@ -597,6 +599,51 @@ if (want("house")) {
 }
 
 // ─────────────────────────────── responsive / no wallet ───────────────────────────────
+if (want("agents")) {
+  await step("agents: create account, deposit, approve an agent, agent trades, revoke", async () => {
+    await page.goto(`${WEB_URL}/agents/`);
+    await ensureWallet();
+    await t("agents-create-button").click();
+    await t("agents-funds").waitFor({ timeout: 30_000 });
+    const agentAccount = await read(addresses.agentFactory, "AgentAccountFactory", "accountOf", [UI_TRADER.address]);
+    await t("agents-amount").fill("1500");
+    await t("agents-funds-submit").click();
+    await page.getByText(/Moved 1,500\.00 .* into the agent account/).waitFor({ timeout: 30_000 });
+    await t("agent-generate").click();
+    const shown = await page.locator(".notice .num.break-all").innerText();
+    await t("agent-approve").click();
+    await page.getByText(/approved until/).waitFor({ timeout: 30_000 });
+    await t("agents-list").getByText("active").waitFor({ timeout: 10_000 });
+    await shot(page, "25-agents");
+
+    // The generated key trades from the account within its policy, through the engine, never for itself.
+    const { privateKeyToAccount } = await import("viem/accounts");
+    const { createWalletClient, http } = await import("viem");
+    const { foundry } = await import("viem/chains");
+    const agentAcct = privateKeyToAccount(shown.trim());
+    const fund = createWalletClient({ chain: foundry, transport: http(RPC_URL), account: account(5) });
+    await pub.waitForTransactionReceipt({ hash: await fund.sendTransaction({ to: agentAcct.address, value: 10n ** 18n }) });
+    const agentWallet = createWalletClient({ chain: foundry, transport: http(RPC_URL), account: agentAcct });
+    const eth = addresses.markets.find((m) => m.symbol === "ETH-USD").marketId;
+    const markets = await read(addresses.lens, "EngineLens", "getMarkets");
+    const ask = markets.find((m) => m.id.toLowerCase() === eth.toLowerCase()).price.ask;
+    const abi = artifact("AgentAccount").abi;
+    await pub.waitForTransactionReceipt({ hash: await agentWallet.writeContract({ address: agentAccount, abi, functionName: "createLimitOrder", args: [{ priceId: eth, isLong: true, margin: 100_000_000n, size: 500_000_000n, triggerPrice: (ask * 101n) / 100n, takeProfit: 0n, stopLoss: 0n }] }) });
+    for (let i = 0; i < 40; i++) {
+      const p = await read(addresses.engine, "PerpEngine", "getPosition", [agentAccount, eth]);
+      if (p.trader.toLowerCase() === agentAccount.toLowerCase()) break;
+      if (i === 39) throw new Error("the agent's order was not filled");
+      await sleep(1000);
+    }
+    await page.goto(`${WEB_URL}/trade/?account=${agentAccount}`);
+    await t("position-ETH-USD").waitFor({ timeout: 20_000 });
+    await page.goto(`${WEB_URL}/agents/`);
+    await t("agents-list").getByRole("button", { name: "Revoke" }).click();
+    await page.getByText(/revoked\. Its open positions stay/).waitFor({ timeout: 30_000 });
+    return `account ${agentAccount}, agent ${agentAcct.address} traded ETH-USD and was revoked`;
+  });
+}
+
 if (want("responsive")) {
   for (const width of [360, 768]) {
     await step(`no horizontal overflow at ${width}px on /trade, /activity, /house`, async () => {

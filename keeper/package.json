@@ -1,27 +1,20 @@
 {
   "name": "dry-powder-keeper",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Liquidation and order-execution keeper for the Dry Powder perpetuals protocol",
+  "description": "Price publisher and keeper (fills, liquidations, settlement, vault epochs) for Dry Powder",
   "type": "module",
   "engines": {
     "node": ">=22.14.0"
   },
+  "bin": {
+    "dry-powder-keeper": "src/main.mjs"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/index.js",
-    "dev": "tsx watch src/index.ts",
-    "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/*.test.ts"
+    "start": "node src/main.mjs",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@pythnetwork/hermes-client": "3.1.0",
-    "@pythnetwork/pyth-evm-js": "2.0.0",
-    "viem": "^2.57.4"
-  },
-  "devDependencies": {
-    "@types/node": "^22.20.5",
-    "tsx": "^4.20.0",
-    "typescript": "^5.9.3"
+    "viem": "2.21.0"
   }
 }

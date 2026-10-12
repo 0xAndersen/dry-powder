@@ -16,6 +16,7 @@ const NAV: readonly { route: Route; label: string }[] = [
   { route: "trade", label: "Trade" },
   { route: "activity", label: "Activity" },
   { route: "house", label: "House" },
+  { route: "agents", label: "Agents" },
 ];
 
 function Wordmark() {
@@ -173,10 +174,10 @@ export function Header() {
                 key={item.route}
                 route={item.route}
                 aria-current={active ? "page" : undefined}
-                className={`relative flex items-center px-1.5 text-[0.8125rem] font-medium sm:px-3 sm:text-sm ${active ? "text-text" : "text-muted hover:text-text"}`}
+                className={`relative flex items-center px-1 text-xs font-medium sm:px-3 sm:text-sm ${active ? "text-text" : "text-muted hover:text-text"}`}
               >
                 {item.label}
-                {active ? <span aria-hidden="true" className="absolute inset-x-2 bottom-0 h-0.5 bg-spark sm:inset-x-3" /> : null}
+                {active ? <span aria-hidden="true" className="absolute inset-x-1 bottom-0 h-0.5 bg-spark sm:inset-x-3" /> : null}
               </AppLink>
             );
           })}

@@ -5449,6 +5449,99 @@ export const publisherOracleAbi = [
   }
 ] as const;
 
+export const pythOracleAbi = [
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "pyth_",
+        "type": "address",
+        "internalType": "contract IPyth"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "peek",
+    "inputs": [
+      {
+        "name": "feedId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "quoteFeedId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "invert",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "maxAge",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxConfBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "status",
+        "type": "uint8",
+        "internalType": "enum PriceStatus"
+      },
+      {
+        "name": "px",
+        "type": "tuple",
+        "internalType": "struct OraclePrice",
+        "components": [
+          {
+            "name": "mid",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "bid",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "ask",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "publishTime",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pyth",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IPyth"
+      }
+    ],
+    "stateMutability": "view"
+  }
+] as const;
+
 export const testUSDCAbi = [
   {
     "type": "constructor",
@@ -5797,6 +5890,687 @@ export const testUSDCAbi = [
   {
     "type": "error",
     "name": "MintTooLarge",
+    "inputs": []
+  }
+] as const;
+
+export const agentAccountAbi = [
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "usdc_",
+        "type": "address",
+        "internalType": "contract IERC20"
+      },
+      {
+        "name": "engine_",
+        "type": "address",
+        "internalType": "contract PerpEngine"
+      },
+      {
+        "name": "owner_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "agents",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "expiry",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "maxLeverage",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxMargin",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "cancelOrder",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claim",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "closePosition",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "acceptablePrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "priceUpdate",
+        "type": "bytes[]",
+        "internalType": "bytes[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "createLimitOrder",
+    "inputs": [
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct LimitParams",
+        "components": [
+          {
+            "name": "priceId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "isLong",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "margin",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "size",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "triggerPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "takeProfit",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "stopLoss",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "engine",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract PerpEngine"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "marketAllowed",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "openPosition",
+    "inputs": [
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct OpenParams",
+        "components": [
+          {
+            "name": "priceId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "isLong",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "margin",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "size",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "acceptablePrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "takeProfit",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "stopLoss",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "priceUpdate",
+        "type": "bytes[]",
+        "internalType": "bytes[]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "owner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "restrictMarkets",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "revokeAgent",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setAgent",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expiry",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "maxLeverage",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxMargin",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMarketAllowed",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "allowed",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setRestrictMarkets",
+    "inputs": [
+      {
+        "name": "restricted",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTriggerOrder",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "orderType",
+        "type": "uint8",
+        "internalType": "enum OrderType"
+      },
+      {
+        "name": "triggerPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "usdc",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IERC20"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "withdraw",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "contract IERC20"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "AgentRevoked",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "AgentSet",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "expiry",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "maxLeverage",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxMargin",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MarketAllowed",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "allowed",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MarketsRestricted",
+    "inputs": [
+      {
+        "name": "restricted",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Withdrawn",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "InvalidPolicy",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LeverageCapExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MarginCapExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MarketNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotAuthorized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotOwner",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ZeroAddress",
+    "inputs": []
+  }
+] as const;
+
+export const agentAccountFactoryAbi = [
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "usdc_",
+        "type": "address",
+        "internalType": "contract IERC20"
+      },
+      {
+        "name": "engine_",
+        "type": "address",
+        "internalType": "contract PerpEngine"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "accountOf",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "createAccount",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "engine",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract PerpEngine"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "predictAccount",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "usdc",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IERC20"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "AccountCreated",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AccountExists",
     "inputs": []
   }
 ] as const;
