@@ -25,7 +25,8 @@ const BENIGN = new Set([
   "NothingToLiquidate", "OrderNotFound", "TriggerNotMet", "PriceBeforeOrder", "PriceNotAfterOpen", "PositionLiquidatable",
   "PositionExists", "OraclePriceStale", "InvalidTrigger", "EnforcedPause", "MarketDisabled", "LeverageOutOfRange",
   "MarginTooLow", "MarketOiCapExceeded", "VaultOiCapExceeded", "MarketExpired", "PositionNotFound", "EpochNotOver",
-  "MarketAlreadySettled", "PriceBeforeExpiry", "MarketNotExpired", "MarketNotSettled",
+  "MarketAlreadySettled", "PriceBeforeExpiry", "MarketNotExpired", "MarketNotSettled", "OracleConfidenceTooWide",
+  "OraclePriceUnavailable",
 ]);
 
 // Selector -> error name, for reverts viem reports only by signature.
@@ -57,7 +58,7 @@ export const isLiquidatable = (isLong, lp, mid) => (isLong ? mid <= lp : mid >= 
 
 export function makeOperator({ pub, publisher, keeper, funder, chainId, addresses, kraken, opts, log }) {
   const { engine, lens, vault, oracle } = addresses;
-  const stats = { ticks: 0, pushes: 0, feedsPushed: 0, executed: 0, liquidated: 0, settledMarkets: 0, settledPositions: 0, epochs: 0, topUps: 0, benign: {}, errors: {}, lastError: null };
+  const stats = { ticks: 0, pushes: 0, feedsPushed: 0, executed: 0, liquidated: 0, settledMarkets: 0, settledPositions: 0, epochs: 0, topUps: 0, benign: {}, errors: {}, wideFeeds: {}, lastError: null };
   const backoff = new Map(); // id -> [count, until]
   const ready = (id) => !backoff.has(id) || Date.now() >= backoff.get(id)[1];
   const defer = (id) => {
@@ -69,6 +70,7 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
   let lastPublish = 0;
   let lastTopUp = 0;
   let krakenOk = false;
+  let maxConfBps = 50n;
 
   async function fees() {
     const block = await pub.getBlock();
@@ -118,9 +120,10 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
     for (let o = 0n; o < pc; o += PAGE) posPages.push(pub.readContract({ address: lens, abi: engineLensAbi, functionName: "getPositions", args: [o, PAGE] }));
     const ordPages = [];
     for (let o = 0n; o < oc; o += PAGE) ordPages.push(pub.readContract({ address: lens, abi: engineLensAbi, functionName: "getOrders", args: [o, PAGE] }));
-    const positions = (await Promise.all(posPages)).flat();
+    const [posRes, ordRes] = await Promise.all([Promise.all(posPages), Promise.all(ordPages)]);
+    const positions = posRes.flat();
     const orders = [];
-    for (const [ids, list] of await Promise.all(ordPages)) list.forEach((o, i) => orders.push({ id: ids[i], ...o }));
+    for (const [ids, list] of ordRes) list.forEach((o, i) => orders.push({ id: ids[i], ...o }));
     return { markets, positions, orders };
   }
 
@@ -157,6 +160,8 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
       const q = kraken.quote(f);
       if (!q) continue;
       const { price, conf, mid } = quoteToPrice(f, q.bid, q.ask);
+      // The engine refuses prices with a wider confidence; publishing them only buys reverts.
+      if (conf * 10_000n > price * maxConfBps) { count(stats.wideFeeds, f.key); continue; }
       const cur = oc.get(f.key);
       const age = chainNow - cur.publishTime;
       const moved = cur.mid ? Math.abs(mid / cur.mid - 1) * 1e4 : Infinity;
@@ -182,6 +187,11 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
       let out = null;
       if (q) {
         const { price, conf } = quoteToPrice(f, q.bid, q.ask);
+        if (conf * 10_000n > price * maxConfBps) {
+          count(stats.wideFeeds, f.key);
+          cache.set(f.key, null);
+          return null;
+        }
         const scale = 10n ** BigInt(18 + f.expo);
         out = { mid: price * scale, bid: (price - conf) * scale, ask: (price + conf) * scale, data: await signUpdate(publisher.account, chainId, oracle, f, price, conf, pt) };
       }
@@ -327,6 +337,7 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
       stats.lastError = `kraken: ${String(e?.message ?? e)}`;
     }
     await topUp();
+    if (stats.ticks % 100 === 1) maxConfBps = await pub.readContract({ address: engine, abi: perpEngineAbi, functionName: "maxConfBps" }).catch(() => maxConfBps);
     const block = await pub.getBlock();
     const chainNow = Number(block.timestamp);
     if (krakenOk) await publish(chainNow, await onchainFeeds());

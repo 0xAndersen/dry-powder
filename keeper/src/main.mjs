@@ -60,9 +60,15 @@ const chain = defineChain({
   name: a.chainId === 5042002 ? "Arc Testnet" : `chain ${a.chainId}`,
   nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
   rpcUrls: { default: { http: [rpcUrl] } },
+  contracts: { multicall3: { address: env.MULTICALL3 || "0xcA11bde05977b3631167028862bE2a173976CA11" } },
 });
-const transport = http(rpcUrl, { retryCount: 3, retryDelay: 400, timeout: 20_000 });
-const pub = createPublicClient({ chain, transport, pollingInterval: 500 });
+// Public RPCs rate-limit (Arc's answers 429): retry with exponential backoff, and batch every read issued in
+// the same tick into one Multicall3 eth_call.
+const transport = http(rpcUrl, { retryCount: 6, retryDelay: 1_000, timeout: 30_000 });
+const MC3 = chain.contracts.multicall3.address;
+const probe = createPublicClient({ chain, transport });
+const hasMc3 = ((await probe.getCode({ address: MC3 }).catch(() => undefined)) ?? "0x").length > 2;
+const pub = createPublicClient({ chain, transport, pollingInterval: 1_000, ...(hasMc3 ? { batch: { multicall: { wait: 50 } } } : {}) });
 const wallet = (pk) => createWalletClient({ chain, transport, account: privateKeyToAccount(pk) });
 const publisher = wallet(key("PUBLISHER_KEY", "publisher"));
 const keeper = wallet(key("KEEPER_KEY", "keeper"));
@@ -87,13 +93,13 @@ const op = makeOperator({ pub, publisher, keeper, funder, chainId: a.chainId, ad
 const actual = await pub.getChainId().catch((e) => { throw fatal(`RPC ${rpcUrl} unreachable: ${e?.shortMessage ?? e?.message ?? e}`); });
 if (actual !== a.chainId) throw fatal(`RPC is chain ${actual}, expected ${a.chainId}`);
 annotate("notice", `keeper started: publisher ${publisher.account.address}, keeper ${keeper.account.address}`);
-log("start", JSON.stringify({ rpcUrl, chainId: a.chainId, engine: a.engine, oracle: a.oracle, publisher: publisher.account.address, keeper: keeper.account.address, funder: funder?.account.address ?? null, opts }));
+log("start", JSON.stringify({ multicall: hasMc3, rpcUrl, chainId: a.chainId, engine: a.engine, oracle: a.oracle, publisher: publisher.account.address, keeper: keeper.account.address, funder: funder?.account.address ?? null, opts }));
 
 let last = { at: 0 };
 let stopping = false;
 const started = Date.now();
 const runFor = num("RUN_SECONDS", 0) * 1000;
-const tickMs = num("TICK_MS", 1500);
+const tickMs = num("TICK_MS", 3000);
 
 if (env.PORT) {
   createServer((req, res) => {
