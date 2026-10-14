@@ -1,0 +1,20 @@
+{
+  "name": "dry-powder-keeper",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Price publisher and keeper (fills, liquidations, settlement, vault epochs) for Dry Powder",
+  "type": "module",
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "bin": {
+    "dry-powder-keeper": "src/main.mjs"
+  },
+  "scripts": {
+    "start": "node src/main.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "viem": "2.21.0"
+  }
+}

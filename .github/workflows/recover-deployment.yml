@@ -1,0 +1,53 @@
+name: Recover testnet deployment
+
+# For a "Deploy to Arc Testnet" run that deployed the contracts but did not finish (timeout, cancel):
+# rebuilds the addresses from the chain, deploys the agent account factory, commits
+# deployments/arc-testnet.json, then publishes the app and starts the keeper.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-arc-testnet
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build contracts
+        run: cd contracts && forge build --skip test --skip script
+      - name: Recover addresses, factory, deployment file
+        env:
+          DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}
+        run: |
+          cd keeper && npm ci && cd ..
+          node keeper/scripts/recover-deployment.mjs
+          node keeper/scripts/finish-deploy.mjs ops/output-testnet/addresses.json
+      - name: Commit the deployment
+        run: |
+          git config user.name "dry-powder-deployer"
+          git config user.email "actions@users.noreply.github.com"
+          git add deployments
+          git commit -m "Arc Testnet deployment (recovered) $(date -u +%Y-%m-%dT%H:%MZ)" || echo "nothing to commit"
+          git push
+
+  app:
+    needs: recover
+    uses: ./.github/workflows/pages.yml
+
+  keeper:
+    needs: recover
+    uses: ./.github/workflows/keeper.yml
+    secrets:
+      DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}

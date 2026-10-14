@@ -1,0 +1,1 @@
+{"ok":true,"last":{"at":1791962623354,"chainNow":1791962623,"positions":132,"orders":31},"stats":{"ticks":55,"pushes":2,"feedsPushed":11,"executed":0,"liquidated":0,"settledMarkets":0,"settledPositions":0,"epochs":1,"topUps":0,"benign":{},"errors":{"OracleConfidenceTooWide":6,"updatePriceFeeds":1},"lastError":"updatePriceFeeds: HTTP request failed."},"kraken":true,"uptimeS":90}

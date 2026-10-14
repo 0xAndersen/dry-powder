@@ -1,0 +1,843 @@
+{
+ "ok": true,
+ "mode": "usdc",
+ "agents": 16,
+ "passes": [
+  "all agents done [16]",
+  ">= 5 round trips and margin >= capital for every agent",
+  "flat; engine and vault balances reconcile",
+  "collateral conserved (chain) [380000000000 vs 380000000000]",
+  "no uncaught page errors",
+  "existing token used as collateral (no TestUSDC deployed, transfers not mints)"
+ ],
+ "fails": [],
+ "preflight": {
+  "chainId": 5042002,
+  "chainIdOk": true,
+  "deployer": "0x55B005Bc0037e38cfc9181DF601c5296de05F515",
+  "nonce": 2,
+  "balance": 39.988407,
+  "baseFeeGwei": 20,
+  "gasPriceGwei": 21,
+  "networkTipGwei": 1,
+  "multicall3": true,
+  "gas": {
+   "deploy": 13392000,
+   "fund": 1507000,
+   "agents": 83793528,
+   "keeper": 22542448,
+   "publisher": 3510000,
+   "total": 124744976
+  },
+  "costUsdc": {
+   "deploy": 0.281232,
+   "fund": 0.031647,
+   "agents": 1.759664,
+   "keeper": 0.473391,
+   "publisher": 0.07371,
+   "total": 2.619644
+  },
+  "perAgentUsdc": 0.109979,
+  "floats": {
+   "perAgent": 0.14,
+   "keeper": 2,
+   "publisher": 0.5,
+   "total": 4.74
+  },
+  "required": 6.852277,
+  "sufficient": true,
+  "shortfall": 0,
+  "note": "costUsdc.total is the expected net spend; required is the peak the deployer must hold (deploy+fund gas + account floats + 65% of run gas for top-ups + reserve); unspent floats return with sweep({returnGas:true})"
+ },
+ "summary": {
+  "run": {
+   "phase": "ended",
+   "startedAt": "2026-10-12T04:25:36.257Z",
+   "seconds": 295,
+   "chainId": 5042002,
+   "agents": 16,
+   "done": 16,
+   "failed": 0,
+   "blocks": [
+    8,
+    321
+   ]
+  },
+  "trades": {
+   "opens": 87,
+   "closes": 87,
+   "liquidations": 0,
+   "settledPositions": 1,
+   "ordersCreated": 113,
+   "fills": {
+    "limit": 11,
+    "takeProfit": 8,
+    "stopLoss": 13,
+    "close": 5
+   },
+   "roundTrips": 87,
+   "tripsMin": 5,
+   "forcedEntries": 13
+  },
+  "volume": 3206834,
+  "marginDeployed": 81915,
+  "agentsPnl": {
+   "total": -2203,
+   "best": 63.09,
+   "worst": -556.97,
+   "winners": 2
+  },
+  "openInterest": {
+   "cols": [
+    "tSec",
+    "oi",
+    "nav"
+   ],
+   "series": [
+    [
+     0,
+     0,
+     300000
+    ],
+    [
+     5,
+     86919,
+     300103
+    ],
+    [
+     15,
+     326403,
+     301989
+    ],
+    [
+     25,
+     141088,
+     302216
+    ],
+    [
+     35,
+     37264,
+     302496
+    ],
+    [
+     45,
+     142181,
+     302924
+    ],
+    [
+     55,
+     190534,
+     302935
+    ],
+    [
+     65,
+     84062,
+     303161
+    ],
+    [
+     75,
+     123048,
+     303323
+    ],
+    [
+     85,
+     131496,
+     303448
+    ],
+    [
+     95,
+     167526,
+     302882
+    ],
+    [
+     105,
+     177913,
+     301138
+    ],
+    [
+     115,
+     188104,
+     301187
+    ],
+    [
+     125,
+     116108,
+     301612
+    ],
+    [
+     135,
+     121138,
+     302077
+    ],
+    [
+     145,
+     148622,
+     302098
+    ],
+    [
+     155,
+     57384,
+     302285
+    ],
+    [
+     165,
+     116120,
+     302368
+    ],
+    [
+     175,
+     0,
+     302211
+    ],
+    [
+     185,
+     5064,
+     302211
+    ],
+    [
+     195,
+     0,
+     302210
+    ],
+    [
+     205,
+     0,
+     302210
+    ],
+    [
+     215,
+     0,
+     302210
+    ],
+    [
+     225,
+     4080,
+     302213
+    ],
+    [
+     235,
+     4080,
+     302213
+    ],
+    [
+     245,
+     0,
+     302221
+    ],
+    [
+     255,
+     3841,
+     302223
+    ],
+    [
+     265,
+     0,
+     302227
+    ],
+    [
+     275,
+     3583,
+     302223
+    ],
+    [
+     285,
+     0,
+     302199
+    ],
+    [
+     295,
+     0,
+     302199
+    ]
+   ],
+   "max": 326403,
+   "last": 0
+  },
+  "vault": {
+   "navStart": 300000,
+   "navEnd": 302198.6,
+   "sharePriceStart": 1,
+   "sharePriceEnd": 1.007328,
+   "traderLosses": 1932.02,
+   "traderProfits": 1886.3,
+   "fees": 2551.32,
+   "housePnl": 2597.04,
+   "stakerYieldAllocated": 393.67,
+   "stakerYieldClaimed": 393.17,
+   "epochs": 6,
+   "shortfall": 0,
+   "houseStaked": 93166,
+   "stakes": 13,
+   "yieldClaims": 19,
+   "lpDeposits": 1854.05,
+   "lpRedeems": 2
+  },
+  "keeper": {
+   "liquidations": 0,
+   "liquidationTxs": 0,
+   "fills": {
+    "limit": 11,
+    "sl": 13,
+    "close": 5,
+    "tp": 8
+   },
+   "fillsWithoutUpdate": 0,
+   "medianDelayMs": 680,
+   "p95DelayMs": 1487,
+   "lensRetries": 0,
+   "marketsSettled": 1,
+   "settleDelayS": 1.8,
+   "positionsSettled": 1,
+   "epochs": 6,
+   "benign": {
+    "OrderNotFound": 7,
+    "MarketAlreadySettled": 1
+   },
+   "errors": {}
+  },
+  "publisher": {
+   "polls": 317,
+   "pollErrors": 0,
+   "signed": 1892,
+   "pushes": 132,
+   "feedsPushed": 498,
+   "maxOnchainGapS": 8,
+   "maxStalenessSeenS": 7,
+   "staleSamples": 0,
+   "feedClosures": {},
+   "errors": {}
+  },
+  "reverts": {
+   "PositionNotFound": 5,
+   "OrderNotFound": 1,
+   "(revertedOnChain)": 1
+  },
+  "txErrors": {
+   "revertedOnChain": 1
+  },
+  "rpc": {
+   "calls": 3945,
+   "http": 2163,
+   "batches": 615,
+   "errors": {},
+   "errorRate": 0,
+   "retries": 0,
+   "failed": 0
+  },
+  "latencyMs": {
+   "cols": [
+    "p50",
+    "p90",
+    "p95",
+    "p99",
+    "max"
+   ],
+   "decisionToInclusion": [
+    681,
+    1200,
+    1279,
+    1532,
+    1621
+   ]
+  },
+  "gas": {
+   "total": 128461629,
+   "txs": 491,
+   "paidUsdc": 2.697694,
+   "usdcAt20gwei": 2.5692,
+   "topUps": 14,
+   "topUpUsdc": 0.84,
+   "byType": {
+    "addMarket": [
+     8,
+     180504
+    ],
+    "approve": [
+     19,
+     46269
+    ],
+    "cancelOrder": [
+     21,
+     94696
+    ],
+    "claimYield": [
+     19,
+     82045
+    ],
+    "close": [
+     60,
+     233278
+    ],
+    "deploy:EngineLens": [
+     1,
+     1480833
+    ],
+    "deploy:HouseVault": [
+     1,
+     1800490
+    ],
+    "deploy:PerpEngine": [
+     1,
+     5386439
+    ],
+    "deploy:PublisherOracle": [
+     1,
+     632316
+    ],
+    "deploy:PythOracle": [
+     1,
+     374642
+    ],
+    "deploy:RewardToken": [
+     1,
+     1048880
+    ],
+    "exec:close": [
+     5,
+     257174
+    ],
+    "exec:limit": [
+     11,
+     716094
+    ],
+    "exec:sl": [
+     13,
+     313472
+    ],
+    "exec:tp": [
+     8,
+     289299
+    ],
+    "fund:native": [
+     1,
+     682538
+    ],
+    "fund:topup": [
+     6,
+     49456
+    ],
+    "fund:transfer": [
+     16,
+     50937
+    ],
+    "limit:marketable": [
+     5,
+     297807
+    ],
+    "limit:resting": [
+     26,
+     344524
+    ],
+    "lpDeposit": [
+     2,
+     257889
+    ],
+    "lpRedeem": [
+     2,
+     310980
+    ],
+    "open": [
+     44,
+     496636
+    ],
+    "open+brackets": [
+     32,
+     846649
+    ],
+    "push": [
+     132,
+     103055
+    ],
+    "returnGas": [
+     18,
+     21000
+    ],
+    "seed:deposit": [
+     1,
+     212769
+    ],
+    "setRiskParams": [
+     1,
+     39119
+    ],
+    "settleEpoch": [
+     6,
+     210176
+    ],
+    "settleMarket": [
+     1,
+     131217
+    ],
+    "settlePositions": [
+     1,
+     144598
+    ],
+    "stake": [
+     13,
+     91686
+    ],
+    "trigger:close": [
+     5,
+     236929
+    ],
+    "trigger:sl": [
+     7,
+     190701
+    ],
+    "trigger:tp": [
+     2,
+     256705
+    ]
+   }
+  },
+  "strategies": {
+   "cols": [
+    "agents",
+    "pnl",
+    "trips",
+    "liqs",
+    "volume"
+   ],
+   "rows": {
+    "momentum": [
+     2,
+     -256,
+     10,
+     0,
+     311723
+    ],
+    "meanrev": [
+     2,
+     -200,
+     11,
+     0,
+     173571
+    ],
+    "breakout": [
+     1,
+     63,
+     6,
+     0,
+     177248
+    ],
+    "scalper": [
+     3,
+     -1211,
+     15,
+     0,
+     1180973
+    ],
+    "swing": [
+     1,
+     -28,
+     5,
+     0,
+     29575
+    ],
+    "pairs": [
+     1,
+     -107,
+     5,
+     0,
+     170896
+    ],
+    "carry": [
+     1,
+     28,
+     5,
+     0,
+     72443
+    ],
+    "dated": [
+     1,
+     -111,
+     5,
+     0,
+     144626
+    ],
+    "maker": [
+     1,
+     -2,
+     6,
+     0,
+     51778
+    ],
+    "degen": [
+     1,
+     -305,
+     6,
+     0,
+     796154
+    ],
+    "hedger": [
+     1,
+     -2,
+     8,
+     0,
+     47471
+    ],
+    "wallet": [
+     1,
+     -70,
+     5,
+     0,
+     50377
+    ]
+   }
+  },
+  "checks": {
+   "positions": 0,
+   "orders": 0,
+   "flat": true,
+   "engineBalance": 0,
+   "totalClaimable": 0,
+   "engineOk": true,
+   "vaultBalance": 302199.105596,
+   "houseBalance": 302198.603397,
+   "pendingStakerYield": 0.502199,
+   "vaultOk": true,
+   "agents": 77797.194404,
+   "deployer": 0,
+   "keeper": 3.7,
+   "publisher": 0,
+   "sum": 380000,
+   "minted": null,
+   "conserved": null
+  },
+  "anomalies": []
+ },
+ "gas": {
+  "cols": [
+   "count",
+   "avgGas",
+   "maxGas",
+   "usdcAt20gwei"
+  ],
+  "byType": {
+   "addMarket": [
+    8,
+    180504,
+    196084,
+    0.0289
+   ],
+   "approve": [
+    19,
+    46269,
+    46269,
+    0.0176
+   ],
+   "cancelOrder": [
+    21,
+    94696,
+    97855,
+    0.0398
+   ],
+   "claimYield": [
+    19,
+    82045,
+    116528,
+    0.0312
+   ],
+   "close": [
+    60,
+    233278,
+    321449,
+    0.2799
+   ],
+   "deploy:EngineLens": [
+    1,
+    1480833,
+    1480833,
+    0.0296
+   ],
+   "deploy:HouseVault": [
+    1,
+    1800490,
+    1800490,
+    0.036
+   ],
+   "deploy:PerpEngine": [
+    1,
+    5386439,
+    5386439,
+    0.1077
+   ],
+   "deploy:PublisherOracle": [
+    1,
+    632316,
+    632316,
+    0.0126
+   ],
+   "deploy:PythOracle": [
+    1,
+    374642,
+    374642,
+    0.0075
+   ],
+   "deploy:RewardToken": [
+    1,
+    1048880,
+    1048880,
+    0.021
+   ],
+   "exec:close": [
+    5,
+    257174,
+    280719,
+    0.0257
+   ],
+   "exec:limit": [
+    11,
+    716094,
+    894797,
+    0.1575
+   ],
+   "exec:sl": [
+    13,
+    313472,
+    369289,
+    0.0815
+   ],
+   "exec:tp": [
+    8,
+    289299,
+    298699,
+    0.0463
+   ],
+   "fund:native": [
+    1,
+    682538,
+    682538,
+    0.0137
+   ],
+   "fund:topup": [
+    6,
+    49456,
+    80591,
+    0.0059
+   ],
+   "fund:transfer": [
+    16,
+    50937,
+    51238,
+    0.0163
+   ],
+   "limit:marketable": [
+    5,
+    297807,
+    297829,
+    0.0298
+   ],
+   "limit:resting": [
+    26,
+    344524,
+    372163,
+    0.1792
+   ],
+   "lpDeposit": [
+    2,
+    257889,
+    257889,
+    0.0103
+   ],
+   "lpRedeem": [
+    2,
+    310980,
+    328800,
+    0.0124
+   ],
+   "open": [
+    44,
+    496636,
+    559235,
+    0.437
+   ],
+   "open+brackets": [
+    32,
+    846649,
+    934868,
+    0.5419
+   ],
+   "push": [
+    132,
+    103055,
+    354367,
+    0.2721
+   ],
+   "returnGas": [
+    18,
+    21000,
+    21000,
+    0.0076
+   ],
+   "seed:deposit": [
+    1,
+    212769,
+    212769,
+    0.0043
+   ],
+   "setRiskParams": [
+    1,
+    39119,
+    39119,
+    0.0008
+   ],
+   "settleEpoch": [
+    6,
+    210176,
+    343973,
+    0.0252
+   ],
+   "settleMarket": [
+    1,
+    131217,
+    131217,
+    0.0026
+   ],
+   "settlePositions": [
+    1,
+    144598,
+    144598,
+    0.0029
+   ],
+   "stake": [
+    13,
+    91686,
+    128553,
+    0.0238
+   ],
+   "trigger:close": [
+    5,
+    236929,
+    236929,
+    0.0237
+   ],
+   "trigger:sl": [
+    7,
+    190701,
+    256871,
+    0.0267
+   ],
+   "trigger:tp": [
+    2,
+    256705,
+    256717,
+    0.0103
+   ]
+  },
+  "totalGas": 128461629,
+  "usdcAt20gwei": 2.5692,
+  "usdcAt21gwei": 2.6977,
+  "paidUsdc": 2.697694,
+  "txs": 491
+ },
+ "proxy": null,
+ "kraken": {
+  "requests": 317,
+  "jumps": 27
+ },
+ "returned": {
+  "accounts": 18,
+  "usdc": 3.181649
+ }
+}

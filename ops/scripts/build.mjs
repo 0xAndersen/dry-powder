@@ -1,0 +1,138 @@
+// Builds ops/dist: generated ABI/bytecode tables -> esbuild bundle -> deflate -> base64 -> <=24k-char chunks.
+import { build } from "esbuild";
+import { formatAbi } from "abitype";
+import { deflateRawSync, inflateRawSync, constants } from "node:zlib";
+import zopfli from "@gfx/zopfli";
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const out = (n) => JSON.parse(readFileSync(join(root, "../contracts/out", `${n}.sol/${n}.json`), "utf8"));
+const CHUNK = 24000;
+
+// Contracts shipped (creation bytecode) and the functions/events the runtime actually uses.
+const SHIP = ["TestUSDC", "PublisherOracle", "PythOracle", "HouseVault", "RewardToken", "PerpEngine", "EngineLens"];
+const FUNCS = {
+  TestUSDC: ["mint", "balanceOf", "approve", "transfer", "allowance", "totalSupply"],
+  PublisherOracle: ["updatePriceFeeds", "getPriceUnsafe"],
+  PythOracle: [],
+  HouseVault: ["deposit", "redeem", "maxRedeem", "convertToAssets", "totalAssets", "sharePrice", "totalHouseBalance",
+    "pendingStakerYield", "lastEpochTime", "settleEpoch", "totalTraderLosses", "totalTraderProfits",
+    "totalFeesCollected", "totalStakerYieldAllocated", "totalShortfall", "withdrawUnlockTime"],
+  RewardToken: ["stake", "claimYield", "earned", "stakedBalance", "totalStaked"],
+  PerpEngine: ["openPosition", "closePosition", "createLimitOrder", "setTriggerOrder", "cancelOrder", "executeOrder",
+    "liquidateBatch", "settleMarket", "settlePositions", "addMarket", "setRiskParams", "getMarketIds", "getMarket",
+    "maxPriceAge", "positionCount", "orderCount", "totalClaimable", "totalOpenInterest", "executionFee", "claim",
+    "claimable"],
+  EngineLens: ["getMarkets", "getPositions", "getOrders"],
+};
+const EVENTS = {
+  PerpEngine: ["PositionOpened", "PositionClosed", "PositionLiquidated", "OrderCreated", "OrderUpdated",
+    "OrderCancelled", "OrderExecuted", "MarketSettled", "PaymentDeferred"],
+  RewardToken: ["LossRebateMinted", "YieldClaimed", "YieldNotified"],
+  HouseVault: ["EpochSettled", "PayoutShortfall"],
+};
+
+const items = new Map();
+const errors = new Set(["Error(string)", "Panic(uint256)"]);
+const sigOf = (e) => `${e.name}(${e.inputs.map((i) => i.type).join(",")})`;
+const blobs = [];
+const bcIndex = {};
+let off = 0;
+for (const name of SHIP) {
+  const art = out(name);
+  for (const it of art.abi) {
+    if (it.type === "error") errors.add(sigOf(it));
+    const want =
+      (it.type === "function" && FUNCS[name]?.includes(it.name)) ||
+      (it.type === "event" && EVENTS[name]?.includes(it.name)) ||
+      it.type === "constructor";
+    if (!want) continue;
+    if (it.type === "constructor") { items.set(`ctor:${name}`, it); continue; }
+    const key = `${it.type}:${it.name}(${it.inputs.map((i) => i.type).join(",")})`;
+    if (it.name === "liquidate") continue;
+    items.set(key, it);
+  }
+  for (const want of [...(FUNCS[name] || []), ...(EVENTS[name] || [])]) {
+    if (![...items.keys()].some((k) => k.split(":")[1].startsWith(want + "("))) throw new Error(`missing ${name}.${want}`);
+  }
+  const hex = art.bytecode.object.slice(2);
+  if (Object.keys(art.bytecode.linkReferences || {}).length) throw new Error(`${name} needs linking`);
+  const buf = Buffer.from(hex, "hex");
+  bcIndex[name] = [off, buf.length];
+  off += buf.length;
+  blobs.push(buf);
+}
+// Errors that can bubble up from libraries / the multicall and are not in the artifacts' own ABI.
+for (const e of ["ERC20InsufficientBalance(address,uint256,uint256)", "ERC20InsufficientAllowance(address,uint256,uint256)",
+  "SafeERC20FailedOperation(address)", "PriceFeedNotFound()", "ECDSAInvalidSignature()"]) errors.add(e);
+
+const ctors = {};
+const abiItems = [];
+for (const [k, it] of items) {
+  if (k.startsWith("ctor:")) ctors[k.slice(5)] = it.inputs.map((i) => i.type);
+  else abiItems.push(it);
+}
+// Multicall3 (canonical, not shipped).
+abiItems.push(
+  { type: "function", name: "aggregate3", stateMutability: "payable",
+    inputs: [{ name: "calls", type: "tuple[]", components: [{ name: "target", type: "address" }, { name: "allowFailure", type: "bool" }, { name: "callData", type: "bytes" }] }],
+    outputs: [{ name: "returnData", type: "tuple[]", components: [{ name: "success", type: "bool" }, { name: "returnData", type: "bytes" }] }] },
+  { type: "function", name: "aggregate3Value", stateMutability: "payable",
+    inputs: [{ name: "calls", type: "tuple[]", components: [{ name: "target", type: "address" }, { name: "allowFailure", type: "bool" }, { name: "value", type: "uint256" }, { name: "callData", type: "bytes" }] }],
+    outputs: [{ name: "returnData", type: "tuple[]", components: [{ name: "success", type: "bool" }, { name: "returnData", type: "bytes" }] }] },
+);
+const abiText = formatAbi(abiItems);
+writeFileSync(join(root, "src/gen.js"),
+  `// GENERATED by scripts/build.mjs from contracts/out. Do not edit.\n` +
+  `export const ABI_TEXT = ${JSON.stringify(abiText)};\n` +
+  `export const ERRORS = ${JSON.stringify([...errors])};\n` +
+  `export const CTORS = ${JSON.stringify(ctors)};\n` +
+  `export const BC = ${JSON.stringify(bcIndex)};\n`);
+
+const res = await build({
+  entryPoints: [join(root, "src/index.js")], bundle: true, minify: true, format: "iife", target: "es2020",
+  write: false, legalComments: "none", charset: "ascii",
+});
+const js = Buffer.from(res.outputFiles[0].text, "utf8");
+const blob = Buffer.concat(blobs);
+const head = Buffer.alloc(4); head.writeUInt32LE(js.length);
+const payload = Buffer.concat([head, js, blob]);
+let packed = deflateRawSync(payload, { level: constants.Z_BEST_COMPRESSION, memLevel: 9 });
+try {
+  // zopfli emits a standard (but smaller) raw-deflate stream; keep zlib's if it is unavailable or wrong.
+  const z = Buffer.from(await zopfli.deflateAsync(payload, { numiterations: +(process.env.ZOPFLI_ITER || 60) }));
+  if (z.length < packed.length && inflateRawSync(z).equals(payload)) packed = z;
+} catch (e) { console.error("zopfli unavailable, using zlib:", e.message); }
+const b64 = packed.toString("base64");
+
+const dist = join(root, "dist");
+rmSync(join(dist, "chunks"), { recursive: true, force: true });
+mkdirSync(join(dist, "chunks"), { recursive: true });
+writeFileSync(join(dist, "arcops.min.js"), js);
+const pad = (n) => String(n).padStart(2, "0");
+// Every piece is "<index>:<data>" so boot can order, de-duplicate and detect a missing chunk.
+const wrap = (i, piece) => `(window.__arcSrc = window.__arcSrc || []).push("${pad(i)}:${piece}"); "ok ${pad(i)}"`;
+const room = CHUNK - wrap(0, "").length;
+const pieces = [];
+for (let i = 0; i < b64.length; i += room) pieces.push(b64.slice(i, i + room));
+let total = 0;
+pieces.forEach((p, i) => {
+  const s = wrap(i + 1, p);
+  if (s.length > CHUNK) throw new Error("chunk too large");
+  total += s.length;
+  writeFileSync(join(dist, "chunks", `${pad(i + 1)}.js`), s);
+});
+const fnv = (t) => { let h = 2166136261; for (let i = 0; i < t.length; i++) h = Math.imul(h ^ t.charCodeAt(i), 16777619) >>> 0; return h; };
+const h = fnv(b64);
+// boot.js: verifies every piece (length + FNV-1a), inflates, hands the bytecode blob to the runtime, evals it.
+const boot = `(async()=>{const w=window,E=${JSON.stringify(pieces.map((p) => [p.length, fnv(p)]))},m={};for(const s of w.__arcSrc||[])m[+s.slice(0,2)]=s.slice(3);let b="";for(let i=0;i<E.length;i++){const p=m[i+1];if(!p)return"missing chunk "+(i+1);let h=2166136261;for(let j=0;j<p.length;j++)h=Math.imul(h^p.charCodeAt(j),16777619)>>>0;if(p.length!==E[i][0]||h!==E[i][1])return"chunk "+(i+1)+" corrupt (length "+p.length+", expected "+E[i][0]+"): push it again";b+=p}const u=Uint8Array.from(atob(b),c=>c.charCodeAt(0)),d=new Uint8Array(await new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer()),n=new DataView(d.buffer).getUint32(0,true);w.__arcBlob=d.subarray(4+n);(0,eval)(new TextDecoder().decode(d.subarray(4,4+n)));delete w.__arcSrc;return"booted ArcOps "+w.ArcOps.version})()`;
+writeFileSync(join(dist, "boot.js"), boot);
+total += boot.length;
+const manifest = { chunks: pieces.length, chunkChars: pieces.map((p, i) => wrap(i + 1, p).length), bootChars: boot.length,
+  totalChars: total, jsBytes: js.length, bytecodeBytes: blob.length, deflatedBytes: packed.length, checksum: h,
+  bytecodeSha256: createHash("sha256").update(blob).digest("hex"), contracts: Object.fromEntries(Object.entries(bcIndex).map(([k, v]) => [k, v[1]])) };
+writeFileSync(join(dist, "manifest.json"), JSON.stringify(manifest, null, 2));
+console.log(JSON.stringify(manifest));
