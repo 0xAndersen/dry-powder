@@ -43,6 +43,8 @@ jobs:
           touch out/.nojekyll
       - uses: actions/configure-pages@v5
         if: steps.dep.outputs.ok == 'true'
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         if: steps.dep.outputs.ok == 'true'
         with:
