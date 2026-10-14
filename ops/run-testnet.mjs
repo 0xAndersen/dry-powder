@@ -14,8 +14,15 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { inject, here } from "./test/harness.mjs";
 
+// In GitHub Actions, failures are also written as annotations (readable without the log archive).
+const annotate = (msg) => { if (process.env.GITHUB_ACTIONS) console.log(`::error::${String(msg).replace(/\n/g, " ").slice(0, 900)}`); };
+process.on("uncaughtException", (e) => { annotate(e?.message ?? e); console.error(e); process.exit(1); });
+process.on("unhandledRejection", (e) => { annotate(e?.message ?? e); console.error(e); process.exit(1); });
 const key = process.env.DEPLOYER_KEY;
-if (!/^0x[0-9a-fA-F]{64}$/.test(key || "")) throw new Error("set DEPLOYER_KEY to the 0x-prefixed deployer private key");
+if (!/^0x[0-9a-fA-F]{64}$/.test(key || "")) {
+  annotate(key ? "DEPLOYER_KEY is not a 0x-prefixed 32-byte hex key" : "DEPLOYER_KEY secret is missing: add it under Settings -> Secrets and variables -> Actions");
+  throw new Error("set DEPLOYER_KEY to the 0x-prefixed deployer private key");
+}
 const outDir = join(here, "..", "output-testnet");
 mkdirSync(outDir, { recursive: true });
 const save = (n, o) => writeFileSync(join(outDir, n), JSON.stringify(o, null, 1));
@@ -29,7 +36,7 @@ await page.goto("https://example.com");
 log("injected", JSON.stringify(await inject(page)));
 const ev = (s) => page.evaluate(s);
 const poll = async (call) => { let r; do { r = await ev(call); if (r && r.pending) log(call, "pending:", r.step); } while (r && r.pending); return r; };
-const must = (r, what) => { if (!r || r.error) { log(what, "failed:", JSON.stringify(r)); process.exit(1); } return r; };
+const must = (r, what) => { if (!r || r.error) { log(what, "failed:", JSON.stringify(r)); annotate(`${what} failed: ${JSON.stringify(r)}`); process.exit(1); } return r; };
 
 const minutes = +(process.env.MINUTES || 30);
 const cfg = {
@@ -54,8 +61,9 @@ log("init", JSON.stringify(must(init, "init")));
 const pre = must(await ev(`ArcOps.preflight()`), "preflight");
 save("preflight.json", pre);
 log("preflight", JSON.stringify(pre));
-if (!pre.chainIdOk) { log("wrong chain"); process.exit(1); }
-if (!pre.sufficient) { log(`deployer needs ${pre.shortfall} more native USDC`); process.exit(1); }
+if (process.env.GITHUB_ACTIONS) console.log(`::notice::preflight ${JSON.stringify(pre).slice(0, 900)}`);
+if (!pre.chainIdOk) { log("wrong chain"); annotate("wrong chain id from the RPC"); process.exit(1); }
+if (!pre.sufficient) { log(`deployer needs ${pre.shortfall} more native USDC`); annotate(`deployer needs ${pre.shortfall} more native USDC (faucet.circle.com)`); process.exit(1); }
 
 const book = must(await poll(`ArcOps.deploy()`), "deploy");
 save("addresses.json", book);
@@ -69,6 +77,7 @@ for (;;) {
   await sleep(30000);
   const s = await ev(`ArcOps.status()`).catch((e) => ({ error: String(e) }));
   log("status", JSON.stringify(s));
+  if (process.env.GITHUB_ACTIONS && s && s.phase) console.log(`::notice::status ${JSON.stringify(s).slice(0, 600)}`);
   if (s && s.phase === "ended") break;
 }
 const sweep = await poll(`ArcOps.sweep({returnGas:true})`);
