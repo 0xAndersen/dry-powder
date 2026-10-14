@@ -26,7 +26,9 @@ jobs:
           ref: main
       - name: Deployment present?
         id: dep
-        run: test -f deployments/arc-testnet.json && echo "ok=true" >> "$GITHUB_OUTPUT" || echo "No deployments/arc-testnet.json yet: run the 'Deploy to Arc Testnet' workflow first."
+        run: |
+          if test -f deployments/arc-testnet.json; then echo "ok=true" >> "$GITHUB_OUTPUT"
+          else echo "No deployments/arc-testnet.json yet. Run the Deploy to Arc Testnet workflow first."; fi
       - uses: actions/setup-node@v4
         if: steps.dep.outputs.ok == 'true'
         with:

@@ -28,7 +28,8 @@ jobs:
           ref: main
       - name: Deployment present?
         id: dep
-        run: test -f deployments/arc-testnet.json && echo "ok=true" >> "$GITHUB_OUTPUT" || echo "No deployment yet."
+        run: |
+          if test -f deployments/arc-testnet.json; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "No deployment yet."; fi
       - uses: actions/setup-node@v4
         if: steps.dep.outputs.ok == 'true'
         with:
