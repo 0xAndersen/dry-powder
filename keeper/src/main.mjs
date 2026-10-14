@@ -20,6 +20,15 @@ import { makeOperator } from "./operator.mjs";
 const env = process.env;
 const num = (k, d) => (env[k] === undefined || env[k] === "" ? d : Number(env[k]));
 const log = (scope, ...a) => console.log(`${new Date().toISOString()} [${scope}]`, ...a);
+// In GitHub Actions, problems are also written as annotations (readable without the log archive).
+let annotations = 0;
+const annotate = (level, msg) => {
+  if (!env.GITHUB_ACTIONS || annotations++ > 25) return;
+  console.log(`::${level}::${String(msg).replace(/\n/g, " ").slice(0, 900)}`);
+};
+const fatal = (msg) => { annotate("error", msg); return new Error(msg); };
+process.on("uncaughtException", (e) => { annotate("error", `keeper crashed: ${e?.stack ?? e}`); console.error(e); process.exit(1); });
+process.on("unhandledRejection", (e) => { annotate("error", `keeper crashed: ${e?.stack ?? e}`); console.error(e); process.exit(1); });
 
 function addresses() {
   const file = env.DEPLOYMENT;
@@ -31,7 +40,7 @@ function addresses() {
     vault: pick("vault", "HOUSE_VAULT_ADDRESS"),
     oracle: pick("pub", "PUBLISHER_ORACLE_ADDRESS") || d.publisherOracle,
   };
-  for (const [k, v] of Object.entries(a)) if (!/^0x[0-9a-fA-F]{40}$/.test(v || "")) throw new Error(`missing ${k} address (DEPLOYMENT file or env)`);
+  for (const [k, v] of Object.entries(a)) if (!/^0x[0-9a-fA-F]{40}$/.test(v || "")) throw fatal(`missing ${k} address (DEPLOYMENT file or env)`);
   return { ...a, rpcUrl: env.RPC_URL || d.rpcUrl, chainId: num("CHAIN_ID", d.chainId ?? 5042002) };
 }
 
@@ -41,7 +50,7 @@ const seed = env.SEED || (env.DEPLOYER_KEY ? "dp-" + createHash("sha256").update
 function key(name, role) {
   if (env[name]) return env[name];
   if (seed) return roleKey(seed, role);
-  throw new Error(`set ${name}, SEED or DEPLOYER_KEY`);
+  throw fatal(`set ${name}, SEED or DEPLOYER_KEY`);
 }
 
 const a = addresses();
@@ -75,8 +84,9 @@ const opts = {
 const kraken = makeKraken(env.KRAKEN_URL || "https://api.kraken.com", num("STALE_FEED_MS", 60_000));
 const op = makeOperator({ pub, publisher, keeper, funder, chainId: a.chainId, addresses: a, kraken, opts, log });
 
-const actual = await pub.getChainId();
-if (actual !== a.chainId) throw new Error(`RPC is chain ${actual}, expected ${a.chainId}`);
+const actual = await pub.getChainId().catch((e) => { throw fatal(`RPC ${rpcUrl} unreachable: ${e?.shortMessage ?? e?.message ?? e}`); });
+if (actual !== a.chainId) throw fatal(`RPC is chain ${actual}, expected ${a.chainId}`);
+annotate("notice", `keeper started: publisher ${publisher.account.address}, keeper ${keeper.account.address}`);
 log("start", JSON.stringify({ rpcUrl, chainId: a.chainId, engine: a.engine, oracle: a.oracle, publisher: publisher.account.address, keeper: keeper.account.address, funder: funder?.account.address ?? null, opts }));
 
 let last = { at: 0 };
@@ -103,6 +113,7 @@ while (!stopping && (!runFor || Date.now() - started < runFor)) {
   } catch (e) {
     failures++;
     log("tick", "failed:", String(e?.shortMessage ?? e?.message ?? e).split("\n")[0]);
+    if (failures <= 3 || failures % 20 === 0) annotate("warning", `tick failed (${failures}): ${String(e?.shortMessage ?? e?.message ?? e).split("\n").slice(0, 3).join(" ")}`);
     if (failures > 50) throw e;
   }
   if (Date.now() - lastReport > 60_000) {
