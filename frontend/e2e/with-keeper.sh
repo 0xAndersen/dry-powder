@@ -24,7 +24,14 @@ grep -q "ready:" "$LOGS/stack.log" || { cat "$LOGS/stack.log"; exit 1; }
   HEARTBEAT_SECONDS=20 SETTLE_EPOCHS=0 SETTLE_MARKET_DELAY_SECONDS=20 exec node src/main.mjs ) > "$LOGS/keeper.log" 2>&1 &
 KEEPER=$!
 sleep 30
-node e2e/run.mjs
+status=0
+node e2e/run.mjs 2>&1 | tee "$LOGS/run.log" || status=$?
+if [ -n "${GITHUB_ACTIONS:-}" ]; then
+  # Surface failures as annotations (readable from the API without the log archive).
+  grep -E "FAIL|steps passed" "$LOGS/run.log" | cut -c1-900 | sed 's/^/::error::/' || true
+  grep -E "\[error\]|failed" "$LOGS/keeper.log" | tail -5 | cut -c1-400 | sed 's/^/::warning::keeper /' || true
+fi
+[ "$status" -eq 0 ] || exit "$status"
 # The MCP server, driven through a real MCP client from an agent account on the same chain.
-if [ -d ../mcp/node_modules ]; then (cd ../mcp && node test/smoke.mjs); fi
+if [ -d ../mcp/node_modules ]; then (cd ../mcp && node test/smoke.mjs 2>&1 | tail -40) || { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error::MCP smoke test failed"; exit 1; }; fi
 grep -q '"errors":{}' <(tail -1 "$LOGS/keeper.log") || echo "keeper reported errors: $(tail -1 "$LOGS/keeper.log")"
