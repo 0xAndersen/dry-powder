@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   keeper:
@@ -43,6 +43,8 @@ jobs:
           RUN_SECONDS: "20900"
           HEARTBEAT_SECONDS: ${{ vars.KEEPER_HEARTBEAT_SECONDS || '60' }}
           MOVE_BPS: ${{ vars.KEEPER_MOVE_BPS || '15' }}
+          PORT: "8080"
         run: |
           npm ci
+          ../.github/scripts/keeper-status.sh &
           node src/main.mjs
