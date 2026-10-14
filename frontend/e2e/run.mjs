@@ -625,8 +625,13 @@ if (want("agents")) {
     await pub.waitForTransactionReceipt({ hash: await fund.sendTransaction({ to: agentAcct.address, value: 10n ** 18n }) });
     const agentWallet = createWalletClient({ chain: foundry, transport: http(RPC_URL), account: agentAcct });
     const eth = addresses.markets.find((m) => m.symbol === "ETH-USD").marketId;
-    const markets = await read(addresses.lens, "EngineLens", "getMarkets");
-    const ask = markets.find((m) => m.id.toLowerCase() === eth.toLowerCase()).price.ask;
+    let ask = 0n;
+    for (let i = 0; i < 30 && ask === 0n; i++) {
+      const v = (await read(addresses.lens, "EngineLens", "getMarkets")).find((m) => m.id.toLowerCase() === eth.toLowerCase());
+      if (v.hasPrice) ask = v.price.ask;
+      else await sleep(1000);
+    }
+    if (ask === 0n) throw new Error("ETH-USD has no on-chain price to quote against");
     const abi = artifact("AgentAccount").abi;
     await pub.waitForTransactionReceipt({ hash: await agentWallet.writeContract({ address: agentAccount, abi, functionName: "createLimitOrder", args: [{ priceId: eth, isLong: true, margin: 100_000_000n, size: 500_000_000n, triggerPrice: (ask * 101n) / 100n, takeProfit: 0n, stopLoss: 0n }] }) });
     for (let i = 0; i < 40; i++) {

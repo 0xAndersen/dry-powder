@@ -9,7 +9,7 @@
 //
 // It holds no state that matters: everything is re-read from the chain each tick, so it can be restarted,
 // moved between hosts or run on a schedule.
-import { formatEther, parseEther } from "viem";
+import { formatEther, parseEther, toFunctionSelector } from "viem";
 import * as ABIS from "./abi.mjs";
 import { engineLensAbi, houseVaultAbi, perpEngineAbi, publisherOracleAbi } from "./abi.mjs";
 
@@ -28,12 +28,18 @@ const BENIGN = new Set([
   "MarketAlreadySettled", "PriceBeforeExpiry", "MarketNotExpired", "MarketNotSettled",
 ]);
 
+// Selector -> error name, for reverts viem reports only by signature.
+const BY_SELECTOR = new Map(ERRORS.map((x) => [toFunctionSelector(`${x.name}(${x.inputs.map((i) => i.type).join(",")})`), x.name]));
+
 const revertName = (e) => {
   let x = e;
   while (x) {
     if (x.data?.errorName) return x.data.errorName;
+    if (typeof x.signature === "string" && BY_SELECTOR.has(x.signature)) return BY_SELECTOR.get(x.signature);
     x = x.cause;
   }
+  const sel = /signature:\s*(0x[0-9a-fA-F]{8})/.exec(String(e?.message ?? ""));
+  if (sel && BY_SELECTOR.has(sel[1].toLowerCase())) return BY_SELECTOR.get(sel[1].toLowerCase());
   const m = /reverted with the following reason:\s*\n?\s*([A-Za-z]+)|Error: ([A-Za-z]+)\(/.exec(String(e?.message ?? ""));
   return m ? m[1] || m[2] : null;
 };
