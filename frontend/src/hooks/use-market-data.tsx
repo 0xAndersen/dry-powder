@@ -87,8 +87,11 @@ const EMPTY_TICKERS = new Map<string, Ticker>();
 const EMPTY_QUOTES = new Map<Hex, Quote>();
 const noopSubscribe = () => () => {};
 
+/** The quote the keeper's next signed price will produce: mid ± max(half spread, 1 bp), like the publisher. */
 function tickerQuote(t: Ticker, publishTime: number): Quote {
-  return { bid: numToPrice(t.bid), ask: numToPrice(t.ask), mid: numToPrice((t.bid + t.ask) / 2), publishTime };
+  const mid = (t.bid + t.ask) / 2;
+  const half = Math.max((t.ask - t.bid) / 2, mid * 1e-4);
+  return { bid: numToPrice(mid - half), ask: numToPrice(mid + half), mid: numToPrice(mid), publishTime };
 }
 
 export function MarketDataProvider({ children }: { children: ReactNode }) {
@@ -278,7 +281,9 @@ export function MarketDataProvider({ children }: { children: ReactNode }) {
       out.set(i.id, {
         status: i.onchain ? "live" : "awaiting",
         exec: i.onchain,
-        reference: i.onchain ?? (tape ? tickerQuote(tape, Math.floor(now)) : last),
+        // Keeper orders fill at the price the keeper signs next (from this tape), not at the stored one, which can
+        // be a heartbeat old: bound market orders and closes on the tape when it is live.
+        reference: tape ? tickerQuote(tape, Math.floor(now)) : (i.onchain ?? last),
         mark: i.onchain?.mid ?? (tapeMid !== null ? numToPrice(tapeMid) : (last?.mid ?? null)),
         display,
         displaySource: tape ? "tape" : "oracle",
