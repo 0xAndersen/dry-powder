@@ -10,11 +10,35 @@
 // crashed run can be continued by starting the script again with the same SEED.
 import { chromium } from "playwright";
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { inject, here } from "./test/harness.mjs";
 
 // In GitHub Actions, failures are also written as annotations (readable without the log archive).
+// Progress feed for operators who cannot read the job log: with STATUS_PUSH=1 (set by the deploy workflow) the
+// latest phase/status is committed to the "status" branch every few minutes (status/testnet-run.json).
+import { execFileSync } from "node:child_process";
+let lastStatusPush = 0;
+function pushStatus(obj, force) {
+  if (!process.env.STATUS_PUSH || (!force && Date.now() - lastStatusPush < 180_000)) return;
+  lastStatusPush = Date.now();
+  try {
+    const dir = join(here, "..", ".status-branch");
+    const git = (...a) => execFileSync("git", a, { cwd: dir, stdio: "pipe" });
+    if (!existsSync(dir)) {
+      execFileSync("git", ["worktree", "add", "--detach", dir], { cwd: join(here, ".."), stdio: "pipe" });
+      git("checkout", "--orphan", "status");
+      try { git("rm", "-rf", "--quiet", "."); } catch {}
+      git("config", "user.name", "dry-powder-deployer");
+      git("config", "user.email", "actions@users.noreply.github.com");
+    }
+    mkdirSync(join(dir, "status"), { recursive: true });
+    writeFileSync(join(dir, "status", "testnet-run.json"), JSON.stringify({ at: new Date().toISOString(), ...obj }, null, 1));
+    git("add", "status");
+    git("commit", "-q", "-m", `status ${new Date().toISOString()}`);
+    git("push", "-q", "-f", "origin", "HEAD:status");
+  } catch (e) { console.log("status push failed:", String(e.message).split("\n")[0]); }
+}
 const annotate = (msg) => { if (process.env.GITHUB_ACTIONS) console.log(`::error::${String(msg).replace(/\n/g, " ").slice(0, 900)}`); };
 process.on("uncaughtException", (e) => { annotate(e?.message ?? e); console.error(e); process.exit(1); });
 process.on("unhandledRejection", (e) => { annotate(e?.message ?? e); console.error(e); process.exit(1); });
@@ -35,8 +59,8 @@ page.on("pageerror", (e) => log("[pageerror]", e.message.slice(0, 300)));
 await page.goto("https://example.com");
 log("injected", JSON.stringify(await inject(page)));
 const ev = (s) => page.evaluate(s);
-const poll = async (call) => { let r; do { r = await ev(call); if (r && r.pending) log(call, "pending:", r.step); } while (r && r.pending); return r; };
-const must = (r, what) => { if (!r || r.error) { log(what, "failed:", JSON.stringify(r)); annotate(`${what} failed: ${JSON.stringify(r)}`); process.exit(1); } return r; };
+const poll = async (call) => { let r; do { r = await ev(call); if (r && r.pending) { log(call, "pending:", r.step); pushStatus({ phase: call, step: r.step }); } } while (r && r.pending); return r; };
+const must = (r, what) => { if (!r || r.error) { log(what, "failed:", JSON.stringify(r)); annotate(`${what} failed: ${JSON.stringify(r)}`); pushStatus({ phase: "failed", step: what, result: r }, true); process.exit(1); } return r; };
 
 const minutes = +(process.env.MINUTES || 30);
 const cfg = {
@@ -60,6 +84,7 @@ log("init", JSON.stringify(must(init, "init")));
 
 const pre = must(await ev(`ArcOps.preflight()`), "preflight");
 save("preflight.json", pre);
+pushStatus({ phase: "preflight", preflight: pre }, true);
 log("preflight", JSON.stringify(pre));
 if (process.env.GITHUB_ACTIONS) console.log(`::notice::preflight ${JSON.stringify(pre).slice(0, 900)}`);
 if (!pre.chainIdOk) { log("wrong chain"); annotate("wrong chain id from the RPC"); process.exit(1); }
@@ -67,6 +92,7 @@ if (!pre.sufficient) { log(`deployer needs ${pre.shortfall} more native USDC`); 
 
 const book = must(await poll(`ArcOps.deploy()`), "deploy");
 save("addresses.json", book);
+pushStatus({ phase: "deployed", addresses: book }, true);
 log("deployed", JSON.stringify(book));
 const q = new URLSearchParams({ engine: book.engine, lens: book.lens, vault: book.vault, token: book.token, collateral: book.usdc, mode: "publisher", chain: "5042002", rpc: cfg.rpcUrl });
 log("frontend (static build served from frontend/out): /trade/?" + q.toString());
@@ -77,13 +103,15 @@ for (;;) {
   await sleep(30000);
   const s = await ev(`ArcOps.status()`).catch((e) => ({ error: String(e) }));
   log("status", JSON.stringify(s));
-  if (process.env.GITHUB_ACTIONS && s && s.phase) console.log(`::notice::status ${JSON.stringify(s).slice(0, 600)}`);
+  pushStatus({ phase: "running", status: s });
   if (s && s.phase === "ended") break;
 }
 const sweep = await poll(`ArcOps.sweep({returnGas:true})`);
 save("sweep.json", sweep);
 log("sweep", JSON.stringify(sweep));
-save("summary.json", await ev(`ArcOps.summary()`));
+const summary = await ev(`ArcOps.summary()`);
+save("summary.json", summary);
+pushStatus({ phase: "done", sweep, summary }, true);
 save("leaderboard.json", await ev(`ArcOps.leaderboard()`));
 save("gas.json", await ev(`ArcOps.gas()`));
 const pages = [];

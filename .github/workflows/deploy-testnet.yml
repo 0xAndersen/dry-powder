@@ -47,6 +47,7 @@ jobs:
           DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}
           AGENTS: ${{ inputs.agents }}
           MINUTES: ${{ inputs.minutes }}
+          STATUS_PUSH: "1"
         run: node run-testnet.mjs
       - name: Agent account factory and deployment file
         env:

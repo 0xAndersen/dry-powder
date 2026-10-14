@@ -13,3 +13,4 @@ ops/.profile/
 ops/output-testnet/
 frontend/out/
 frontend/e2e/out/
+.status-branch/
