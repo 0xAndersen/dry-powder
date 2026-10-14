@@ -1,8 +1,8 @@
 // The two off-chain roles a Dry Powder deployment on a publisher oracle needs:
 //
-//  publisher  reads Kraken, signs PublisherOracle updates and pushes them on-chain only when useful: a feed is
-//             older than the heartbeat, moved more than `moveBps`, or a pending order, liquidation or expiry needs
-//             a newer price than the one stored.
+//  publisher  reads Kraken, signs PublisherOracle updates and pushes a heartbeat on-chain when a feed is
+//             older than the heartbeat or has moved more than `moveBps` (for readers: the app, direct traders).
+//             Every keeper transaction carries its own freshly signed prices, so fills never wait for a push.
 //  keeper     executes triggered orders (including keeper-filled market orders), liquidates, settles dated
 //             markets and their positions, and settles vault epochs. Every call is simulated first, so a lost
 //             race costs nothing.
@@ -139,23 +139,6 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
     return out;
   }
 
-  /** Float price of a market from the Kraken quotes (decision only; the chain decides exactly). */
-  function offchainPrice(m) {
-    const base = FEED_BY_ID.get(m.market.feedId.toLowerCase());
-    const qb = base && kraken.quote(base);
-    if (!qb) return null;
-    let bid = qb.bid, ask = qb.ask;
-    if (m.market.quoteFeedId !== "0x" + "0".repeat(64)) {
-      const qf = FEED_BY_ID.get(m.market.quoteFeedId.toLowerCase());
-      const qq = qf && kraken.quote(qf);
-      if (!qq) return null;
-      [bid, ask] = [bid / qq.ask, ask / qq.bid];
-    }
-    if (m.market.invert) [bid, ask] = [1 / ask, 1 / bid];
-    const s = (x) => BigInt(Math.round(x * 1e9)) * 10n ** 9n;
-    return { bid: s(bid), ask: s(ask), mid: s((bid + ask) / 2) };
-  }
-
   const feedsOf = (m) => {
     const out = [];
     const a = FEED_BY_ID.get(m.market.feedId.toLowerCase());
@@ -165,37 +148,9 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
     return out;
   };
 
-  async function publish(chainNow, view, oc) {
-    const need = new Set();
-    const byId = new Map(view.markets.map((m) => [m.id.toLowerCase(), m]));
-    const posBy = new Map(view.positions.map((v) => [v.position.trader.toLowerCase() + v.position.priceId.toLowerCase(), v]));
-    const minPt = (m) => Math.min(...feedsOf(m).map((f) => oc.get(f.key)?.publishTime ?? 0));
-    // Orders that the stored price cannot fill yet but a fresh one would (keeper-filled market orders above all).
-    for (const o of view.orders) {
-      const m = byId.get(o.priceId.toLowerCase());
-      if (!m || m.market.settlementPrice !== 0n) continue;
-      const fresh = offchainPrice(m);
-      if (!fresh) continue;
-      const pos = posBy.get(o.trader.toLowerCase() + o.priceId.toLowerCase());
-      if (o.orderType !== 0 && !pos) continue;
-      if (o.orderType === 0 && pos) continue;
-      const isLong = pos ? pos.position.isLong : o.isLong;
-      const stale = minPt(m) < Number(o.createdAt) || (pos && minPt(m) <= Number(pos.position.openedAt));
-      const metNow = m.hasPrice && triggered(o.orderType, isLong, o.triggerPrice, m.price);
-      if (triggered(o.orderType, isLong, o.triggerPrice, fresh) && (stale || !metNow)) feedsOf(m).forEach((f) => need.add(f.key));
-    }
-    // Positions a fresh price would liquidate.
-    for (const v of view.positions) {
-      const m = byId.get(v.position.priceId.toLowerCase());
-      if (!m || m.market.settlementPrice !== 0n) continue;
-      const fresh = offchainPrice(m);
-      if (fresh && isLiquidatable(v.position.isLong, v.liquidationPrice, fresh.mid)) feedsOf(m).forEach((f) => need.add(f.key));
-    }
-    // Expired dated markets need a price published at or after expiry.
-    for (const m of view.markets) {
-      const exp = Number(m.market.expiry);
-      if (exp && m.market.settlementPrice === 0n && chainNow >= exp && minPt(m) < exp) feedsOf(m).forEach((f) => need.add(f.key));
-    }
+  /** Heartbeat for readers (the app, direct traders): pushes feeds that are old or have moved. Keeper
+   *  transactions carry their own fresh prices, so nothing here is needed for fills or liquidations. */
+  async function publish(chainNow, oc) {
     const publishTime = Math.max(lastPublish + 1, Math.min(Math.floor(Date.now() / 1000), chainNow + 1));
     const updates = [];
     for (const f of FEEDS) {
@@ -205,7 +160,7 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
       const cur = oc.get(f.key);
       const age = chainNow - cur.publishTime;
       const moved = cur.mid ? Math.abs(mid / cur.mid - 1) * 1e4 : Infinity;
-      if (!(need.has(f.key) || age >= opts.heartbeatSeconds || moved >= opts.moveBps)) continue;
+      if (!(age >= opts.heartbeatSeconds || moved >= opts.moveBps)) continue;
       if (publishTime <= cur.publishTime) continue;
       updates.push({ f, data: await signUpdate(publisher.account, chainId, oracle, f, price, conf, publishTime) });
     }
@@ -218,29 +173,81 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
     return true;
   }
 
+  /** Signed updates for this tick, one per feed, all stamped `pt` (lazily signed). */
+  function freshFeeds(pt) {
+    const cache = new Map();
+    return async (f) => {
+      if (cache.has(f.key)) return cache.get(f.key);
+      const q = kraken.quote(f);
+      let out = null;
+      if (q) {
+        const { price, conf } = quoteToPrice(f, q.bid, q.ask);
+        const scale = 10n ** BigInt(18 + f.expo);
+        out = { mid: price * scale, bid: (price - conf) * scale, ask: (price + conf) * scale, data: await signUpdate(publisher.account, chainId, oracle, f, price, conf, pt) };
+      }
+      cache.set(f.key, out);
+      return out;
+    };
+  }
+
+  /** Price the engine will see for `m` with the fresh updates (PythOracle.peek arithmetic), and those updates.
+   *  Settled markets use the settlement price; without Kraken, falls back to the stored price and no updates. */
+  async function priceFor(m, fresh, pt) {
+    if (m.market.settlementPrice !== 0n) return m.hasPrice ? { px: m.price, upd: [], pt: Number(m.price.publishTime) } : null;
+    const feeds = feedsOf(m);
+    const legs = [];
+    for (const f of feeds) legs.push(await fresh(f));
+    if (krakenOk && legs.length && legs.every(Boolean)) {
+      let [a] = legs;
+      let { bid, ask, mid } = a;
+      if (legs[1]) {
+        const b = legs[1];
+        bid = (bid * E18) / b.ask;
+        ask = (ask * E18 + b.bid - 1n) / b.bid;
+        mid = (mid * E18) / b.mid;
+      }
+      if (m.market.invert) {
+        const one = E18 * E18;
+        [bid, ask] = [one / ask, (one + bid - 1n) / bid];
+        mid = one / mid;
+      }
+      return { px: { bid, ask, mid }, upd: legs.map((l) => l.data), pt };
+    }
+    return m.hasPrice ? { px: m.price, upd: [], pt: Number(m.price.publishTime) } : null;
+  }
+
   async function keep(chainNow, view) {
     const byId = new Map(view.markets.map((m) => [m.id.toLowerCase(), m]));
+    // Stamped at the chain's clock (never ahead of the 2 s allowance, never older than the block being built on).
+    const pt = Math.max(chainNow, Math.min(Math.floor(Date.now() / 1000), chainNow + 1));
+    const fresh = freshFeeds(pt);
+    const prices = new Map();
+    const P = async (m) => (prices.has(m.id) ? prices.get(m.id) : prices.set(m.id, await priceFor(m, fresh, pt)).get(m.id));
+    const merge = (lists) => [...new Set(lists.flat())];
+
     // 1. Liquidations first: they protect the vault.
     const liq = [];
     for (const v of view.positions) {
       const m = byId.get(v.position.priceId.toLowerCase());
-      if (!m || !m.hasPrice || m.market.settlementPrice !== 0n) continue;
-      if (isLiquidatable(v.position.isLong, v.liquidationPrice, m.price.mid) && ready(v.key)) liq.push(v.key);
+      if (!m || m.market.settlementPrice !== 0n || !ready(v.key)) continue;
+      const p = await P(m);
+      if (p && isLiquidatable(v.position.isLong, v.liquidationPrice, p.px.mid)) liq.push({ key: v.key, upd: p.upd });
     }
     for (let i = 0; i < liq.length; i += opts.batchSize) {
-      const keys = liq.slice(i, i + opts.batchSize);
-      const r = await send(keeper, engine, perpEngineAbi, "liquidateBatch", [keys, []], `liq:${keys[0]}`);
-      if (r) stats.liquidated += keys.length;
+      const batch = liq.slice(i, i + opts.batchSize);
+      const r = await send(keeper, engine, perpEngineAbi, "liquidateBatch", [batch.map((x) => x.key), merge(batch.map((x) => x.upd))], `liq:${batch[0].key}`);
+      if (r) stats.liquidated += batch.length;
     }
-    // 2. Dated markets: fix the settlement price, then close what is left.
+    // 2. Dated markets: fix the settlement price (a price published at or after expiry), then close what is left.
     for (const m of view.markets) {
       const exp = Number(m.market.expiry);
       if (!exp || chainNow < exp) continue;
       if (m.market.settlementPrice === 0n) {
-        if (m.hasPrice && Number(m.price.publishTime) >= exp && chainNow >= exp + opts.settleMarketDelaySeconds) {
-          const r = await send(keeper, engine, perpEngineAbi, "settleMarket", [m.id, []], `settle:${m.id}`);
-          if (r) stats.settledMarkets++;
-        }
+        if (chainNow < exp + opts.settleMarketDelaySeconds) continue;
+        const p = await P(m);
+        if (!p || p.pt < exp) continue;
+        const r = await send(keeper, engine, perpEngineAbi, "settleMarket", [m.id, p.upd], `settle:${m.id}`);
+        if (r) stats.settledMarkets++;
         continue;
       }
       // Leave traders time to close at the settlement price themselves before sweeping what is left.
@@ -253,26 +260,27 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
         if (r) stats.settledPositions += batch.length;
       }
     }
-    // 3. Orders whose condition holds at the stored price.
-    const liqSet = new Set(liq.map((k) => k.toLowerCase()));
+    // 3. Orders whose condition holds at the price the fill will use.
+    const liqSet = new Set(liq.map((x) => x.key.toLowerCase()));
     const posBy = new Map(view.positions.map((v) => [v.position.trader.toLowerCase() + v.position.priceId.toLowerCase(), v]));
     for (const o of view.orders) {
       const id = `o:${o.id}`;
       if (!ready(id)) continue;
       const m = byId.get(o.priceId.toLowerCase());
-      if (!m || !m.hasPrice) continue;
-      const px = m.price;
+      if (!m) continue;
       const pos = posBy.get(o.trader.toLowerCase() + o.priceId.toLowerCase());
       if (o.orderType === 0) {
         if (pos) continue;
         if (Number(m.market.expiry) && chainNow >= Number(m.market.expiry)) continue;
-      } else {
-        if (!pos || liqSet.has(pos.key.toLowerCase())) continue;
-        if (m.market.settlementPrice === 0n && Number(px.publishTime) <= Number(pos.position.openedAt)) continue;
+      } else if (!pos || liqSet.has(pos.key.toLowerCase())) continue;
+      const p = await P(m);
+      if (!p) continue;
+      if (m.market.settlementPrice === 0n) {
+        if (p.pt < Number(o.createdAt)) continue;
+        if (pos && p.pt <= Number(pos.position.openedAt)) continue;
       }
-      if (m.market.settlementPrice === 0n && Number(px.publishTime) < Number(o.createdAt)) continue;
-      if (!triggered(o.orderType, pos ? pos.position.isLong : o.isLong, o.triggerPrice, px)) continue;
-      const r = await send(keeper, engine, perpEngineAbi, "executeOrder", [o.id, []], id);
+      if (!triggered(o.orderType, pos ? pos.position.isLong : o.isLong, o.triggerPrice, p.px)) continue;
+      const r = await send(keeper, engine, perpEngineAbi, "executeOrder", [o.id, p.upd], id);
       if (r) stats.executed++;
     }
     // 4. Vault epoch.
@@ -321,11 +329,8 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
     await topUp();
     const block = await pub.getBlock();
     const chainNow = Number(block.timestamp);
-    let view = await readAll();
-    if (krakenOk) {
-      const oc = await onchainFeeds();
-      if (await publish(chainNow, view, oc)) view = await readAll();
-    }
+    if (krakenOk) await publish(chainNow, await onchainFeeds());
+    const view = await readAll();
     await keep(chainNow, view);
     return { chainNow, positions: view.positions.length, orders: view.orders.length };
   }

@@ -21,7 +21,7 @@ grep -q "ready:" "$LOGS/stack.log" || { cat "$LOGS/stack.log"; exit 1; }
 
 ( cd ../keeper && DEPLOYMENT=../frontend/e2e/.state/addresses.json RPC_URL=http://127.0.0.1:8645 CHAIN_ID=31337 \
   KRAKEN_URL=http://127.0.0.1:8647 PUBLISHER_KEY=$BOT_KEY KEEPER_KEY=$BOT_KEY MIN_FEE_GWEI=2 STALE_FEED_MS=4000 \
-  HEARTBEAT_SECONDS=20 SETTLE_EPOCHS=0 SETTLE_MARKET_DELAY_SECONDS=20 exec node src/main.mjs ) > "$LOGS/keeper.log" 2>&1 &
+  HEARTBEAT_SECONDS=60 SETTLE_EPOCHS=0 SETTLE_MARKET_DELAY_SECONDS=20 exec node src/main.mjs ) > "$LOGS/keeper.log" 2>&1 &
 KEEPER=$!
 sleep 30
 status=0
