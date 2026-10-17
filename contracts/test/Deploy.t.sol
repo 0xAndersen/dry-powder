@@ -82,15 +82,16 @@ contract DeployTest is Test {
     function _assertLaunchMarkets(Deploy.Deployment memory d, string memory futureSymbol, uint64 expiry) internal view {
         assertEq(d.engine.getMarketIds().length, 8);
         assertEq(d.marketIds.length, 8);
+        assertEq(address(d.agentFactory.engine()), address(d.engine));
         assertEq(d.futureExpiry, expiry);
-        _assertMarket(d, 0, BTC, "BTC-USD", BTC, 0, false, 100, 0);
-        _assertMarket(d, 1, ETH, "ETH-USD", ETH, 0, false, 100, 0);
-        _assertMarket(d, 2, SOL, "SOL-USD", SOL, 0, false, 50, 0);
-        _assertMarket(d, 3, EUR, "EUR-USD", EUR, 0, false, 50, 0);
-        _assertMarket(d, 4, JPY, "JPY-USD", JPY, 0, true, 50, 0);
-        _assertMarket(d, 5, XAU, "XAU-USD", XAU, 0, false, 50, 0);
-        _assertMarket(d, 6, keccak256("ETH-BTC"), "ETH-BTC", ETH, BTC, false, 50, 0);
-        _assertMarket(d, 7, keccak256(bytes(futureSymbol)), futureSymbol, BTC, 0, false, 50, expiry);
+        _assertMarket(d, 0, BTC, "BTC-USD", BTC, 0, false, 1000, 0);
+        _assertMarket(d, 1, ETH, "ETH-USD", ETH, 0, false, 1000, 0);
+        _assertMarket(d, 2, SOL, "SOL-USD", SOL, 0, false, 500, 0);
+        _assertMarket(d, 3, EUR, "EUR-USD", EUR, 0, false, 250, 0);
+        _assertMarket(d, 4, JPY, "JPY-USD", JPY, 0, true, 100, 0);
+        _assertMarket(d, 5, XAU, "XAU-USD", XAU, 0, false, 250, 0);
+        _assertMarket(d, 6, keccak256("ETH-BTC"), "ETH-BTC", ETH, BTC, false, 100, 0);
+        _assertMarket(d, 7, keccak256(bytes(futureSymbol)), futureSymbol, BTC, 0, false, 250, expiry);
     }
 
     function test_deployScript_allModes() public {
@@ -189,7 +190,10 @@ contract DeployTest is Test {
         vm.setEnv("STREAM_SECONDS", "3600");
         vm.setEnv("MAX_PRICE_AGE_SECONDS", "30");
         vm.setEnv("FUTURE_EXPIRY", "1767225599"); // Wed 2025-12-31 23:59:59 UTC
+        vm.setEnv("VAULT_SEED", "2500000000000"); // $2.5M: three mints (TestUSDC caps each at $1M)
         d = script.run();
+        assertEq(d.vault.totalAssets(), 2_500_000e6);
+        assertEq(d.vault.balanceOf(DEFAULT_SENDER), d.vault.totalSupply());
         assertTrue(d.usdc != ARC_USDC);
         assertEq(TestUSDC(d.usdc).symbol(), "tUSDC");
         assertTrue(d.publisherOracle.isPublisher(publisher));
@@ -207,6 +211,7 @@ contract DeployTest is Test {
         json = _json();
         assertEq(vm.parseJsonString(json, ".collateral"), "test");
         assertEq(vm.parseJsonAddress(json, ".usdc"), d.usdc);
+        assertEq(vm.parseJsonAddress(json, ".agentFactory"), address(d.agentFactory));
         assertEq(vm.parseJsonAddress(json, ".owner"), multisig);
         assertEq(vm.parseJsonStringArray(json, ".marketSymbols")[7], "BTC-USD-251231");
         _tradeOnDeployment(d, publisherKey);

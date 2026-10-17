@@ -17,7 +17,7 @@ Numbers are decimal strings for money and prices (`"2500"`, `"64000.5"`); sizes 
 | Tool | What it does | Changes state |
 |---|---|---|
 | `dp_markets` | Markets: kind (perp, cross, inverted, dated), reference and on-chain price, max leverage, funding/hour, open interest; guardrails in force | no |
-| `dp_account {address?}` | Balances (USDC, KEG rebates, claimable), positions with PnL and liquidation price, open orders, the agent's policy | no |
+| `dp_account {address?}` | Balances (USDC, DRY rebates, claimable), positions with PnL and liquidation price, open orders, the agent's policy | no |
 | `dp_quote {market, side, sizeUsd, leverage}` | Margin, fees, estimated entry and liquidation price | no |
 | `dp_open {market, side, sizeUsd, leverage, takeProfit?, stopLoss?, slippageBps?, confirmToken?}` | Keeper-filled market order; waits for the fill | **yes** |
 | `dp_limit {market, side, sizeUsd, leverage, price, takeProfit?, stopLoss?, confirmToken?}` | Resting limit order | **yes** |

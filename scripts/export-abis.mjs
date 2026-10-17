@@ -20,6 +20,7 @@ const contracts = [
 ];
 const targets = [
   ["frontend/src/lib/abi.ts", "ts"],
+  ["sdk/src/abi.ts", "ts"],
   ["mcp/src/abi.mjs", "js"],
   ["keeper/src/abi.mjs", "js"],
 ];

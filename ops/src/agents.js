@@ -105,7 +105,7 @@ export class Agent {
   }
   async refreshBal() { this.bal = Number(await call(S.dep.addr.usdc, "balanceOf", [this.addr])); return this.bal; }
 
-  // ───────────── housekeeping: approvals, vault LP, KEG staking ─────────────
+  // ───────────── housekeeping: approvals, vault LP, DRY staking ─────────────
   async house() {
     const A = S.dep.addr, t = now();
     if (!this.ap) { if (await this.tx(A.usdc, "approve", [A.engine, MAXU], { kind: "approve" })) this.ap = 1; else return false; }

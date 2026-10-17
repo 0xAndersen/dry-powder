@@ -103,7 +103,7 @@ contract AdminTest is Base {
         vm.expectRevert(PerpEngine.InvalidParam.selector);
         engine.addMarket(SOL, _sol(false, 0, 1e12, 1e12));
         vm.expectRevert(PerpEngine.InvalidParam.selector);
-        engine.addMarket(SOL, _sol(false, 101, 1e12, 1e12));
+        engine.addMarket(SOL, _sol(false, 1001, 1e12, 1e12));
         vm.expectRevert(PerpEngine.InvalidParam.selector);
         engine.addMarket(SOL, _sol(false, 50, 1e12, 0));
 
@@ -186,7 +186,7 @@ contract AdminTest is Base {
         vm.expectRevert(PerpEngine.MarketNotFound.selector);
         engine.setMarket(SOL, true, 50, 1e12, 1e12);
         vm.expectRevert(PerpEngine.InvalidParam.selector);
-        engine.setMarket(BTC, true, 101, 1e12, 1e12);
+        engine.setMarket(BTC, true, 1001, 1e12, 1e12);
         vm.expectRevert(PerpEngine.InvalidParam.selector);
         engine.setMarket(BTC, true, 0, 1e12, 1e12);
         vm.expectRevert(PerpEngine.InvalidParam.selector);

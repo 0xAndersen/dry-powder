@@ -1,0 +1,99 @@
+name: Deploy to Arc Testnet (Forge)
+
+# The fast path: contracts/script/Deploy.s.sol deploys the whole venue (test collateral, publisher oracle,
+# vault, engine, lens, agent account factory, 8 markets up to 1000x, seeded vault) in one Forge broadcast,
+# commits deployments/arc-testnet.json straight away, then publishes the app and (re)starts the keeper.
+# The previous deployment is archived under deployments/history/.
+#
+# Needs the DEPLOYER_KEY secret: a throwaway key holding native USDC for gas (https://faucet.circle.com).
+# The publisher and keeper keys derive from it and never leave the runner.
+on:
+  workflow_dispatch:
+    inputs:
+      vault_seed:
+        description: House vault seed, whole tUSDC
+        default: "5000000"
+      max_price_age:
+        description: Max price age, seconds
+        default: "30"
+
+concurrency:
+  group: deploy-arc-testnet
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: foundry-rs/foundry-toolchain@v1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Roles
+        env:
+          DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}
+        run: |
+          test -n "$DEPLOYER_KEY" || { echo "::error::DEPLOYER_KEY secret is not set"; exit 1; }
+          cd keeper && npm ci --no-audit --no-fund && cd ..
+          node keeper/scripts/forge-deployment.mjs roles | tee -a "$GITHUB_ENV"
+      - name: Pick an RPC
+        run: |
+          for u in https://rpc.testnet.arc.io https://rpc.quicknode.testnet.arc.io https://rpc.drpc.testnet.arc.io https://rpc.blockdaemon.testnet.arc.io https://5042002.rpc.thirdweb.com; do
+            if [ "$(cast chain-id --rpc-url "$u" 2>/dev/null)" = "5042002" ]; then echo "RPC_URL=$u" >> "$GITHUB_ENV"; echo "::notice::using $u"; exit 0; fi
+          done
+          echo "::error::no Arc Testnet RPC reachable"; exit 1
+      - name: Gas
+        run: |
+          bal=$(cast balance "$DEPLOYER_ADDRESS" --rpc-url "$RPC_URL" --ether)
+          echo "::notice::deployer $DEPLOYER_ADDRESS holds $bal USDC for gas"
+          awk "BEGIN{exit !($bal >= 2)}" || { echo "::error::deployer needs at least 2 USDC for gas (https://faucet.circle.com)"; exit 1; }
+      - name: Deploy
+        working-directory: contracts
+        env:
+          DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}
+          ORACLE_MODE: publisher
+          COLLATERAL: test
+          MAX_PRICE_AGE_SECONDS: ${{ inputs.max_price_age }}
+          VAULT_SEED_WHOLE: ${{ inputs.vault_seed }}
+        run: |
+          export VAULT_SEED="${VAULT_SEED_WHOLE}000000"
+          args=(script script/Deploy.s.sol:Deploy --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" --broadcast --slow \
+            --with-gas-price 40gwei --priority-gas-price 2gwei)
+          for attempt in 1 2 3 4; do
+            if [ "$attempt" = 1 ]; then forge "${args[@]}" && exit 0; else forge "${args[@]}" --resume && exit 0; fi
+            echo "::warning::forge broadcast attempt $attempt failed; resuming"
+            sleep $((attempt * 15))
+          done
+          echo "::error::deploy failed after 4 attempts"; exit 1
+      - name: Deployment file
+        env:
+          DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}
+        run: |
+          node keeper/scripts/forge-deployment.mjs write contracts/deployments/5042002.json
+          echo "::notice::engine $(node -p 'require("./deployments/arc-testnet.json").engine')"
+      - name: Commit the deployment
+        run: |
+          git config user.name "dry-powder-deployer"
+          git config user.email "actions@users.noreply.github.com"
+          git add deployments
+          git commit -m "Arc Testnet deployment (Forge) $(date -u +%Y-%m-%dT%H:%MZ)" || echo "nothing to commit"
+          git pull --rebase origin main && git push origin HEAD:main
+
+  app:
+    needs: deploy
+    uses: ./.github/workflows/pages.yml
+
+  keeper:
+    needs: deploy
+    uses: ./.github/workflows/keeper.yml
+    secrets:
+      DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}

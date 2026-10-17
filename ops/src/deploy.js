@@ -144,8 +144,9 @@ export async function deploy(j) {
   const fi = (k) => FEEDS.findIndex((f) => f.k === k);
   const seedU = c.vaultSeed;
   const oiMajor = BigInt(Math.round(seedU * P.oiCapShare * 1e6)), skew = BigInt(Math.round(seedU * P.skewScaleShare * 1e6));
-  const defs = [["BTC-USD", "BTC", null, false, 100], ["ETH-USD", "ETH", null, false, 100], ["SOL-USD", "SOL", null, false, 50], ["EUR-USD", "EUR", null, false, 50],
-    ["JPY-USD", "JPY", null, true, 50], ["XAU-USD", "XAU", null, false, 50], ["ETH-BTC", "ETH", "BTC", false, 50]];
+  // Same leverage as contracts/script/Deploy.s.sol (above 100x the engine takes keeper orders only).
+  const defs = [["BTC-USD", "BTC", null, false, 1000], ["ETH-USD", "ETH", null, false, 1000], ["SOL-USD", "SOL", null, false, 500], ["EUR-USD", "EUR", null, false, 250],
+    ["JPY-USD", "JPY", null, true, 100], ["XAU-USD", "XAU", null, false, 250], ["ETH-BTC", "ETH", "BTC", false, 100]];
   const mk = dep.mk || (dep.mk = []);
   const ensure = (sym, f, q, inv, lev, exp, id) => {
     let m = mk.find((x) => x.sym === sym);
@@ -161,7 +162,7 @@ export async function deploy(j) {
     const exp = Math.floor(chainNow()) + P.futureExpirySeconds;
     const d = new Date(exp * 1000);
     const sym = "BTC-USD-" + String(d.getUTCHours()).padStart(2, "0") + String(d.getUTCMinutes()).padStart(2, "0") + "Z";
-    fut = ensure(sym, "BTC", null, false, 50, exp);
+    fut = ensure(sym, "BTC", null, false, 250, exp);
   }
   saveDep();
   for (const m of mk) {

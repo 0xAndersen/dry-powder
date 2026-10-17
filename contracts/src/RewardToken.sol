@@ -7,8 +7,8 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IHouseVault} from "./interfaces/IHouseVault.sol";
 import {IRewardToken} from "./interfaces/IRewardToken.sol";
 
-/// @title RewardToken (KEG)
-/// @notice Loss-rebate token. PerpEngine mints 100 KEG per 1 USDC a trader loses. Staked KEG earns a
+/// @title RewardToken (DRY)
+/// @notice Loss-rebate token. PerpEngine mints 100 DRY per 1 USDC a trader loses. Staked DRY earns a
 ///         pro-rata share of the house's performance yield, claimable in USDC.
 ///
 /// @dev Yield notified by the vault is streamed linearly over `streamPeriod` rather than credited at once, so
@@ -16,11 +16,11 @@ import {IRewardToken} from "./interfaces/IRewardToken.sol";
 ///      stays in the vault (`pendingStakerYield`); this contract keeps the ledger and tells the vault to pay
 ///      on claim. Rounding always favours the pool, so claims can never exceed what was notified.
 contract RewardToken is ERC20, IRewardToken {
-    /// @notice KEG minted per whole USDC lost.
+    /// @notice DRY minted per whole USDC lost.
     uint256 public constant REBATE_RATE = 100;
-    /// @dev 6-decimal USDC amount -> 18-decimal KEG amount at REBATE_RATE.
+    /// @dev 6-decimal USDC amount -> 18-decimal DRY amount at REBATE_RATE.
     uint256 internal constant USDC_TO_HOUSE = REBATE_RATE * 1e12;
-    /// @dev Scale of the per-token accumulator. Large enough that 1 micro-USDC over 100bn staked KEG registers.
+    /// @dev Scale of the per-token accumulator. Large enough that 1 micro-USDC over 100bn staked DRY registers.
     uint256 internal constant ACC_PRECISION = 1e36;
     /// @dev Scale of the per-second stream rate, so small amounts over long periods are not rounded away.
     uint256 internal constant RATE_PRECISION = 1e18;
@@ -32,9 +32,9 @@ contract RewardToken is ERC20, IRewardToken {
     /// @notice Seconds over which each notified amount is streamed to stakers.
     uint256 public immutable streamPeriod;
 
-    /// @notice Total KEG currently staked.
+    /// @notice Total DRY currently staked.
     uint256 public totalStaked;
-    /// @notice Cumulative USDC yield per staked KEG unit, scaled by ACC_PRECISION, as of `lastUpdateTime`.
+    /// @notice Cumulative USDC yield per staked DRY unit, scaled by ACC_PRECISION, as of `lastUpdateTime`.
     uint256 public accYieldPerToken;
     /// @notice Current stream rate in USDC per second, scaled by RATE_PRECISION.
     uint256 public yieldRate;
@@ -45,14 +45,14 @@ contract RewardToken is ERC20, IRewardToken {
     /// @dev Yield (scaled by RATE_PRECISION) that streamed while nobody was staked; rolled into the next stream.
     uint256 private _unassigned;
 
-    /// @notice Lifetime KEG minted as loss rebates.
+    /// @notice Lifetime DRY minted as loss rebates.
     uint256 public totalRebatesMinted;
     /// @notice Lifetime USDC yield registered for stakers.
     uint256 public totalYieldNotified;
     /// @notice Lifetime USDC yield claimed by stakers.
     uint256 public totalYieldClaimed;
 
-    /// @notice KEG staked by `account`.
+    /// @notice DRY staked by `account`.
     mapping(address account => uint256) public stakedBalance;
     mapping(address account => uint256) private _yieldPerTokenPaid;
     mapping(address account => uint256) private _accruedYield;
@@ -70,7 +70,7 @@ contract RewardToken is ERC20, IRewardToken {
     error InsufficientStake();
     error NothingToClaim();
 
-    constructor(address vault_, address engine_, uint256 streamPeriod_) ERC20("Dry Powder", "KEG") {
+    constructor(address vault_, address engine_, uint256 streamPeriod_) ERC20("Dry Powder", "DRY") {
         if (vault_ == address(0) || engine_ == address(0)) revert ZeroAddress();
         if (streamPeriod_ == 0) revert ZeroAmount();
         vault = IHouseVault(vault_);
@@ -106,7 +106,7 @@ contract RewardToken is ERC20, IRewardToken {
 
     // ───────────────────────────── Staking ─────────────────────────────
 
-    /// @notice Stake `amount` KEG to start earning USDC yield.
+    /// @notice Stake `amount` DRY to start earning USDC yield.
     function stake(uint256 amount) external {
         if (amount == 0) revert ZeroAmount();
         _settle(msg.sender);
@@ -116,7 +116,7 @@ contract RewardToken is ERC20, IRewardToken {
         emit Staked(msg.sender, amount);
     }
 
-    /// @notice Unstake `amount` KEG. Yield earned so far stays claimable.
+    /// @notice Unstake `amount` DRY. Yield earned so far stays claimable.
     function unstake(uint256 amount) external {
         if (amount == 0) revert ZeroAmount();
         if (amount > stakedBalance[msg.sender]) revert InsufficientStake();

@@ -19,6 +19,8 @@ at the oracle bid/ask plus a skew fee.
 - One position per market per trader. Market orders are filled by a keeper at the next oracle price, usually
   within a few seconds; dp_open waits for the fill and reports it.
 - Positions are liquidated once losses reach 90% of margin. Profit per position is capped at 10x margin.
+- Leverage goes up to 1000x on markets that allow it (each market has its own max). Above 100x a 0.09% move
+  liquidates; each side's fee is capped at 10% of margin. The most a trade can lose is its margin plus fees.
 - Guardrails: per-order notional cap, max leverage, allowed markets, slippage cap and a price band.
 - When confirmation is required, dp_open / dp_limit / dp_close first return a preview and a confirmToken.
   Show the preview to the user and call again with the same arguments plus the token only after approval.
@@ -106,7 +108,7 @@ export function createServer(ctx = new Context(loadConfig())) {
     const [markets, positions, orders, bal] = await Promise.all([ctx.markets(), ctx.positions(trader), ctx.orders(trader), ctx.balances(trader)]);
     const out = {
       trader, mode: address ? "read" : ctx.mode,
-      balances: { usdc: toUsd(bal.usdc), keg: Number(bal.keg) / 1e18, claimableUsdc: toUsd(bal.claimable) },
+      balances: { usdc: toUsd(bal.usdc), dry: Number(bal.keg) / 1e18, claimableUsdc: toUsd(bal.claimable) },
       positions: positions.map((v) => fmtPosition(v, markets)),
       orders: orders.map((o) => ({
         id: String(o.id), market: markets.find((m) => m.id.toLowerCase() === o.priceId.toLowerCase())?.symbol, type: TYPES[o.orderType],
@@ -149,7 +151,7 @@ export function createServer(ctx = new Context(loadConfig())) {
       const p = await engineRead("getPosition", [ctx.trader, m.id]);
       if (p.trader !== ZERO) throw new ToolError("POSITION_EXISTS", `there is already a ${m.symbol} position; close it first (one position per market)`);
     }
-    const [fee, execFee] = await Promise.all([engineRead("quoteOpenFee", [m.id, size, isLong]), engineRead("executionFee")]);
+    const [fee, execFee] = await Promise.all([engineRead("quoteOpenFee", [m.id, size, isLong, margin]), engineRead("executionFee")]);
     const loss = LIQ_THRESHOLD * (Number(margin) / Number(size));
     const liq = toPx(entry) * (isLong ? 1 - loss : 1 + loss);
     return {
@@ -158,6 +160,9 @@ export function createServer(ctx = new Context(loadConfig())) {
         market: m.symbol, side: s, sizeUsd: toUsd(size), leverage, marginUsd: toUsd(margin), estimatedEntry: toPx(entry),
         [price !== undefined ? "limitPrice" : "worstFillPrice"]: toPx(trigger), openFeeUsd: toUsd(fee),
         keeperFeesUsd: toUsd(execFee * (1n + (tp ? 1n : 0n) + (sl ? 1n : 0n))), approxLiquidationPrice: Math.round(liq * 1e6) / 1e6,
+        liquidationMovePct: Math.round(loss * 1e6) / 1e4,
+        maxLossUsd: toUsd(margin + fee * 2n + execFee * (1n + (tp ? 1n : 0n) + (sl ? 1n : 0n))),
+        maxProfitUsd: toUsd(margin * 10n),
         takeProfit: tp ? toPx(tp) : null, stopLoss: sl ? toPx(sl) : null,
         notes: price !== undefined ? "Rests until the price is reached; a keeper fills it." : "Keeper-filled market order at the next oracle price.",
       },
@@ -165,7 +170,7 @@ export function createServer(ctx = new Context(loadConfig())) {
   }
 
   tool("dp_quote", "Preview a trade without placing it: margin, fees, estimated entry and liquidation price.", {
-    market, side, sizeUsd: decimal("sizeUsd"), leverage: z.number().min(1).max(100),
+    market, side, sizeUsd: decimal("sizeUsd"), leverage: z.number().min(1).max(1000),
   }, async (a) => (await plan(a)).preview, true);
 
   async function placeOrder(name, args, wait) {
@@ -189,12 +194,12 @@ export function createServer(ctx = new Context(loadConfig())) {
   }
 
   tool("dp_open", "Open a position with a keeper-filled market order (waits for the fill). Optional take-profit and stop-loss prices.", {
-    market, side, sizeUsd: decimal("sizeUsd"), leverage: z.number().min(1).max(100),
+    market, side, sizeUsd: decimal("sizeUsd"), leverage: z.number().min(1).max(1000),
     takeProfit: decimal("takeProfit").optional(), stopLoss: decimal("stopLoss").optional(), slippageBps, confirmToken,
   }, (a) => placeOrder("dp_open", a, true));
 
   tool("dp_limit", "Place a resting limit order to open a position when price reaches `price` (long: at or below, short: at or above).", {
-    market, side, sizeUsd: decimal("sizeUsd"), leverage: z.number().min(1).max(100), price: decimal("price"),
+    market, side, sizeUsd: decimal("sizeUsd"), leverage: z.number().min(1).max(1000), price: decimal("price"),
     takeProfit: decimal("takeProfit").optional(), stopLoss: decimal("stopLoss").optional(), confirmToken,
   }, (a) => placeOrder("dp_limit", a, false));
 

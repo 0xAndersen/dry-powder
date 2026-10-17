@@ -24,7 +24,7 @@ struct Position {
 struct Market {
     bool enabled; // false blocks new positions; closes and liquidations still work
     bool invert;
-    uint16 maxLeverage; // whole multiples, 1..100
+    uint16 maxLeverage; // whole multiples, 1..1000 (above 100x: keeper orders only)
     uint64 lastFundingTime;
     uint64 expiry; // 0 for perpetuals
     bytes32 feedId;

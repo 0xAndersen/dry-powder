@@ -248,7 +248,7 @@ abstract contract Base is Test {
         engine.setFeeParams(5, 0, 0, EXEC_FEE);
     }
 
-    /// @dev Mints KEG to `who` as the engine would for a loss, and stakes `amount` of it.
+    /// @dev Mints DRY to `who` as the engine would for a loss, and stakes `amount` of it.
     function _stake(address who, uint256 amount) internal {
         vm.prank(address(engine));
         house.mintLossRebate(who, amount / 100e12);

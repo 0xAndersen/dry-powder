@@ -23,7 +23,7 @@ contract RewardTokenTest is Base {
 
     function test_metadata() public view {
         assertEq(house.name(), "Dry Powder");
-        assertEq(house.symbol(), "KEG");
+        assertEq(house.symbol(), "DRY");
         assertEq(house.decimals(), 18);
         assertEq(house.engine(), address(engine));
         assertEq(address(house.vault()), address(vault));
@@ -70,7 +70,7 @@ contract RewardTokenTest is Base {
     }
 
     function test_stake_and_unstake() public {
-        _mint(alice, 10e6); // 1,000 KEG
+        _mint(alice, 10e6); // 1,000 DRY
         vm.startPrank(alice);
         vm.expectEmit(address(house));
         emit RewardToken.Staked(alice, 600e18);
@@ -256,7 +256,7 @@ contract RewardTokenTest is Base {
     ///      is streamed from the settlement on, not credited to whoever is staked at that instant.
     function test_stream_jitStakeBeforeSettle_earnsNothing() public {
         _mintAndStake(bob, 1_000e18); // long-term staker
-        _mint(carol, 990e6); // carol holds 99,000 idle KEG
+        _mint(carol, 990e6); // carol holds 99,000 idle DRY
         _feeIncome(576_000e6);
         skip(EPOCH);
 
@@ -322,7 +322,7 @@ contract RewardTokenTest is Base {
     // ───────────────────────────── Precision ─────────────────────────────
 
     function test_precision_dustYieldOverHugeStake() public {
-        // 100bn KEG staked (1bn USDC of lifetime losses), 1 micro-USDC of yield per notification.
+        // 100bn DRY staked (1bn USDC of lifetime losses), 1 micro-USDC of yield per notification.
         _mintAndStake(alice, 100_000_000_000e18);
         for (uint256 i; i < 10; ++i) {
             _notify(1);

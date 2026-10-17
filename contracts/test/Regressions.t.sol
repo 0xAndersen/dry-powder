@@ -10,7 +10,7 @@ import {Base} from "./Base.t.sol";
 ///         proof-of-concept (same actors, same sizes, same price moves) and asserts that the attack no longer
 ///         pays. The v1 outcome is quoted in each comment for comparison.
 contract RegressionsTest is Base {
-    /// @dev Gives `who` real KEG by realising a small trading loss, then stakes all of it.
+    /// @dev Gives `who` real DRY by realising a small trading loss, then stakes all of it.
     function _bootstrapStaker(address who) internal {
         _open(who, BTC, true, 100e6, 1_000e6);
         _setBtc(99_000);
@@ -121,7 +121,9 @@ contract RegressionsTest is Base {
         assertEq(engine.reservedLiquidity(), 0);
 
         uint256 nav = vault.totalHouseBalance();
-        assertEq(nav, LP_SEED + 3_000e6); // the attack's fees are simply income
+        // The attack's fees are simply income: the long pays base + skew fee, capped at 10% of its margin
+        // (MARGIN_FEE_CAP_BPS) = 1,500; the short reduces skew and pays the 750 base fee.
+        assertEq(nav, LP_SEED + 2_250e6);
         assertEq(vault.freeLiquidity(), nav);
         assertEq(vault.maxWithdraw(lp), nav - 1); // v1: < 3,001 USDC
         vm.prank(lp);
@@ -254,14 +256,14 @@ contract RegressionsTest is Base {
     }
 
     // ───────────────────────── L-05 ─────────────────────────
-    /// v1: KEG staked in the same transaction as a liquidation took a pro-rata share of that inflow (99% of
+    /// v1: DRY staked in the same transaction as a liquidation took a pro-rata share of that inflow (99% of
     /// the 14.7k staker pot in the PoC) and could be unstaked immediately.
     /// v2: nothing reaches stakers at the moment of an inflow, and what an epoch sets aside is streamed over
     /// `streamPeriod` to whoever is staked while it streams.
     function test_L05_jitStakeNoLongerCapturesYield() public {
         _stake(bob, 1_000e18); // long-term staker
         vm.prank(address(engine));
-        house.mintLossRebate(carol, 990e6); // carol holds 99,000 idle KEG
+        house.mintLossRebate(carol, 990e6); // carol holds 99,000 idle DRY
 
         _open(alice, BTC, true, 100_000e6, 1_000_000e6);
         _setBtc(91_000);

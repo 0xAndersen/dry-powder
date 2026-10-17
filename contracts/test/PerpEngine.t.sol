@@ -25,7 +25,8 @@ contract PerpEngineTest is Base {
         assertEq(address(engine.rewardToken()), address(house));
         assertEq(engine.owner(), owner);
         assertEq(usdc.allowance(address(engine), address(vault)), type(uint256).max);
-        assertEq(engine.MAX_LEVERAGE(), 100);
+        assertEq(engine.MAX_LEVERAGE(), 1000);
+        assertEq(engine.DIRECT_MAX_LEVERAGE(), 100);
         assertEq(engine.LIQUIDATION_THRESHOLD_BPS(), 9_000);
         assertEq(engine.LIQUIDATOR_FEE_BPS(), 200);
         bytes32[] memory ids = engine.getMarketIds();
@@ -59,7 +60,7 @@ contract PerpEngineTest is Base {
         uint256 aliceBefore = usdc.balanceOf(alice);
         // 5 bps base = 5.00, skew surcharge 10 bps * (10k / 1m skew scale) = 0.10
         uint256 fee = 5.1e6;
-        assertEq(engine.quoteOpenFee(BTC, 10_000e6, true), fee);
+        assertEq(engine.quoteOpenFee(BTC, 10_000e6, true, type(uint256).max / 1e5), fee);
 
         vm.expectEmit(address(engine));
         emit PerpEngine.PositionOpened(key, alice, BTC, true, 1_000e6, 10_000e6, P100K, fee);
@@ -111,13 +112,13 @@ contract PerpEngineTest is Base {
     function test_openFee_skewSurchargeOnlyWhenSkewGrows() public {
         _open(alice, BTC, true, 1_000e6, 10_000e6);
         // Reducing the skew: base fee only.
-        assertEq(engine.quoteOpenFee(BTC, 4_000e6, false), 2e6);
+        assertEq(engine.quoteOpenFee(BTC, 4_000e6, false, type(uint256).max / 1e5), 2e6);
         // Flipping the skew but leaving it smaller than before (10k long -> 8k short): base fee only.
-        assertEq(engine.quoteOpenFee(BTC, 18_000e6, false), 9e6);
+        assertEq(engine.quoteOpenFee(BTC, 18_000e6, false, type(uint256).max / 1e5), 9e6);
         // Flipping it and making it larger (10k long -> 14k short): 12 base + 24k * 10bps * 14k / 1m.
-        assertEq(engine.quoteOpenFee(BTC, 24_000e6, false), 12e6 + 0.336e6);
+        assertEq(engine.quoteOpenFee(BTC, 24_000e6, false, type(uint256).max / 1e5), 12e6 + 0.336e6);
         // Beyond the skew scale the ratio is taken against actual open interest.
-        assertEq(engine.quoteOpenFee(ETH, 1_500_000e6, true), 750e6 + 1_500e6);
+        assertEq(engine.quoteOpenFee(ETH, 1_500_000e6, true, type(uint256).max / 1e5), 750e6 + 1_500e6);
 
         uint256 before = usdc.balanceOf(bob);
         _open(bob, BTC, false, 1_000e6, 4_000e6);
@@ -257,7 +258,7 @@ contract PerpEngineTest is Base {
         assertEq(usdc.balanceOf(alice), afterOpen + 945e6);
         assertEq(vault.totalTraderLosses(), 50e6);
         assertEq(vault.totalHouseBalance(), LP_SEED + 5e6 + 50e6 + 5e6);
-        assertEq(house.balanceOf(alice), 5_000e18); // 100 KEG per USDC lost
+        assertEq(house.balanceOf(alice), 5_000e18); // 100 DRY per USDC lost
         _assertEngineSolvent();
     }
 
@@ -554,7 +555,7 @@ contract PerpEngineTest is Base {
 
     function test_views_unknownMarketReverts() public {
         vm.expectRevert(PerpEngine.MarketNotFound.selector);
-        engine.quoteOpenFee(bytes32(0), 1e6, true);
+        engine.quoteOpenFee(bytes32(0), 1e6, true, type(uint256).max / 1e5);
         vm.expectRevert(PerpEngine.MarketNotFound.selector);
         engine.fundingRate(bytes32(0));
         vm.expectRevert(PerpEngine.MarketNotFound.selector);

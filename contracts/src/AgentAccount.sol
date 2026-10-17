@@ -99,7 +99,7 @@ contract AgentAccount {
         emit MarketAllowed(marketId, allowed);
     }
 
-    /// @notice Sends `amount` of `token` (USDC, the KEG loss rebates the engine mints here, anything else) to `to`.
+    /// @notice Sends `amount` of `token` (USDC, the DRY loss rebates the engine mints here, anything else) to `to`.
     function withdraw(IERC20 token, address to, uint256 amount) external onlyOwner {
         if (to == address(0)) revert ZeroAddress();
         emit Withdrawn(address(token), to, amount);

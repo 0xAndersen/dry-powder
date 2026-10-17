@@ -63,7 +63,15 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
     uint256 internal constant BPS = 10_000;
 
     /// @notice Hard ceiling on per-market leverage.
-    uint256 public constant MAX_LEVERAGE = 100;
+    uint256 public constant MAX_LEVERAGE = 1_000;
+    /// @notice Above this leverage a position can be opened and closed only through keeper-executed orders, which
+    ///         fill at a price published after the order. Direct calls read a stored price up to `maxPriceAge` old;
+    ///         at 1000x a 0.1% move is the whole margin, so a stale price would be a free option on the vault.
+    uint256 public constant DIRECT_MAX_LEVERAGE = 100;
+    /// @notice Each side's trading fee is at most this share of the position's margin (10%). Fees are charged on
+    ///         notional, so without a cap a 1000x round trip would cost the whole margin; the cap only binds above
+    ///         200x at the default 5 bp.
+    uint256 public constant MARGIN_FEE_CAP_BPS = 1_000;
     /// @notice A position is liquidated once its loss (price move plus funding) reaches this share of margin.
     uint256 public constant LIQUIDATION_THRESHOLD_BPS = PositionMath.LIQUIDATION_THRESHOLD_BPS;
     /// @notice Share of the liquidated margin paid to the liquidator; the remainder goes to the vault.
@@ -201,6 +209,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
     error PriceBeforeExpiry();
     error MarginTooLow();
     error LeverageOutOfRange();
+    error HighLeverageNeedsOrder();
     error PositionExists();
     error PositionNotFound();
     error PositionLiquidatable();
@@ -355,6 +364,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         _updateOracle(priceUpdate);
         Market storage m = _existingMarket(p.priceId);
         _validateTrade(m, p.margin, p.size);
+        if (p.size > p.margin * DIRECT_MAX_LEVERAGE) revert HighLeverageNeedsOrder();
 
         OraclePrice memory px = _readPrice(m);
         uint256 price = p.isLong ? px.ask : px.bid;
@@ -364,7 +374,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         _validateBrackets(p.isLong, price, p.takeProfit, p.stopLoss);
 
         uint256 execFee = executionFee;
-        uint256 fee = _openFee(m, p.size, p.isLong);
+        uint256 fee = _openFee(m, p.size, p.isLong, p.margin);
         uint256 brackets = (p.takeProfit != 0 ? 1 : 0) + (p.stopLoss != 0 ? 1 : 0);
         usdc.safeTransferFrom(msg.sender, address(this), p.margin + fee + brackets * execFee);
 
@@ -385,6 +395,8 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         Position memory pos = _positions[key];
         if (pos.trader == address(0)) revert PositionNotFound();
         Market storage m = _markets[marketId];
+        // A settled dated market closes at its fixed settlement price, so no stale-price option remains there.
+        if (m.settlementPrice == 0 && pos.size > pos.margin * DIRECT_MAX_LEVERAGE) revert HighLeverageNeedsOrder();
 
         OraclePrice memory px = _readPrice(m);
         if (px.publishTime <= pos.openedAt) revert PriceNotAfterOpen();
@@ -421,7 +433,8 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         _validateBrackets(p.isLong, p.triggerPrice, p.takeProfit, p.stopLoss);
 
         uint256 execFee = executionFee;
-        uint256 feeBudget = Math.mulDiv(p.size, baseFeeBps + maxSkewFeeBps, BPS, Math.Rounding.Ceil);
+        uint256 feeBudget =
+            Math.min(Math.mulDiv(p.size, baseFeeBps + maxSkewFeeBps, BPS, Math.Rounding.Ceil), _feeCap(p.margin));
         uint256 brackets = (p.takeProfit != 0 ? 1 : 0) + (p.stopLoss != 0 ? 1 : 0);
         usdc.safeTransferFrom(msg.sender, address(this), p.margin + feeBudget + (1 + brackets) * execFee);
 
@@ -668,9 +681,9 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         }
     }
 
-    /// @notice Open fee a trade of `size` on the given side would pay right now.
-    function quoteOpenFee(bytes32 marketId, uint256 size, bool isLong) external view returns (uint256) {
-        return _openFee(_existingMarket(marketId), size, isLong);
+    /// @notice Open fee a trade of `size` and `margin` on the given side would pay right now.
+    function quoteOpenFee(bytes32 marketId, uint256 size, bool isLong, uint256 margin) external view returns (uint256) {
+        return _openFee(_existingMarket(marketId), size, isLong, margin);
     }
 
     /// @notice Current funding rate per second per unit of notional (1e18). Positive: longs pay shorts.
@@ -742,7 +755,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         int256 cap = (pos.margin * maxProfitMultiple).toInt256();
         if (pnl > cap) pnl = cap;
         uint256 refund = _removePosition(key, pos, m);
-        uint256 fee = Math.mulDiv(pos.size, baseFeeBps, BPS, Math.Rounding.Ceil);
+        uint256 fee = Math.min(Math.mulDiv(pos.size, baseFeeBps, BPS, Math.Rounding.Ceil), _feeCap(pos.margin));
 
         uint256 payout; // margin returned plus profit received from the vault
         if (pnl >= 0) {
@@ -776,7 +789,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         _validateBrackets(o.isLong, price, 0, o.stopLoss);
 
         _removeOrder(orderId, address(0));
-        uint256 fee = Math.min(_openFee(m, o.size, o.isLong), o.feeBudget);
+        uint256 fee = Math.min(_openFee(m, o.size, o.isLong, o.margin), o.feeBudget);
         bytes32 key = _open(o.trader, o.priceId, m, o.isLong, o.margin, o.size, price, fee);
         _attachBrackets(key, o.takeProfit, o.stopLoss, o.executionFee);
         _pay(o.trader, o.feeBudget - fee);
@@ -957,7 +970,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
 
     /// @dev Base fee plus a skew surcharge. The surcharge applies only when the trade leaves the market more
     ///      one-sided than it found it, and scales with the resulting skew ratio.
-    function _openFee(Market storage m, uint256 size, bool isLong) private view returns (uint256 fee) {
+    function _openFee(Market storage m, uint256 size, bool isLong, uint256 margin) private view returns (uint256 fee) {
         uint256 longOi = m.longOi;
         uint256 shortOi = m.shortOi;
         uint256 skewBefore = _absDiff(longOi, shortOi);
@@ -970,6 +983,11 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
             uint256 denominator = Math.max(longOi + shortOi, m.skewScale);
             fee += Math.mulDiv(size * maxSkewFeeBps, skewAfter, denominator * BPS, Math.Rounding.Ceil);
         }
+        fee = Math.min(fee, _feeCap(margin));
+    }
+
+    function _feeCap(uint256 margin) private pure returns (uint256) {
+        return (margin * MARGIN_FEE_CAP_BPS) / BPS;
     }
 
     /// @dev Funding per second per unit of notional. The heavier side pays, the lighter side receives, and the

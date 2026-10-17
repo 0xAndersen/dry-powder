@@ -84,10 +84,10 @@ contract KnownIssuesTest is Base {
     /// The skew surcharge is priced on the end-state skew of each trade, so splitting one trade across
     /// accounts is cheaper than doing it in one piece.
     function test_L06_skewFeeIsReducedBySplittingAcrossAccounts() public {
-        uint256 whole = engine.quoteOpenFee(BTC, 1_000_000e6, true);
-        uint256 first = engine.quoteOpenFee(BTC, 500_000e6, true);
+        uint256 whole = engine.quoteOpenFee(BTC, 1_000_000e6, true, type(uint256).max / 1e5);
+        uint256 first = engine.quoteOpenFee(BTC, 500_000e6, true, type(uint256).max / 1e5);
         _open(alice, BTC, true, 50_000e6, 500_000e6);
-        uint256 second = engine.quoteOpenFee(BTC, 500_000e6, true);
+        uint256 second = engine.quoteOpenFee(BTC, 500_000e6, true, type(uint256).max / 1e5);
         assertEq(whole, 1_500e6);
         assertEq(first + second, 1_250e6);
     }
@@ -245,13 +245,13 @@ contract KnownIssuesTest is Base {
     }
 
     // ───────────────────────── N-07 (new in v2, the staking side of the old H-01) ─────────────────────────
-    /// KEG is still minted on GROSS losses: 100 per USDC a position loses, whether or not the same person
-    /// holds the offsetting winner. A delta-neutral pair therefore manufactures KEG for the price of its
+    /// DRY is still minted on GROSS losses: 100 per USDC a position loses, whether or not the same person
+    /// holds the offsetting winner. A delta-neutral pair therefore manufactures DRY for the price of its
     /// trading fees. It no longer drains LPs (H-01 is fixed), but it lets a farmer out-stake the traders who
     /// really lost money and collect most of the 15% performance stream that was meant for them.
     function test_N07_houseIsFarmedWithHedgedPairsForTheCostOfFees() public {
         _flatFees();
-        // An honest trader really loses 1,000 USDC and stakes the 100,000 KEG that earned her.
+        // An honest trader really loses 1,000 USDC and stakes the 100,000 DRY that earned her.
         _open(carol, ETH, true, 2_000e6, 10_000e6);
         _setEth(3_600);
         _close(carol, ETH);

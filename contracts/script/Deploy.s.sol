@@ -14,6 +14,7 @@ import {IHouseVault} from "../src/interfaces/IHouseVault.sol";
 import {IRewardToken} from "../src/interfaces/IRewardToken.sol";
 import {PublisherOracle} from "../src/testnet/PublisherOracle.sol";
 import {TestUSDC} from "../src/testnet/TestUSDC.sol";
+import {AgentAccountFactory} from "../src/AgentAccount.sol";
 import {MarketConfig} from "../src/Types.sol";
 
 /// @notice Deploys the protocol (PythOracle adapter, HouseVault, RewardToken, PerpEngine, EngineLens) and lists
@@ -73,6 +74,7 @@ contract Deploy is Script {
         RewardToken rewardToken;
         PerpEngine engine;
         EngineLens lens;
+        AgentAccountFactory agentFactory;
         uint64 futureExpiry;
         bytes32[] marketIds;
         string[] marketSymbols;
@@ -115,7 +117,9 @@ contract Deploy is Script {
         d.oracle = new PythOracle(IPyth(d.pyth));
         _deployCore(d, deployer);
         d.lens = new EngineLens(d.engine);
+        d.agentFactory = new AgentAccountFactory(IERC20(d.usdc), d.engine);
         _listMarkets(d);
+        if (testCollateral) _seedVault(d, deployer, vm.envOr("VAULT_SEED", uint256(0)));
 
         // Price staleness window. The engine's built-in 3s suits keeper-submitted transactions; a person
         // approving in a browser wallet needs longer, at the cost of a wider stale-price window (SECURITY.md).
@@ -159,24 +163,37 @@ contract Deploy is Script {
         d.marketSymbols = new string[](8);
         string memory futureSymbol = string.concat("BTC-USD-", expiryTag(d.futureExpiry));
 
-        _list(d, 0, BTC_USD, MarketConfig("BTC-USD", BTC_USD, 0, false, 100, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
-        _list(d, 1, ETH_USD, MarketConfig("ETH-USD", ETH_USD, 0, false, 100, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
-        _list(d, 2, SOL_USD, MarketConfig("SOL-USD", SOL_USD, 0, false, 50, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
-        _list(d, 3, EUR_USD, MarketConfig("EUR-USD", EUR_USD, 0, false, 50, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
-        _list(d, 4, USD_JPY, MarketConfig("JPY-USD", USD_JPY, 0, true, 50, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
-        _list(d, 5, XAU_USD, MarketConfig("XAU-USD", XAU_USD, 0, false, 50, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
+        // Majors go to 1000x (above 100x: keeper orders only, see PerpEngine.DIRECT_MAX_LEVERAGE).
+        _list(d, 0, BTC_USD, MarketConfig("BTC-USD", BTC_USD, 0, false, 1000, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
+        _list(d, 1, ETH_USD, MarketConfig("ETH-USD", ETH_USD, 0, false, 1000, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
+        _list(d, 2, SOL_USD, MarketConfig("SOL-USD", SOL_USD, 0, false, 500, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
+        _list(d, 3, EUR_USD, MarketConfig("EUR-USD", EUR_USD, 0, false, 250, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
+        _list(d, 4, USD_JPY, MarketConfig("JPY-USD", USD_JPY, 0, true, 100, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
+        _list(d, 5, XAU_USD, MarketConfig("XAU-USD", XAU_USD, 0, false, 250, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
         _list(
             d,
             6,
             keccak256("ETH-BTC"),
-            MarketConfig("ETH-BTC", ETH_USD, BTC_USD, false, 50, 0, MAX_OI_PER_SIDE, SKEW_SCALE)
+            MarketConfig("ETH-BTC", ETH_USD, BTC_USD, false, 100, 0, MAX_OI_PER_SIDE, SKEW_SCALE)
         );
         _list(
             d,
             7,
             keccak256(bytes(futureSymbol)),
-            MarketConfig(futureSymbol, BTC_USD, 0, false, 50, d.futureExpiry, MAX_OI_PER_SIDE, SKEW_SCALE)
+            MarketConfig(futureSymbol, BTC_USD, 0, false, 250, d.futureExpiry, MAX_OI_PER_SIDE, SKEW_SCALE)
         );
+    }
+
+    /// @dev Test collateral only: mints `amount` (TestUSDC caps each mint at 1,000,000) and deposits it as the house.
+    function _seedVault(Deployment memory d, address deployer, uint256 amount) internal {
+        if (amount == 0) return;
+        for (uint256 left = amount; left > 0;) {
+            uint256 chunk = left > 1_000_000e6 ? 1_000_000e6 : left;
+            TestUSDC(d.usdc).mint(deployer, chunk);
+            left -= chunk;
+        }
+        IERC20(d.usdc).approve(address(d.vault), amount);
+        d.vault.deposit(amount, deployer);
     }
 
     function _list(Deployment memory d, uint256 i, bytes32 marketId, MarketConfig memory cfg) internal {
@@ -190,9 +207,10 @@ contract Deploy is Script {
         console2.log("Pyth / publisher:    ", d.pyth);
         console2.log("PythOracle (adapter):", address(d.oracle));
         console2.log("HouseVault  (dpUSDC):", address(d.vault));
-        console2.log("RewardToken (KEG): ", address(d.rewardToken));
+        console2.log("RewardToken (DRY): ", address(d.rewardToken));
         console2.log("PerpEngine:          ", address(d.engine));
         console2.log("EngineLens:          ", address(d.lens));
+        console2.log("AgentAccountFactory: ", address(d.agentFactory));
         console2.log("Dated future:        ", d.marketSymbols[7]);
 
         string memory json = "deployment";
@@ -208,6 +226,7 @@ contract Deploy is Script {
         vm.serializeAddress(json, "rewardToken", address(d.rewardToken));
         vm.serializeAddress(json, "perpEngine", address(d.engine));
         vm.serializeAddress(json, "engineLens", address(d.lens));
+        vm.serializeAddress(json, "agentFactory", address(d.agentFactory));
         vm.serializeUint(json, "futureExpiry", d.futureExpiry);
         vm.serializeBytes32(json, "marketIds", d.marketIds);
         string memory out = vm.serializeString(json, "marketSymbols", d.marketSymbols);
