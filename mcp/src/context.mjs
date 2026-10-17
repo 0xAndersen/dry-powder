@@ -1,6 +1,6 @@
 // Configuration, chain access, market data and the trading identity for the MCP server.
 import { readFileSync } from "node:fs";
-import { createPublicClient, createWalletClient, defineChain, http, parseEventLogs } from "viem";
+import { createPublicClient, createWalletClient, defineChain, fallback, http, parseEventLogs } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { agentAccountAbi, engineLensAbi, perpEngineAbi, rewardTokenAbi, testUSDCAbi } from "./abi.mjs";
 import { ConfirmationStore, Guardrails, ToolError } from "./guard.mjs";
@@ -75,15 +75,16 @@ export class Context {
 
   async _init() {
     const d = await loadDeployment(this.config.deployment);
-    const rpcUrl = this.config.rpcUrl || d.rpcUrl || "https://rpc.testnet.arc.network";
+    const rpcUrl = this.config.rpcUrl || d.rpcUrl || "https://rpc.testnet.arc.io";
     const chainId = Number(d.chainId ?? 5042002);
     this.chain = defineChain({ id: chainId, name: `chain ${chainId}`, nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 }, rpcUrls: { default: { http: [rpcUrl] } } });
-    this.transport = http(rpcUrl, { retryCount: 2, timeout: 20_000 });
+    const rpcs = [rpcUrl, ...(chainId === 5042002 ? ["https://rpc.testnet.arc.io", "https://rpc.quicknode.testnet.arc.io", "https://rpc.drpc.testnet.arc.io"] : [])];
+    this.transport = fallback([...new Set(rpcs)].map((u) => http(u, { retryCount: 1, timeout: 20_000 })), { rank: false });
     this.pub = createPublicClient({ chain: this.chain, transport: this.transport, pollingInterval: 500 });
     this.d = {
       engine: d.engine, lens: d.lens, vault: d.vault, token: d.token, usdc: d.usdc, factory: d.agentFactory ?? null,
       collateralIsTest: d.collateral ? d.collateral === "test" : d.collateralIsTest ?? true,
-      explorer: d.explorerUrl ?? "https://testnet.arcscan.app", app: d.appUrl ?? null, chainId,
+      explorer: d.explorerUrl ?? "https://explorer.testnet.arc.io", app: d.appUrl ?? null, chainId,
     };
     for (const k of ["engine", "lens", "usdc"]) if (!/^0x[0-9a-fA-F]{40}$/.test(this.d[k] || "")) throw new ToolError("CONFIG_ERROR", `deployment is missing ${k}`);
     const c = this.config;

@@ -10,7 +10,7 @@ import { preflight, deploy, fund, topUp, book, wireMarkets, plan } from "./deplo
 import { status, report, summary, leaderboard, gas, agent, phase } from "./report.js";
 
 const DEF = {
-  rpcUrl: "https://rpc.testnet.arc.network", chainId: 5042002, viemUrl: "https://esm.sh/viem@2.21.0", viemAccountsUrl: "https://esm.sh/viem@2.21.0/accounts",
+  rpcUrl: "https://rpc.testnet.arc.io", chainId: 5042002, viemUrl: "https://esm.sh/viem@2.21.0", viemAccountsUrl: "https://esm.sh/viem@2.21.0/accounts",
   krakenUrl: "https://api.kraken.com", collateral: "test", usdcAddress: "0x3600000000000000000000000000000000000000", agents: 100, agentCapital: 10000, vaultSeed: 5000000,
   gasPerAgent: "0.14", keeperGas: "2", publisherGas: "0.5", topUpAmount: "0.06", lowWater: "0.06", deployerReserve: "0.3", tipGwei: 1, fundBatch: 50, gasCache: true,
   txTimeoutMs: 45000, logRange: 500, ixLag: 1,

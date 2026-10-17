@@ -133,6 +133,6 @@ Launch markets on testnet:
 
 ## Arc Testnet facts (verified from a browser on 2026-10-12)
 
-chain id 5042002; RPC `https://rpc.testnet.arc.network` (CORS open); explorer `https://testnet.arcscan.app`;
+chain id 5042002; RPC `https://rpc.testnet.arc.io` (CORS open); explorer `https://explorer.testnet.arc.io`;
 gas token = USDC (18 decimals natively), base fee floor 20 gwei (send `maxFeePerGas >= 20 gwei`);
 Multicall3 at `0xcA11bde05977b3631167028862bE2a173976CA11`; block time ~0.5 s, `block.timestamp` in seconds.

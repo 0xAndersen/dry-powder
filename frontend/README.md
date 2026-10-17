@@ -42,7 +42,7 @@ Put a `config.json` next to `index.html` (start from `out/config.sample.json`):
   "houseVaultAddress": "0x…",
   "rewardTokenAddress": "0x…",
   "usdcAddress": "0x…",
-  "rpcUrl": "https://rpc.testnet.arc.network",
+  "rpcUrl": "https://rpc.testnet.arc.io",
   "chainId": 5042002,
   "oracleMode": "publisher",
   "collateralSymbol": "USDC",
@@ -78,7 +78,7 @@ Hosting notes:
 | `HOUSE_VAULT_ADDRESS` | `houseVaultAddress` | `vault` | required | HouseVault |
 | `REWARD_TOKEN_ADDRESS` | `rewardTokenAddress` | `token` | required | RewardToken (KEG) |
 | `USDC_ADDRESS` | `usdcAddress` | `collateral` | `0x3600…0000` | collateral token (Arc USDC, or TestUSDC) |
-| `RPC_URL` | `rpcUrl` | `rpc` | `https://rpc.testnet.arc.network` | JSON-RPC endpoint (must allow browser origins) |
+| `RPC_URL` | `rpcUrl` | `rpc` | `https://rpc.testnet.arc.io` | JSON-RPC endpoint (must allow browser origins) |
 | `CHAIN_ID` | `chainId` | `chain` | `5042002` | chain id |
 | `ORACLE_MODE` | `oracleMode` | `mode` | `publisher` | `publisher` or `pyth`, see below |
 | `COLLATERAL_SYMBOL` | `collateralSymbol` | `symbol` | `USDC` | label for the collateral token |
@@ -86,7 +86,7 @@ Hosting notes:
 | `KRAKEN_URL` | `krakenUrl` | `kraken` | `https://api.kraken.com` | tape prices and candles |
 | `HERMES_URL` | `hermesUrl` | `hermes` | `https://hermes.pyth.network` | Pyth mode: price service |
 | `PYTH_API_KEY` | `pythApiKey` | &mdash; | empty | Pyth mode: sent as `Authorization: Bearer …` |
-| `EXPLORER_URL` | `explorerUrl` | `explorer` | `https://testnet.arcscan.app` | transaction links |
+| `EXPLORER_URL` | `explorerUrl` | `explorer` | `https://explorer.testnet.arc.io` | transaction links |
 
 `PYTH_API_KEY` ends up in the browser in both builds (the browser is what calls Hermes). Use a key you are
 willing to expose, or put a proxy in front of Hermes and point `HERMES_URL` at it.

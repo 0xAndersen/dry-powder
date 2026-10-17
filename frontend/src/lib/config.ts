@@ -57,11 +57,11 @@ export const STICKY_QUERY_KEYS: readonly string[] = [
 
 const DEFAULTS = {
   USDC_ADDRESS: "0x3600000000000000000000000000000000000000",
-  RPC_URL: "https://rpc.testnet.arc.network",
+  RPC_URL: "https://rpc.testnet.arc.io",
   HERMES_URL: "https://hermes.pyth.network",
   KRAKEN_URL: "https://api.kraken.com",
   CHAIN_ID: "5042002",
-  EXPLORER_URL: "https://testnet.arcscan.app",
+  EXPLORER_URL: "https://explorer.testnet.arc.io",
   ORACLE_MODE: "publisher",
   COLLATERAL_SYMBOL: "USDC",
 } as const;

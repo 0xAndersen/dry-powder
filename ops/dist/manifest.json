@@ -3,14 +3,14 @@
   "chunkChars": [
     24000,
     24000,
-    21610
+    21614
   ],
-  "bootChars": 821,
-  "totalChars": 70431,
-  "jsBytes": 77983,
+  "bootChars": 820,
+  "totalChars": 70434,
+  "jsBytes": 77978,
   "bytecodeBytes": 52328,
-  "deflatedBytes": 52068,
-  "checksum": 4054104252,
+  "deflatedBytes": 52069,
+  "checksum": 3520791871,
   "bytecodeSha256": "191879ecb9d4fcbb415f583f34572126f7b10fab3f279bf7013488035698b9ab",
   "contracts": {
     "TestUSDC": 2540,

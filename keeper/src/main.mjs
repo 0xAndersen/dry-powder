@@ -12,7 +12,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { createPublicClient, createWalletClient, defineChain, http, keccak256, toHex } from "viem";
+import { createPublicClient, createWalletClient, defineChain, fallback, http, keccak256, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { makeKraken } from "./feeds.mjs";
 import { makeOperator } from "./operator.mjs";
@@ -54,7 +54,21 @@ function key(name, role) {
 }
 
 const a = addresses();
-const rpcUrl = a.rpcUrl || "https://rpc.testnet.arc.network";
+// Arc Testnet public RPCs (docs.arc.io), tried in order; a failing one is skipped until it recovers.
+const ARC_TESTNET_RPCS = [
+  "https://rpc.testnet.arc.io",
+  "https://rpc.quicknode.testnet.arc.io",
+  "https://rpc.drpc.testnet.arc.io",
+  "https://rpc.blockdaemon.testnet.arc.io",
+  "https://5042002.rpc.thirdweb.com",
+];
+const rpcUrls = [...new Set([
+  ...(env.RPC_URLS ? env.RPC_URLS.split(/[\s,]+/).filter(Boolean) : []),
+  ...(a.rpcUrl ? [a.rpcUrl] : []),
+  ...(a.chainId === 5042002 ? ARC_TESTNET_RPCS : []),
+])];
+if (!rpcUrls.length) throw fatal("set RPC_URL or RPC_URLS");
+const rpcUrl = rpcUrls[0];
 const chain = defineChain({
   id: a.chainId,
   name: a.chainId === 5042002 ? "Arc Testnet" : `chain ${a.chainId}`,
@@ -64,7 +78,10 @@ const chain = defineChain({
 });
 // Public RPCs rate-limit (Arc's answers 429): retry with exponential backoff, and batch every read issued in
 // the same tick into one Multicall3 eth_call.
-const transport = http(rpcUrl, { retryCount: 6, retryDelay: 1_000, timeout: 30_000 });
+const transport = fallback(
+  rpcUrls.map((u) => http(u, { retryCount: 2, retryDelay: 750, timeout: 15_000 })),
+  { rank: false, retryCount: 3, retryDelay: 1_000 },
+);
 const MC3 = chain.contracts.multicall3.address;
 const probe = createPublicClient({ chain, transport });
 const hasMc3 = ((await probe.getCode({ address: MC3 }).catch(() => undefined)) ?? "0x").length > 2;
@@ -90,10 +107,10 @@ const opts = {
 const kraken = makeKraken(env.KRAKEN_URL || "https://api.kraken.com", num("STALE_FEED_MS", 60_000));
 const op = makeOperator({ pub, publisher, keeper, funder, chainId: a.chainId, addresses: a, kraken, opts, log });
 
-const actual = await pub.getChainId().catch((e) => { throw fatal(`RPC ${rpcUrl} unreachable: ${e?.shortMessage ?? e?.message ?? e}`); });
+const actual = await pub.getChainId().catch((e) => { throw fatal(`no RPC reachable (${rpcUrls.join(", ")}): ${e?.shortMessage ?? e?.message ?? e}`); });
 if (actual !== a.chainId) throw fatal(`RPC is chain ${actual}, expected ${a.chainId}`);
 annotate("notice", `keeper started: publisher ${publisher.account.address}, keeper ${keeper.account.address}`);
-log("start", JSON.stringify({ multicall: hasMc3, rpcUrl, chainId: a.chainId, engine: a.engine, oracle: a.oracle, publisher: publisher.account.address, keeper: keeper.account.address, funder: funder?.account.address ?? null, opts }));
+log("start", JSON.stringify({ multicall: hasMc3, rpcUrls, chainId: a.chainId, engine: a.engine, oracle: a.oracle, publisher: publisher.account.address, keeper: keeper.account.address, funder: funder?.account.address ?? null, opts }));
 
 let last = { at: 0 };
 let stopping = false;

@@ -23,10 +23,10 @@ services:
       ORACLE_MODE: ${ORACLE_MODE:-publisher}
       KRAKEN_URL: ${KRAKEN_URL:-https://api.kraken.com}
       PYTH_API_KEY: ${PYTH_API_KEY:-}
-      RPC_URL: ${RPC_URL:-https://rpc.testnet.arc.network}
+      RPC_URL: ${RPC_URL:-https://rpc.testnet.arc.io}
       HERMES_URL: ${HERMES_URL:-https://hermes.pyth.network}
       CHAIN_ID: ${CHAIN_ID:-5042002}
-      EXPLORER_URL: ${EXPLORER_URL:-https://testnet.arcscan.app}
+      EXPLORER_URL: ${EXPLORER_URL:-https://explorer.testnet.arc.io}
 
   # Price publisher + keeper (keeper/.env.example). Reads the deployment file and DEPLOYER_KEY (or explicit keys).
   keeper:

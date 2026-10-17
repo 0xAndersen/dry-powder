@@ -15,7 +15,7 @@ const src = process.argv[2] ?? join(root, "ops/output-testnet/addresses.json");
 const outFile = join(root, "deployments/arc-testnet.json");
 const book = JSON.parse(readFileSync(src, "utf8"));
 const prev = existsSync(outFile) ? JSON.parse(readFileSync(outFile, "utf8")) : {};
-const rpcUrl = env.RPC_URL || "https://rpc.testnet.arc.network";
+const rpcUrl = env.RPC_URL || "https://rpc.testnet.arc.io";
 const chainId = Number(env.CHAIN_ID || 5042002);
 const chain = defineChain({ id: chainId, name: "Arc Testnet", nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 }, rpcUrls: { default: { http: [rpcUrl] } } });
 const pub = createPublicClient({ chain, transport: http(rpcUrl, { retryCount: 4 }) });
@@ -42,7 +42,7 @@ const deployment = {
   network: "arc-testnet",
   chainId,
   rpcUrl,
-  explorerUrl: "https://testnet.arcscan.app",
+  explorerUrl: "https://explorer.testnet.arc.io",
   appUrl,
   deployedAt: prev.engine?.toLowerCase() === book.engine.toLowerCase() ? prev.deployedAt : new Date().toISOString(),
   collateral: "test",

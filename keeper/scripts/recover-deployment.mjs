@@ -16,7 +16,7 @@ import { engineLensAbi, houseVaultAbi, perpEngineAbi, pythOracleAbi } from "../s
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const key = process.env.DEPLOYER_KEY;
 if (!/^0x[0-9a-fA-F]{64}$/.test(key || "")) throw new Error("set DEPLOYER_KEY");
-const rpcUrl = process.env.RPC_URL || "https://rpc.testnet.arc.network";
+const rpcUrl = process.env.RPC_URL || "https://rpc.testnet.arc.io";
 const chain = defineChain({ id: 5042002, name: "Arc Testnet", nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 }, rpcUrls: { default: { http: [rpcUrl] } } });
 const pub = createPublicClient({ chain, transport: http(rpcUrl, { retryCount: 4 }) });
 const deployer = privateKeyToAccount(key).address;

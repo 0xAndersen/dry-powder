@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider, type Query } from "@tanstack/react-query";
-import { WagmiProvider, createConfig, http, injected } from "wagmi";
+import { WagmiProvider, createConfig, fallback, http, injected } from "wagmi";
 import type { Chain } from "viem";
 import type { RuntimeConfig } from "@/lib/config";
 import { buildChain } from "@/lib/chain";
@@ -18,6 +18,14 @@ type AppContextValue = {
   /** Pyth prices and signed updates (pyth mode). */
   hermes: HermesStore | null;
 };
+
+/** Public Arc Testnet RPCs (docs.arc.io) used when the configured one fails. */
+const ARC_TESTNET_FALLBACK_RPCS = [
+  "https://rpc.testnet.arc.io",
+  "https://rpc.quicknode.testnet.arc.io",
+  "https://rpc.drpc.testnet.arc.io",
+  "https://rpc.blockdaemon.testnet.arc.io",
+];
 
 const AppContext = createContext<AppContextValue | null>(null);
 
@@ -47,7 +55,15 @@ export function Providers({ config, children }: { config: RuntimeConfig; childre
       chains: [chain],
       connectors: [injected({ shimDisconnect: true })],
       // Reads issued in the same tick travel in one JSON-RPC batch; no Multicall deployment is assumed.
-      transports: { [chain.id]: http(config.rpcUrl, { batch: { wait: 12 }, retryCount: 2 }) },
+      // The configured RPC first; on Arc Testnet the other public providers take over if it fails.
+      transports: {
+        [chain.id]: fallback(
+          [config.rpcUrl, ...(chain.id === 5042002 ? ARC_TESTNET_FALLBACK_RPCS : [])]
+            .filter((u, i, all) => all.indexOf(u) === i)
+            .map((u) => http(u, { batch: { wait: 12 }, retryCount: 1 })),
+          { rank: false },
+        ),
+      },
       batch: { multicall: false },
       pollingInterval: 1_000,
       ssr: true,

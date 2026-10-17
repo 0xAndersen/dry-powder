@@ -64,7 +64,7 @@ const must = (r, what) => { if (!r || r.error) { log(what, "failed:", JSON.strin
 
 const minutes = +(process.env.MINUTES || 30);
 const cfg = {
-  rpcUrl: process.env.RPC_URL || "https://rpc.testnet.arc.network",
+  rpcUrl: process.env.RPC_URL || "https://rpc.testnet.arc.io",
   chainId: 5042002,
   deployerKey: key,
   // Role keys (publisher, keeper, agents) derive from the seed, so it must be secret: by default it derives

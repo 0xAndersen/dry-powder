@@ -60,7 +60,7 @@ Only `deployerKey` and `seed` are required. Defaults:
 
 ```js
 {
-  rpcUrl: "https://rpc.testnet.arc.network", chainId: 5042002,
+  rpcUrl: "https://rpc.testnet.arc.io", chainId: 5042002,
   viemUrl: "https://esm.sh/viem@2.21.0", viemAccountsUrl: "https://esm.sh/viem@2.21.0/accounts",
   krakenUrl: "https://api.kraken.com",
   collateral: "test",            // "usdc": use usdcAddress (default 0x3600...0000) and fund agents by transfer
