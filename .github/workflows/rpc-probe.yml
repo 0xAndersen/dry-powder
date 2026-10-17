@@ -1,0 +1,27 @@
+name: RPC probe
+
+# Checks which Arc Testnet RPC endpoints answer from GitHub's runners (results as annotations).
+on:
+  workflow_dispatch:
+    inputs:
+      extra:
+        description: Extra RPC URLs, space separated
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe
+        env:
+          EXTRA: ${{ inputs.extra }}
+        run: |
+          for u in https://rpc.testnet.arc.network https://rpc.testnet.arc.io https://arc-testnet.drpc.org https://5042002.rpc.thirdweb.com https://rpc.ankr.com/arc_testnet https://explorer.testnet.arc.io/api/eth-rpc https://testnet.arcscan.app/api/eth-rpc $EXTRA; do
+            body='{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}'
+            out=$(curl -s -m 10 -w ' HTTP%{http_code} %{time_total}s' -X POST -H 'content-type: application/json' --data "$body" "$u" | tr -d '\n' | cut -c1-200)
+            echo "::notice::$u -> $out"
+          done
