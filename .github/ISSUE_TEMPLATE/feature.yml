@@ -1,0 +1,20 @@
+name: Idea or feature
+description: Something the venue, the SDK or the agent tooling should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: Who is it for (trader, LP, agent builder, integrator) and what is hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+  - type: textarea
+    id: risk
+    attributes:
+      label: Risk
+      description: How could this hurt traders or the vault? What should stop it?

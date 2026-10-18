@@ -1,0 +1,49 @@
+{
+  "name": "@dry-powder/sdk",
+  "version": "0.3.0",
+  "description": "TypeScript SDK for Dry Powder, the open, risk-first perps venue on Arc: markets, worst-case quotes, keeper-filled orders up to 1000x, and agent accounts",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "smoke": "node test/smoke.mjs"
+  },
+  "peerDependencies": {
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "5.9.3",
+    "viem": "2.21.0"
+  },
+  "keywords": [
+    "perpetuals",
+    "arc",
+    "usdc",
+    "agents",
+    "defi",
+    "risk"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0xAndersen/dry-powder",
+    "directory": "sdk"
+  },
+  "license": "MIT"
+}

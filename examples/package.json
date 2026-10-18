@@ -1,0 +1,16 @@
+{
+  "name": "dry-powder-examples",
+  "private": true,
+  "type": "module",
+  "description": "Agents and scripts built on @dry-powder/sdk",
+  "scripts": {
+    "quickstart": "node quickstart.mjs",
+    "agent": "node risk-capped-agent.mjs",
+    "swarm": "node swarm.mjs"
+  },
+  "dependencies": {
+    "@dry-powder/sdk": "file:../sdk",
+    "viem": "2.21.0"
+  },
+  "license": "MIT"
+}

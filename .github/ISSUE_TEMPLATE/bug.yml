@@ -1,0 +1,27 @@
+name: Bug
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [contracts, app, keeper, MCP server, SDK, examples, deploy/workflows, docs]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Transaction hashes, market, leverage, the command you ran. Never paste a private key.
+  - type: input
+    id: deployment
+    attributes:
+      label: Deployment
+      description: The engine address from deployments/arc-testnet.json, or "local"

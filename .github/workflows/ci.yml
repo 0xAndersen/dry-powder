@@ -36,13 +36,19 @@ jobs:
       - name: MCP server
         working-directory: mcp
         run: npm ci && npm test
+      - name: SDK
+        working-directory: sdk
+        run: npm ci && npm test
+      - name: Examples (syntax)
+        working-directory: examples
+        run: for f in *.mjs; do node --check "$f"; done
       - name: Frontend
         working-directory: frontend
         run: npm ci && npm run typecheck && npm run build:static
 
   whole-system:
     # Local chain + contracts + mock Kraken + scripted traders, with the production keeper publishing and
-    # executing, then the full UI click-through and the MCP server driving an agent account.
+    # executing, then the full UI click-through, the SDK trading 1000x, and the MCP server driving an agent account.
     runs-on: ubuntu-latest
     needs: [contracts, packages]
     steps:
@@ -54,6 +60,7 @@ jobs:
       - run: cd contracts && forge build --skip test --skip script
       - run: cd keeper && npm ci
       - run: cd mcp && npm ci
+      - run: cd sdk && npm ci
       - name: Frontend and browser
         working-directory: frontend
         run: |

@@ -1,4 +1,4 @@
-# Security notes (v2)
+# Security notes (v3)
 
 Not professionally audited. v1 was reviewed adversarially by an independent reviewer; v2 was reviewed again by
 the engineer who rebuilt the test-suite, who also fixed two defects found on the way. Every claim below has a
@@ -8,6 +8,24 @@ test: fixes in `contracts/test/Regressions.t.sol`, open issues as passing proofs
 Custody held on every path tested, including an invariant suite: the engine holds exactly open margins plus
 order escrows plus deferred payments, and the vault holds exactly its house balance plus unclaimed staker
 yield. The open problems are economic.
+
+## High leverage (v3)
+
+1000x makes small price errors large: at 1000x a 0.09% move is the whole margin. What stops that becoming a way
+to drain the vault:
+
+- **No stale-price option.** Above `DIRECT_MAX_LEVERAGE` (100x) a position can only open or close through a
+  keeper order, and a keeper order fills only at a price published after it was created (`PriceBeforeOrder`).
+  A trader who sees the real price move cannot trade against the older on-chain price.
+- **Bounded upside.** Profit per position is capped at 10x margin, so a 1000x position can take at most 10x its
+  margin from the vault, the same bound as at 10x.
+- **Open-interest caps** per market and side and as a share of vault NAV are unchanged; leverage does not change
+  how much notional can be open.
+- **Fees capped at 10% of margin per side**, so fees cannot exceed what the position can lose. Without the cap a
+  1000x round trip at 5 bp would cost the whole margin.
+- **Accepted:** at 1000x, the publisher's price noise (a few bp) decides many outcomes, and a liquidation at 90%
+  leaves 10% of margin as the buffer for the keeper's delay. On testnet the publisher is trusted (below).
+- Tests: `contracts/test/HighLeverage.t.sol`.
 
 ## Closed in v2
 
@@ -33,7 +51,7 @@ Found and fixed while testing v2:
 ## Open
 
 **Medium**
-- **Rebates are minted on gross losses.** A hedged pair mints KEG for the cost of fees and can then take
+- **Rebates are minted on gross losses.** A hedged pair mints DRY for the cost of fees and can then take
   most of the staker stream (98.8% in the PoC). LPs are not harmed; honest stakers are diluted.
 - **The mark counts uncollectable losses.** Between a price gap and the liquidation, unrealised losses beyond
   margin inflate the vault's marked value and an LP can exit too high.
