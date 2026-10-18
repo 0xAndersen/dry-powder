@@ -200,13 +200,17 @@ export class Context {
     const viaAccount = this.mode === "agent-account";
     const target = viaAccount ? { address: this.config.account, abi: agentAccountAbi } : { address: this.d.engine, abi: perpEngineAbi };
     const errors = [...agentAccountAbi, ...perpEngineAbi].filter((x) => x.type === "error");
-    const { request, result } = await this.pub.simulateContract({ ...target, abi: [...target.abi, ...errors], functionName, args, account: this.wallet.account });
+    const call = { ...target, abi: [...target.abi, ...errors], functionName, args, account: this.wallet.account };
+    const { request, result } = await this.pub.simulateContract(call);
+    // The estimate is the least gas that works on the state it ran on; the transaction runs on a later one.
+    // By address: with a local account viem estimates twice and caps the second at the first.
+    const gas = ((await this.pub.estimateContractGas({ ...call, account: this.wallet.account.address })) * 5n) / 4n + 50_000n;
     const block = await this.pub.getBlock();
     const base = block.baseFeePerGas ?? 20n * 10n ** 9n;
     const tip = 10n ** 9n;
     let maxFeePerGas = base * 2n + tip;
     if (maxFeePerGas < 25n * 10n ** 9n) maxFeePerGas = 25n * 10n ** 9n;
-    const hash = await this.wallet.writeContract({ ...request, maxFeePerGas, maxPriorityFeePerGas: tip });
+    const hash = await this.wallet.writeContract({ ...request, gas, maxFeePerGas, maxPriorityFeePerGas: tip });
     const receipt = await this.pub.waitForTransactionReceipt({ hash, timeout: 60_000 });
     if (receipt.status !== "success") throw new ToolError("TX_REVERTED", `transaction reverted: ${hash}`);
     return { hash, result, receipt, url: `${this.d.explorer}/tx/${hash}` };

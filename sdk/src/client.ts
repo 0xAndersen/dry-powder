@@ -548,13 +548,24 @@ export class DryPowder {
       ? { address: this.agentAccount, abi: [...agentAccountAbi, ...perpEngineAbi.filter((x) => x.type === "error")] }
       : { address: this.deployment.engine, abi: perpEngineAbi };
     // biome-ignore lint: one call site for six functions on two ABIs
-    const { request } = await this.publicClient.simulateContract({ ...target, functionName, args, account: w.account } as any);
-    const hash = await w.writeContract({ ...(request as object), ...(await this.fees()) } as never);
+    const call = { ...target, functionName, args, account: w.account } as any;
+    const { request } = await this.publicClient.simulateContract(call);
+    // The estimate is the least gas that works on the state it ran on; the transaction runs on a later one.
+    // By address: with a local account viem estimates twice and caps the second at the first.
+    const gas = withGasHeadroom(await this.publicClient.estimateContractGas({ ...call, account: w.account.address }));
+    const hash = await w.writeContract({ ...(request as object), gas, ...(await this.fees()) } as never);
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash, timeout: 90_000 });
     if (receipt.status !== "success") throw new Error(`transaction reverted: ${hash}`);
     return { hash, url: this.explorerTx(hash), receipt };
   }
 }
+
+/**
+ * Gas limit for a call estimated at `gas`: a quarter more plus room for a few fresh storage slots. The block
+ * the transaction lands in may differ from the one it was estimated on (an addition becomes a new position,
+ * funding accrues), and a tight limit then runs out. Unused gas is not charged.
+ */
+export const withGasHeadroom = (gas: bigint): bigint => (gas * 5n) / 4n + 50_000n;
 
 /** The notional to close: `size`, or `fraction` of the position, or 0 (everything). */
 export function closeSizeOf(positionSize: bigint, opts: { size?: bigint; fraction?: number }): bigint {
