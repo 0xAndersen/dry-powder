@@ -12,6 +12,7 @@
   },
   "scripts": {
     "start": "node src/main.mjs",
+    "index": "node src/indexer.mjs",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {

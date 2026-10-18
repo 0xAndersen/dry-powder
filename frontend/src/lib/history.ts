@@ -2,6 +2,7 @@ import type { Hex } from "viem";
 import type { EngineEvent } from "./events";
 import { orderTypeLabel } from "./events";
 import { formatUnits } from "viem";
+import { fmtUsdc } from "./format";
 
 /** One line of an account's history, derived from engine events. */
 export type HistoryRow = {
@@ -9,7 +10,8 @@ export type HistoryRow = {
   time: number;
   tx: Hex;
   marketId: Hex | null;
-  action: "Open" | "Close" | "Liquidation" | "Order placed" | "Order cancelled";
+  /** "Increase", "Decrease" (a partial close with realised PnL) and "Margin added" come from v3.1 engines. */
+  action: "Open" | "Close" | "Liquidation" | "Order placed" | "Order cancelled" | "Increase" | "Decrease" | "Margin added";
   /** How it happened: "Market", "Take-profit", "Stop-loss", "Limit open", "Keeper close", "Direct", ... */
   via: string;
   isLong: boolean | null;
@@ -23,13 +25,19 @@ export type HistoryRow = {
   minor: boolean;
 };
 
-export type HistorySummary = { realised: bigint; fees: bigint; net: bigint; closes: number; wins: number; liquidations: number };
+/** `closes` and `wins` count full closes; partial closes (`partials`) add to `realised` and `fees` only. */
+export type HistorySummary = { realised: bigint; fees: bigint; net: bigint; closes: number; wins: number; liquidations: number; partials: number };
 
 export function buildHistory(events: readonly EngineEvent[]): { rows: HistoryRow[]; summary: HistorySummary } {
   const orderTypes = new Map<string, number>();
-  const openByKey = new Map<string, { isLong: boolean; size: bigint }>();
+  const openByKey = new Map<string, { isLong: boolean; size: bigint; marketId: Hex }>();
   const rows: HistoryRow[] = [];
-  const summary: HistorySummary = { realised: 0n, fees: 0n, net: 0n, closes: 0, wins: 0, liquidations: 0 };
+  const summary: HistorySummary = { realised: 0n, fees: 0n, net: 0n, closes: 0, wins: 0, liquidations: 0, partials: 0 };
+  const via = (orderId: bigint | undefined) => {
+    if (orderId === undefined) return "Direct";
+    const type = orderTypes.get(orderId.toString());
+    return `${type === undefined ? "Keeper" : orderTypeLabel(type)} #${orderId}`;
+  };
 
   for (const e of events) {
     switch (e.type) {
@@ -52,7 +60,7 @@ export function buildHistory(events: readonly EngineEvent[]): { rows: HistoryRow
         break;
       }
       case "open":
-        openByKey.set(e.key, { isLong: e.isLong, size: e.size });
+        openByKey.set(e.key, { isLong: e.isLong, size: e.size, marketId: e.marketId });
         summary.fees += e.fee;
         rows.push({
           id: e.id, time: e.time, tx: e.tx, marketId: e.marketId, action: "Open",
@@ -84,6 +92,34 @@ export function buildHistory(events: readonly EngineEvent[]): { rows: HistoryRow
           id: e.id, time: e.time, tx: e.tx, marketId: e.marketId, action: "Liquidation",
           via: "Liquidator",
           isLong: opened?.isLong ?? null, size: opened?.size ?? null, price: e.price, pnl: -e.margin, fee: null, payout: 0n, minor: false,
+        });
+        break;
+      }
+      case "increase":
+        openByKey.set(e.key, { isLong: e.isLong, size: e.newSize, marketId: e.marketId });
+        summary.fees += e.fee;
+        rows.push({
+          id: e.id, time: e.time, tx: e.tx, marketId: e.marketId, action: "Increase", via: via(e.orderId),
+          isLong: e.isLong, size: e.addedSize, price: e.price, pnl: null, fee: e.fee, payout: null, minor: false,
+        });
+        break;
+      case "decrease": {
+        const opened = openByKey.get(e.key);
+        if (opened) opened.size = opened.size > e.closedSize ? opened.size - e.closedSize : 0n;
+        summary.realised += e.pnl;
+        summary.fees += e.fee;
+        summary.partials += 1;
+        rows.push({
+          id: e.id, time: e.time, tx: e.tx, marketId: e.marketId, action: "Decrease", via: via(e.orderId),
+          isLong: opened?.isLong ?? null, size: e.closedSize, price: e.price, pnl: e.pnl, fee: e.fee, payout: e.payout, minor: false,
+        });
+        break;
+      }
+      case "marginAdded": {
+        const opened = openByKey.get(e.key);
+        rows.push({
+          id: e.id, time: e.time, tx: e.tx, marketId: opened?.marketId ?? null, action: "Margin added", via: `${fmtUsdc(e.amount)} added`,
+          isLong: opened?.isLong ?? null, size: null, price: null, pnl: null, fee: null, payout: null, minor: false,
         });
         break;
       }

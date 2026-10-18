@@ -20,10 +20,12 @@ export function useLogFeed(options: {
   pollMs?: number;
   maxEvents?: number;
   exactTimes?: boolean;
+  /** Blocks per back-fill request; see `LogFeedOptions.blockRange`. */
+  blockRange?: number;
 }) {
   const cfg = useAppConfig();
   const client = usePublicClient({ chainId: cfg.chainId });
-  const { enabled = true, trader, lookbackSeconds, pollMs = 1_000, maxEvents = 4_000, exactTimes = false } = options;
+  const { enabled = true, trader, lookbackSeconds, pollMs = 1_000, maxEvents = 4_000, exactTimes = false, blockRange } = options;
   const [feed, setFeed] = useState<LogFeed | null>(null);
 
   useEffect(() => {
@@ -31,11 +33,11 @@ export function useLogFeed(options: {
       setFeed(null);
       return;
     }
-    const next = new LogFeed({ client, engine: cfg.perpEngine, trader, lookbackSeconds, pollMs, maxEvents, exactTimes });
+    const next = new LogFeed({ client, engine: cfg.perpEngine, trader, lookbackSeconds, pollMs, maxEvents, exactTimes, blockRange });
     next.start();
     setFeed(next);
     return () => next.stop();
-  }, [client, cfg.perpEngine, enabled, trader, lookbackSeconds, pollMs, maxEvents, exactTimes]);
+  }, [client, cfg.perpEngine, enabled, trader, lookbackSeconds, pollMs, maxEvents, exactTimes, blockRange]);
 
   const snapshot = useSyncExternalStore(feed?.subscribe ?? noopSubscribe, feed?.getSnapshot ?? emptySnapshot, emptySnapshot);
   return { ...snapshot, extend: (seconds: number) => (feed ? feed.extend(seconds) : Promise.resolve()) };
