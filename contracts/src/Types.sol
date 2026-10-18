@@ -55,21 +55,24 @@ enum OrderType {
     LimitOpen, // open when price reaches the trigger; with a marketable trigger this is a keeper-executed market order
     TakeProfit,
     StopLoss,
-    Close // keeper-executed market close; `triggerPrice` is the worst acceptable price, 0 for none
+    Close, // keeper-executed market close; `triggerPrice` is the worst acceptable price, 0 for none
+    StopOpen // open once the market trades through the trigger in the breakout direction (stop-entry)
 }
 
+/// @dev LimitOpen and StopOpen are "open orders" (they escrow margin and open or add to a position); the other
+///      three are "trigger orders" linked to a live position.
 struct Order {
     address trader;
     bytes32 priceId; // market id
     OrderType orderType;
     bool isLong;
     uint64 createdAt;
-    uint256 margin; // LimitOpen only
-    uint256 size; // LimitOpen only
+    uint256 margin; // open orders only
+    uint256 size; // open orders: notional to open; trigger orders: notional to close, 0 for the whole position
     uint256 triggerPrice; // 18 decimals
-    uint256 takeProfit; // LimitOpen only: bracket TP to attach on fill, 0 for none
-    uint256 stopLoss; // LimitOpen only: bracket SL to attach on fill, 0 for none
-    uint256 feeBudget; // LimitOpen only: escrowed maximum open fee
+    uint256 takeProfit; // open orders only: bracket TP to attach on fill, 0 for none
+    uint256 stopLoss; // open orders only: bracket SL to attach on fill, 0 for none
+    uint256 feeBudget; // open orders only: escrowed maximum open fee
     uint256 executionFee; // keeper fee escrowed per execution (this order and each bracket)
 }
 
@@ -88,9 +91,11 @@ struct LimitParams {
     bool isLong;
     uint256 margin;
     uint256 size;
-    uint256 triggerPrice; // long fills at or below, short fills at or above
+    // Limit: long fills at or below, short at or above. Stop-entry: long fills at or above, short at or below.
+    uint256 triggerPrice;
     uint256 takeProfit;
     uint256 stopLoss;
+    bool stopEntry; // true places a StopOpen (breakout) order instead of a LimitOpen
 }
 
 struct PositionView {
