@@ -5,10 +5,10 @@ markets and trade **for one account, with guardrails**. Ported from Project Nexu
 markets, price band, two-step confirmation) onto Dry Powder's on-chain engine.
 
 The safe way to run it is with an **agent account**: an `AgentAccount` contract owned by your wallet, holding the
-trading funds, with this server's key approved as an agent. The agent key can open, close, set TP/SL and cancel,
-within an on-chain policy (expiry, max leverage, max margin per order, optional market list). It can never
-withdraw, and the server refuses to start if you give it the owner's key. Create and manage agent accounts on
-the app's **Agents** page or straight from the contract.
+trading funds, with this server's key approved as an agent. The agent key can open, add to, close (all or part),
+set TP/SL, add margin and cancel, within an on-chain policy (expiry, max leverage, max margin per call, optional
+market list). It can never withdraw, and the server refuses to start if you give it the owner's key. Create and
+manage agent accounts on the app's **Agents** page or straight from the contract.
 
 ## Tools
 
@@ -19,15 +19,16 @@ Numbers are decimal strings for money and prices (`"2500"`, `"64000.5"`); sizes 
 | `dp_markets` | Markets: kind (perp, cross, inverted, dated), reference and on-chain price, max leverage, funding/hour, open interest; guardrails in force | no |
 | `dp_account {address?}` | Balances (USDC, DRY rebates, claimable), positions with PnL and liquidation price, open orders, the agent's policy | no |
 | `dp_quote {market, side, sizeUsd, leverage}` | Margin, fees, estimated entry and liquidation price | no |
-| `dp_open {market, side, sizeUsd, leverage, takeProfit?, stopLoss?, slippageBps?, confirmToken?}` | Keeper-filled market order; waits for the fill | **yes** |
-| `dp_limit {market, side, sizeUsd, leverage, price, takeProfit?, stopLoss?, confirmToken?}` | Resting limit order | **yes** |
-| `dp_close {market, slippageBps?, confirmToken?}` | Keeper-executed close with a worst-price bound; waits for it | **yes** |
-| `dp_set_tpsl {market, takeProfit?, stopLoss?}` | Set or move take-profit / stop-loss | **yes** |
+| `dp_open {market, side, sizeUsd, leverage, takeProfit?, stopLoss?, slippageBps?, confirmToken?}` | Keeper-filled market order; waits for the fill. On the side already held it adds to the position | **yes** |
+| `dp_limit {market, side, sizeUsd, leverage, price, takeProfit?, stopLoss?, stopEntry?, confirmToken?}` | Resting limit order, or with `stopEntry` a breakout (long fills once the market is at or above `price`) | **yes** |
+| `dp_close {market, percent?, sizeUsd?, slippageBps?, confirmToken?}` | Keeper-executed close of all or part (`percent` 1-100 or `sizeUsd`) with a worst-price bound; waits for it | **yes** |
+| `dp_set_tpsl {market, takeProfit?, stopLoss?, sizeUsd?}` | Set or move take-profit / stop-loss; with `sizeUsd` they close only that much | **yes** |
+| `dp_add_margin {market, amountUsd, confirmToken?}` | Add collateral: lower leverage, liquidation further away (not while in profit) | **yes** |
 | `dp_cancel {orderId}` | Cancel an order (escrow refunded to the trader) | **yes** |
 | `dp_faucet {amountUsd?}` | Testnet: mint test collateral to the trader | **yes** |
 
-With `DP_REQUIRE_CONFIRM=true` (default) the first call to `dp_open`, `dp_limit` or `dp_close` returns a preview and
-a single-use `confirmToken`, valid for 120 s and only for exactly the same arguments.
+With `DP_REQUIRE_CONFIRM=true` (default) the first call to `dp_open`, `dp_limit`, `dp_close` or `dp_add_margin`
+returns a preview and a single-use `confirmToken`, valid for 120 s and only for exactly the same arguments.
 
 ## Configuration
 

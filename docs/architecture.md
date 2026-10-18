@@ -6,12 +6,12 @@ How Dry Powder works, in more depth than the README. Addresses: `deployments/arc
 
 | Contract | Role |
 | --- | --- |
-| `PerpEngine` | Positions, orders, fees, funding, liquidations, dated-market settlement. One position per market per trader. |
+| `PerpEngine` | Positions, orders, fees, funding, liquidations, dated-market settlement. One position per market per trader; an open on the same side adds to it. |
 | `HouseVault` | ERC-4626 USDC vault (`dpUSDC`): the counterparty to every trade. Epochs stream 15% of profit above the high-water mark to DRY stakers. |
 | `RewardToken` | `DRY`: 100 DRY minted per 1 USDC a trader loses; stake it for a share of house profit. |
 | `EngineLens` | Read-only views: every market with its price and funding, a trader's positions and orders. |
 | `PythOracle` | Adapter from Pyth-style feeds to bid/ask/mid, crosses and inversion. |
-| `PublisherOracle` | Testnet stand-in for Pyth: prices signed by the publisher key (Kraken tickers). |
+| `PublisherOracle` | Testnet stand-in for Pyth: prices signed by the publisher key (the median of Kraken, Coinbase and Bitstamp). |
 | `AgentAccount(Factory)` | A wallet-owned account agents can trade from within an on-chain policy, and never withdraw from. |
 
 ## Risk rules
@@ -28,6 +28,22 @@ How Dry Powder works, in more depth than the README. Addresses: `deployments/arc
   vault.
 - **Open-interest caps** per market and side, plus a vault-wide cap as a share of NAV; the withdrawal reserve
   is based on net exposure.
+
+## What v3.1 added (2026-10-18)
+
+- **Position management.** Same-side opens add to a position (entry from units, funding owed carried over,
+  `openedAt` restarted); `closePosition` and trigger orders take a size, and a part is settled like a position of
+  its own; `addMargin` lowers leverage (not while in profit); stop-entry orders (`OrderType.StopOpen`). The
+  safety reasoning is in `SECURITY.md`.
+- **Batches.** `AgentAccount.multicall` for ladders, close all and cancel all in one transaction;
+  `AgentAccountFactory.createAccountWithAgent` sets up an account, its first key and the key's gas at once,
+  which is what makes instant trading one confirmation.
+- **Prices from three venues.** The publisher signs the median of Kraken, Coinbase and Bitstamp when they agree
+  within 50 bp (the widest agreeing half-spread is the band); when they disagree the market waits rather than
+  trade on one venue's price.
+- **Data without a backend.** `keeper/src/indexer.mjs` reads the engine's events incrementally and the keeper
+  workflow publishes `stats.json` (per-trader and per-market totals, daily buckets) to the `status` branch every
+  5 minutes. The app's leaderboard, profiles and portfolio start from it and continue with live events.
 
 ## What v2 added (2026-10-14)
 

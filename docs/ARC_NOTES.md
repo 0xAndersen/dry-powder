@@ -40,4 +40,5 @@ Safe v1.4.1 is canonical on Arc testnet: factory `0x4e1DCf7AD4e460CfD30791CCC4F9
 - **Stork**: contract `0xacC0a0cF13571d30B4b8637996F5D6D774d4fd62`; testnet feed silent since June 2026; REST
   needs an API key.
 - **Pyth**: Hermes needs a paid API key (since 2026-08-26); the Pyth contract on Arc testnet holds stale prices.
-- What runs on testnet today: `PublisherOracle` fed from Kraken by the keeper (see `V2_SPEC.md`).
+- What runs on testnet today: `PublisherOracle` fed by the keeper with the median of Kraken, Coinbase and
+  Bitstamp (see `V2_SPEC.md` and `keeper/src/sources.mjs`).

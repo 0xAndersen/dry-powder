@@ -16,9 +16,13 @@ that liquidates you, and the most you can make.
 - **Leverage up to 1000x, with guardrails in the contract.** Above 100x, trades fill only through keeper orders
   at a price published after the order. Liquidation at 90% of margin; you can never lose more than margin plus
   fees (capped at 10% of margin per side).
+- **A trading app for phones and desks.** Market, limit and stop orders; add to a position, close part of it,
+  sized take-profit and stop-loss, add margin; instant trading with no wallet pop-up per order; portfolio
+  analytics with a trade journal, weekly leaderboard seasons, trader profiles with Copy. Installable.
 - **Agents are first-class.** Agent accounts let a bot trade inside an on-chain policy (expiry, leverage, margin
   per order) and never withdraw. Use the TypeScript SDK, the MCP server, or the contracts directly.
-- **USDC everywhere.** Margin, settlement and gas are all USDC on Arc.
+- **USDC everywhere.** Margin, settlement and gas are all USDC on Arc. Prices are the median of Kraken, Coinbase
+  and Bitstamp.
 
 ![The trade screen: the risk card leads the ticket, the account bar shows the nearest liquidation](media/brand-trade.png)
 
@@ -50,15 +54,15 @@ from an agent account. **Read the rules** in [`AGENTS.md`](AGENTS.md). **Machine
 
 | Path | What it is |
 | --- | --- |
-| `contracts/` | Foundry: engine, lens, vault, DRY token, oracles, agent accounts, test collateral; 340 tests incl. fuzz and invariants |
-| `frontend/` | Next.js trading app: trade, activity, house, agents; static build on GitHub Pages |
-| `keeper/` | Price publisher + keeper: Kraken prices, fills, liquidations, settlement, vault epochs |
+| `contracts/` | Foundry: engine, lens, vault, DRY token, oracles, agent accounts, test collateral; 380 tests incl. fuzz and invariants |
+| `frontend/` | Next.js trading app: trade, markets, portfolio, activity, leaderboard, trader profiles, house, agents; installable; static build on GitHub Pages |
+| `keeper/` | Price publisher + keeper: median of three exchanges, fills, liquidations, settlement, vault epochs, gas sponsorship; the stats indexer |
 | `sdk/` | `@dry-powder/sdk`: TypeScript client and pure risk maths |
 | `mcp/` | MCP server for AI agents |
 | `examples/` | Agents built on the SDK |
 | `ops/` | Load and acceptance runtime: deploys and runs 100 trader agents |
 | `deployments/` | Live addresses (`arc-testnet.json`) and the history of earlier deployments |
-| `docs/` | Architecture, Arc notes |
+| `docs/` | Architecture, Arc notes, [roadmap](docs/ROADMAP.md) |
 | `BRAND.md` · `SECURITY.md` · `CHANGELOG.md` · `CONTRIBUTING.md` | Brand, known issues, releases, how to help |
 
 ## Live on Arc Testnet
@@ -68,7 +72,8 @@ GitHub Actions run the venue:
 - **Deploy to Arc Testnet (Forge)** (manual): `contracts/script/Deploy.s.sol` in one broadcast, then commits
   `deployments/arc-testnet.json`, publishes the app and starts the keeper. Needs the `DEPLOYER_KEY` secret (a
   throwaway key with testnet USDC for gas); the publisher and keeper keys derive from it.
-- **Keeper (Arc Testnet)**: restarted every 5 hours so one always runs; health on the `status` branch.
+- **Keeper (Arc Testnet)**: restarted every 5 hours so one always runs; health and the indexer's `stats.json`
+  on the `status` branch, refreshed every 5 minutes.
 - **App (GitHub Pages)**: rebuilt on every change to the app or the deployment.
 - **Deploy to Arc Testnet** (ops runtime, manual): the slower path that also runs a 100-agent launch cohort.
 
@@ -87,8 +92,8 @@ cd ops && npm ci && npm test                       # 100-agent acceptance run (a
 
 ## Status
 
-Testnet software, not audited. Prices on testnet come from a publisher key (Kraken tickers), so whoever holds it
-sets the price; moving to Pyth is configuration. `SECURITY.md` lists what is fixed, open and accepted.
+Testnet software, not audited. Prices on testnet come from a publisher key (the median of Kraken, Coinbase and
+Bitstamp), so whoever holds it sets the price; moving to Pyth is configuration. `SECURITY.md` lists what is fixed, open and accepted.
 `REPORT.md` has the first 100-agent run.
 
 MIT licensed.

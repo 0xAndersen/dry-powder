@@ -6,9 +6,10 @@
 
 ## Rules
 - Leverage 1x to the market maximum: BTC-USD and ETH-USD 1000x; SOL-USD 500x; EUR-USD, XAU-USD and the dated BTC future 250x; JPY-USD and ETH-BTC 100x.
-- Above 100x: open with PerpEngine.createLimitOrder (marketable trigger = market order), close with setTriggerOrder(marketId, 3, worstPrice). openPosition/closePosition revert with HighLeverageNeedsOrder.
+- Above 100x: open with PerpEngine.createLimitOrder (marketable trigger = market order), close with setTriggerOrder(marketId, 3, worstPrice, size) (size 0 = all). openPosition/closePosition revert with HighLeverageNeedsOrder.
 - Liquidation when losses plus funding reach 90% of margin (a 0.09% move at 1000x). Profit capped at 10x margin. Fees: 5 bp of size plus a skew surcharge, each side capped at 10% of margin.
-- Units: USDC 6 decimals; prices 18 decimals. One position per market per trader.
+- Units: USDC 6 decimals; prices 18 decimals. One position per market per trader: an open on the same side adds to it, the other side reverts PositionExists.
+- Manage: closePosition(marketId, size, acceptablePrice, priceUpdate) closes all or part; setTriggerOrder(marketId, 1|2, price, size) for sized take-profit/stop-loss; addMargin(marketId, amount) (not while in profit); LimitParams.stopEntry = true for breakout entries; AgentAccount.multicall for atomic batches.
 - Collateral on testnet is tUSDC (anyone may mint up to 1,000,000 per call); gas is native USDC from https://faucet.circle.com.
 
 ## Addresses
@@ -17,10 +18,11 @@
 
 ## Docs
 - [AGENTS.md](https://github.com/0xAndersen/dry-powder/blob/main/AGENTS.md): how agents trade, which orders to use, the worst-case check before every trade.
-- [TypeScript SDK](https://github.com/0xAndersen/dry-powder/tree/main/sdk): DryPowder.connect, quote (worst case first), open, close, setStops, agent accounts, pure risk maths.
-- [MCP server](https://github.com/0xAndersen/dry-powder/tree/main/mcp): tools dp_markets, dp_quote, dp_open, dp_limit, dp_close, dp_set_tpsl, dp_cancel, dp_account, dp_faucet.
+- [TypeScript SDK](https://github.com/0xAndersen/dry-powder/tree/main/sdk): DryPowder.connect, quote (worst case first), open, close (all or part), setStops, addMargin, scale, closeAll, cancelAll, agent accounts, pure risk maths.
+- [MCP server](https://github.com/0xAndersen/dry-powder/tree/main/mcp): tools dp_markets, dp_quote, dp_open, dp_limit, dp_close, dp_set_tpsl, dp_add_margin, dp_cancel, dp_account, dp_faucet.
 - [Examples](https://github.com/0xAndersen/dry-powder/tree/main/examples): quickstart, risk-capped agent, swarm.
 - [Architecture](https://github.com/0xAndersen/dry-powder/blob/main/docs/architecture.md)
+- [Venue stats (JSON, every 5 minutes)](https://raw.githubusercontent.com/0xAndersen/dry-powder/status/status/stats.json): per-trader and per-market totals.
 
 ## Optional
 - [App](https://0xandersen.github.io/dry-powder/trade/)

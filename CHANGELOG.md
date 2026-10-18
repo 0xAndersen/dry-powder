@@ -1,5 +1,66 @@
 # Changelog
 
+## v3.1 (2026-10-18)
+
+**Manage a position, not just open and close it.** (Contracts; a new deployment.)
+- Add to a position: an open on the side you already hold (direct, or a filled order) adds to it. The entry
+  price comes from units, rounded against the trader; funding owed is carried over exactly; take-profit and
+  stop-loss on the addition move the existing ones and refund their fee. The other side still reverts
+  `PositionExists`. An addition to a position already past its profit cap reverts `ProfitCapReached`.
+- Close part of a position: `closePosition(market, size, acceptablePrice, update)`. The part is settled like a
+  position of its own (margin released in proportion, its own profit and fee caps, DRY rebate on a loss); the
+  rest keeps its entry, funding and orders. If what would remain is under the minimum margin, everything closes.
+- Sized take-profit and stop-loss: `setTriggerOrder(market, type, trigger, size)` (`size` 0 = all), so you can
+  scale out in steps.
+- Add margin: `addMargin(market, amount)` lowers leverage and moves liquidation away. Refused while the position
+  is in profit at the last price (it would lift the profit cap) or below 1x.
+- Stop-entry orders (`OrderType` 4, `LimitParams.stopEntry`): breakout entries that fill once the market reaches
+  the trigger. Same escrow, cancel and bracket rules as limits.
+- Agent accounts: `multicall` for atomic batches (ladders, close all, cancel all), each call checked against the
+  agent's policy; `AgentAccountFactory.createAccountWithAgent` creates an account, approves its first key and
+  funds the key's gas in one transaction.
+- Events `PositionIncreased`, `PositionDecreased`, `MarginAdded`.
+- **Breaking:** `closePosition` and `setTriggerOrder` take a size. `liquidate(address)` and
+  `liquidate(address, bytes[])` are gone (use `liquidateBatch`), as are the getters of ten owner-bound constants.
+  Engine runtime 24,289 bytes, 287 under the EIP-170 limit. 380 tests, invariants extended to every new path.
+
+**Prices you can trust, gas you don't think about.** (Keeper; live since 2026-10-18.)
+- The publisher signs the median of Kraken, Coinbase and Bitstamp when they agree within 50 bp, with the widest
+  agreeing spread as the band. One venue can no longer move the price; venues that disagree pause the market.
+- Gas sponsorship: instant-trading keys are topped up from the operator (0.25 USDC at a time, at most 1 USDC per
+  key and 25 USDC a day, only for accounts holding collateral).
+- A transaction that reverts on-chain after a clean simulation (a trader's transaction landed in between) is
+  replayed to name the reason, so lost races count as benign rather than as faults.
+
+**A trading app for phones and desks.** (Live since 2026-10-18.)
+- Phone first: bottom tabs, the ticket as a sheet, positions as cards, a full-screen chart with your fills on
+  the candles. Installable (PWA) with an offline shell, an update prompt and system notifications.
+- Instant trading: a key in this browser trades through your agent account inside an on-chain policy; no wallet
+  pop-up per order. Setup is one confirmation on v3.1 (two before).
+- Order ticket: Market, Limit and Stop; "adds to your long" preview with the merged entry and liquidation price.
+  Positions: close 25/50/75/100% or any size, add margin with a leverage preview, edit TP/SL inline.
+- Risk: liquidation warnings at half and three quarters of the buffer, an account risk sheet with a what-if
+  slider, a personal leverage cap and daily loss limit.
+- Pro: Ctrl/⌘ K command palette, favourites in the market picker, close all and cancel all (one transaction
+  with instant trading), links that prefill a trade, Settings, Help and a venue Status sheet (chain, keeper,
+  price sources and age per market).
+- Markets page (24h change, sparklines, funding, open interest, favourites); Portfolio (PnL curve, calendar,
+  win rate, profit factor, drawdown) with a trade journal; weekly leaderboard seasons; trader profiles with
+  Copy; follows and nicknames in Activity.
+- Social: an alert (with a link to the profile) when a trader you follow opens, adds to, closes or is
+  liquidated; PnL share cards, drawn in the browser as an image of a trade, an open position or a profile, to
+  share, download or copy.
+- A serverless indexer: the keeper workflow publishes `stats.json` (per-trader and per-market totals, daily
+  buckets) to the `status` branch every 5 minutes; the app continues it with live events.
+
+**Developers.**
+- SDK: `close(market, { size | fraction })`, `setStops(..., { size })`, `addMargin`, `scale` (a ladder of limit
+  orders), `closeAll`, `cancelAll`, `createAgentAccountWithAgent`, `approveAgent({ gas })`; pure helpers
+  `mergedPosition`, `partialClose`, `ladderPrices`; `quote()` shows the position after an addition.
+- MCP: `dp_close` takes `percent` or `sizeUsd`, `dp_set_tpsl` takes `sizeUsd`, new `dp_add_margin`, `dp_limit`
+  takes `stopEntry`, and `dp_open` adds to a position held on the same side.
+- [`docs/ROADMAP.md`](docs/ROADMAP.md): the hundred-item plan and where each item stands.
+
 ## v3 (2026-10-17)
 
 **1000x, safely.**

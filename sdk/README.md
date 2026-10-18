@@ -26,6 +26,26 @@ await dp.waitForFill(orderId);
 await dp.close("BTC"); // above 100x this is a keeper Close order
 ```
 
+## Manage a position
+
+```ts
+// Add to it: an open on the side you hold merges (entry blended, rounded against you).
+const q = await dp.quote({ market: "ETH", side: "long", margin: usd(50), leverage: 20 });
+console.log(q.afterFill);                     // size, margin, entry and liquidation price after the addition
+
+await dp.close("ETH", { fraction: 0.5 });     // close half; or { size: usd(400) } for an exact notional
+await dp.setStops("ETH", { takeProfit: price(4_200), size: usd(200) }); // scale out: this TP closes 200 only
+await dp.addMargin("ETH", usd(25));           // lower leverage; refused while the position is in profit
+
+// A ladder of five limit buys from 3,800 down to 3,600, one transaction from an agent account.
+await dp.scale({ market: "ETH", side: "long", totalMargin: usd(100), leverage: 10, from: price(3_800), to: price(3_600), count: 5 });
+await dp.cancelAll("ETH");
+await dp.closeAll();
+```
+
+`open()` with `stopEntryPrice` places a breakout order (long: fills once the market is at or above it). Pure
+helpers for the same maths: `mergedPosition`, `partialClose`, `ladderPrices`.
+
 `market.price` is the oracle price when it is fresh enough to trade on directly; `market.lastPrice` is the last
 price on-chain even when older. Quotes and keeper orders use the fresh one if there is one, else the last one
 (the keeper always fills at a newer price), or `referencePrice` if you pass your own.
@@ -52,13 +72,21 @@ An owner creates an account, funds it and approves an agent key with an on-chain
 max margin per order). The agent can trade from it; only the owner can withdraw.
 
 ```ts
+import { parseEther } from "viem"; // gas is native USDC, 18 decimals
+
 const owner = await DryPowder.connect({ account: ownerKey });
-const account = await owner.createAgentAccount();
-await owner.approveAgent(account, agentKey.address, { expiresInSeconds: 86_400, maxLeverage: 50, maxMarginPerOrder: usd(100) });
+// One transaction: the account, the agent's policy and 0.5 USDC of gas for the agent key.
+const account = await owner.createAgentAccountWithAgent(agentKey.address, {
+  expiresInSeconds: 86_400, maxLeverage: 50, maxMarginPerOrder: usd(100), gas: parseEther("0.5"),
+});
 
 const agent = await DryPowder.connect({ account: agentKey, agentAccount: account });
 await agent.open({ market: "ETH", side: "short", margin: usd(20), leverage: 25, stopLoss: price(3_900) });
 ```
+
+`approveAgent(account, key, policy)` approves more keys or changes a policy later. The margin cap applies per
+call, so an agent can build a larger position by adding to it several times: size the cap and the account's
+balance for that.
 
 ## Units
 

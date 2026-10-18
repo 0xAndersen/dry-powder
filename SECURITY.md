@@ -1,4 +1,4 @@
-# Security notes (v3)
+# Security notes (v3.1)
 
 Not professionally audited. v1 was reviewed adversarially by an independent reviewer; v2 was reviewed again by
 the engineer who rebuilt the test-suite, who also fixed two defects found on the way. Every claim below has a
@@ -26,6 +26,39 @@ to drain the vault:
 - **Accepted:** at 1000x, the publisher's price noise (a few bp) decides many outcomes, and a liquidation at 90%
   leaves 10% of margin as the buffer for the keeper's delay. On testnet the publisher is trusted (below).
 - Tests: `contracts/test/HighLeverage.t.sol`.
+
+## Position management (v3.1)
+
+v3.1 lets a position change after it opens: add to it, close part of it, add margin, sized take-profit and
+stop-loss, stop-entry orders. Each new path keeps the v3 guarantees:
+
+- **The clock restarts on every addition.** An addition (and `addMargin`) sets `openedAt` to now, so the next
+  close needs a price published after it, as for a new position. Without this a trader could add at a stale
+  on-chain price and close at a fresh one in the same block. `addMargin` needs it too: margin can bring a
+  keeper-only position under 100x, where a direct close becomes possible.
+- **Rounding goes against the trader.** The merged entry price comes from units (long rounds up, short rounds
+  down) so mark-to-market stays exact; the blended funding index keeps funding owed at least what it was. A part
+  closed releases margin rounded down, so the rest keeps any remainder.
+- **The profit cap cannot be lifted.** The cap is 10x margin, so new margin would raise it. An addition to a
+  position already past its cap reverts `ProfitCapReached` (profit beyond the cap is forfeit and stays so), and
+  `addMargin` is refused while the position is in profit at the last price (`PositionInProfit`).
+- **Caps apply to every increment.** Leverage, the direct-trade limit and open-interest caps are checked on the
+  addition as on a new position; each increment is within the market's maximum, so the merged position is too.
+- **A part closes like a position of its own**: price PnL and funding on its size, its own profit and fee caps,
+  the DRY rebate on a loss. If what would remain is under the minimum margin, everything closes, so no position
+  is left too small to be worth liquidating. Open-interest units are released exactly.
+- **One bracket per type.** Take-profit and stop-loss on an addition move the existing orders and refund the
+  execution fee escrowed for them; no order or escrow is orphaned. Stop-entry orders follow the limit-order rules
+  (escrow, cancel, revalidation at fill) and, like limits, do not fill through their own stop.
+- **Agent accounts.** `multicall` runs each call by delegatecall with the caller's own checks and is not
+  payable, so a batch cannot reuse `msg.value`. `initAgent` works once, for the factory, in the deployment
+  transaction. Note the change for policies: an agent's margin cap is per call, and since positions can now be
+  added to, an agent can build a position larger than the cap over several calls. Size the cap and the account's
+  balance for that.
+- **Removed:** `liquidate(address)` and `liquidate(address, bytes[])` (keepers use `liquidateBatch`) and the
+  getters of ten owner-bound constants, to stay under the EIP-170 size limit. No check was removed.
+- Tests: `contracts/test/PositionManagement.t.sol` (32), `AgentAccount.t.sol`, and the invariant handler, which
+  now adds, closes in part, adds margin and places sized and stop-entry orders while every invariant holds.
 
 ## Closed in v2
 
