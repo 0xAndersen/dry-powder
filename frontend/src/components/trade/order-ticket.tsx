@@ -51,6 +51,20 @@ const levToSlider = (lev: number, max: number) =>
 const sliderToLev = (pos: number, max: number) => (max <= 100 ? pos : Math.max(1, Math.round(Math.exp((pos / SLIDER_STEPS) * Math.log(max)))));
 
 /** How far price must move against the position to liquidate it, as a risk level. */
+const LEGACY_QUOTE_ABI = [
+  {
+    type: "function",
+    name: "quoteOpenFee",
+    stateMutability: "view",
+    inputs: [
+      { name: "marketId", type: "bytes32" },
+      { name: "size", type: "uint256" },
+      { name: "isLong", type: "bool" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
+
 function riskLevel(distance: number | null): { label: string; tone: "calm" | "moderate" | "high" | "extreme"; filled: number } | null {
   if (distance === null) return null;
   if (distance >= 0.1) return { label: "Low", tone: "calm", filled: 1 };
@@ -315,11 +329,20 @@ export const OrderTicket = forwardRef<
     args: [instrument.id, size ?? 0n, isLong, margin ?? 0n],
     query: { enabled: size !== null && size > 0n && margin !== null && margin > 0n, refetchInterval: 3_000, placeholderData: keepPreviousData },
   });
+  // Engines deployed before v3 take quoteOpenFee(marketId, size, isLong), without the margin.
+  const legacyFeeQuote = useReadContract({
+    abi: LEGACY_QUOTE_ABI,
+    address: cfg.perpEngine,
+    chainId: cfg.chainId,
+    functionName: "quoteOpenFee",
+    args: [instrument.id, size ?? 0n, isLong],
+    query: { enabled: feeQuote.isError && size !== null && size > 0n, refetchInterval: 3_000, placeholderData: keepPreviousData },
+  });
   const highLeverage = size !== null && margin !== null && margin > 0n && needsKeeperOrders(size, margin);
   const keeperOrder = kind === "limit" || publisher || highLeverage;
   const feeCeiling = params && size !== null && margin !== null ? maxOpenFee(size, params.baseFeeBps, params.maxSkewFeeBps, margin) : null;
   const feeBase = params && size !== null && margin !== null ? baseFee(size, params.baseFeeBps, margin) : null;
-  const openFee = size !== null && size > 0n ? (feeQuote.data ?? null) : null;
+  const openFee = size !== null && size > 0n ? (feeQuote.data ?? legacyFeeQuote.data ?? null) : null;
   const skewFee = openFee !== null && feeBase !== null && openFee > feeBase ? openFee - feeBase : 0n;
   const executionCount = brackets + (keeperOrder ? 1 : 0);
   const executionFees = params ? params.executionFee * BigInt(executionCount) : null;
