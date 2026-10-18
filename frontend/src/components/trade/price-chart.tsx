@@ -10,6 +10,10 @@ import {
   LineSeries,
   LineStyle,
   createChart,
+  createSeriesMarkers,
+  type ISeriesMarkersPluginApi,
+  type SeriesMarker,
+  type Time,
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
@@ -27,6 +31,8 @@ import { indicatorSettings } from "@/lib/storage";
 
 export type ChartLineTone = "entry" | "liq" | "tp" | "sl" | "order" | "draft" | "alert" | "settle";
 export type ChartLine = { key: string; price: number; title: string; tone: ChartLineTone };
+/** One of your fills drawn on the candles: entries as arrows, exits and liquidations as circles. */
+export type ChartMarker = { id: string; time: number; kind: "open" | "close" | "liquidation"; isLong: boolean | null; text: string };
 
 /** What a click on the chart sets. */
 export type PickTarget = "limit" | "tp" | "sl" | "alert";
@@ -179,10 +185,13 @@ export function PriceChart({
   onPick,
   indicatorsHidden,
   chainNow,
+  markers = [],
 }: {
   instrument: Instrument;
   price: MarketPrice;
   lines: ChartLine[];
+  /** Your entries and exits in this market. */
+  markers?: ChartMarker[];
   /** Which targets "set on chart" offers right now. */
   pickTargets: PickTarget[];
   pick: PickTarget | null;
@@ -200,6 +209,17 @@ export function PriceChart({
   const [legend, setLegend] = useState<Legend>(null);
   const [pickText, setPickText] = useState("");
   const [sessionCandles, setSessionCandles] = useState<Candle[]>([]);
+  // Full-screen chart (phones in landscape, or more room on desktop). CSS-only so it works on iOS too.
+  const [expanded, setExpanded] = useState(false);
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExpanded(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [expanded]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -259,9 +279,9 @@ export function PriceChart({
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
         textColor: COLORS.text,
-        fontFamily: '"Archivo Variable", system-ui, sans-serif',
+        fontFamily: '"Inter Variable", Inter, system-ui, sans-serif',
         fontSize: 11,
-        panes: { separatorColor: COLORS.border, separatorHoverColor: "rgba(227,180,92,0.25)", enableResize: true },
+        panes: { separatorColor: COLORS.border, separatorHoverColor: "rgba(126,166,255,0.25)", enableResize: true },
       },
       grid: { vertLines: { color: COLORS.grid }, horzLines: { color: COLORS.grid } },
       rightPriceScale: { borderColor: COLORS.border, scaleMargins: { top: 0.08, bottom: 0.2 } },
@@ -299,7 +319,9 @@ export function PriceChart({
     chartRef.current = chart;
     candleRef.current = series;
     volumeRef.current = volume;
+    markersRef.current = createSeriesMarkers(series, []);
     return () => {
+      markersRef.current = null;
       priceLinesRef.current = [];
       indicatorRefs.current = [];
       lastCandleRef.current = null;
@@ -441,6 +463,42 @@ export function PriceChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linesKey]);
 
+  // Your fills on the candles, snapped to the candle they fall in.
+  const markersKey = `${dataKey}|${candles?.length ?? 0}|${markers.map((m) => m.id).join(",")}`;
+  useEffect(() => {
+    const plugin = markersRef.current;
+    if (!plugin) return;
+    if (!candles || candles.length === 0 || markers.length === 0) {
+      plugin.setMarkers([]);
+      return;
+    }
+    const seconds = info.minutes * 60;
+    const first = candles[0]!.time;
+    const out: SeriesMarker<Time>[] = markers
+      .map((m) => ({ ...m, bucket: Math.floor(m.time / seconds) * seconds }))
+      .filter((m) => m.bucket >= first)
+      .sort((a, b) => a.bucket - b.bucket)
+      .map((m) =>
+        m.kind === "open"
+          ? {
+              time: m.bucket as UTCTimestamp,
+              position: m.isLong ? "belowBar" : "aboveBar",
+              shape: m.isLong ? "arrowUp" : "arrowDown",
+              color: m.isLong ? COLORS.long : COLORS.short,
+              text: m.text,
+            }
+          : {
+              time: m.bucket as UTCTimestamp,
+              position: "aboveBar",
+              shape: "circle",
+              color: m.kind === "liquidation" ? COLORS.liq : COLORS.entry,
+              text: m.text,
+            },
+      );
+    plugin.setMarkers(out);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markersKey]);
+
   // Indicator menu: close on outside click / Escape.
   useEffect(() => {
     if (!menuOpen) return;
@@ -481,7 +539,7 @@ export function PriceChart({
   const typedPick = Number(pickText);
 
   return (
-    <section className="panel flex min-h-0 flex-col" aria-label={`${instrument.symbol} price chart`}>
+    <section className={`panel flex min-h-0 flex-col ${expanded ? "chart-expanded" : ""}`} aria-label={`${instrument.symbol} price chart`} data-expanded={expanded}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line px-2 py-1.5 sm:px-3">
         <div className="flex items-center gap-1" role="group" aria-label="Candle interval">
           {RESOLUTIONS.map((r) => (
@@ -505,10 +563,21 @@ export function PriceChart({
             </button>
           ))}
         </div>
-        <div className="relative ml-auto" ref={menuRef}>
+        <div className="relative ml-auto flex items-center gap-1" ref={menuRef}>
           <button type="button" className="chip" aria-expanded={menuOpen} aria-haspopup="dialog" onClick={() => setMenuOpen((v) => !v)}>
             Indicators{activeCount > 0 ? ` (${activeCount})` : ""}
             {indicatorsHidden ? " hidden" : ""}
+          </button>
+          <button
+            type="button"
+            className="chip"
+            aria-pressed={expanded}
+            aria-label={expanded ? "Exit full screen" : "Full-screen chart"}
+            title={expanded ? "Exit full screen (Esc)" : "Full-screen chart"}
+            onClick={() => setExpanded((v) => !v)}
+            data-testid="chart-expand"
+          >
+            {expanded ? "✕" : "⤢"}
           </button>
           {menuOpen ? <IndicatorMenu settings={settings} onChange={setSettings} /> : null}
         </div>
@@ -576,7 +645,7 @@ export function PriceChart({
         ) : null}
 
         {/* `isolate` keeps the chart library's internal z-indexes from covering menus and dialogs. */}
-        <div className="relative isolate z-0 h-[340px] sm:h-[440px] 2xl:h-[520px]" data-picking={pick ? "true" : undefined}>
+        <div className="chart-box relative isolate z-0 h-[340px] sm:h-[440px] 2xl:h-[520px]" data-picking={pick ? "true" : undefined}>
           <div ref={containerRef} className={`h-full w-full ${pick ? "cursor-crosshair" : ""}`} data-testid="chart-canvas" />
         </div>
 

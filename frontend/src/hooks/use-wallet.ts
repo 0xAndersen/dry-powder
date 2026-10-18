@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useAccount } from "wagmi";
 import { getAddress, isAddress, type Address } from "viem";
 import { useAppConfig } from "@/components/providers";
+import { useTradingAccount } from "@/hooks/use-trading-account";
 
 export type WalletState = {
   address: Address | undefined;
@@ -28,18 +29,25 @@ export type AccountView = {
   address: Address | undefined;
   /** True when `?account=` names an account other than the connected wallet: read-only. */
   watching: boolean;
-  /** The connected wallet can act on the account shown. */
+  /** The connected wallet (or the instant-trading key) can act on the account shown. */
   canTrade: boolean;
+  /** Orders go out from the instant-trading account, signed by the session key (no wallet pop-ups). */
+  instant: boolean;
   watch: (address: Address | null) => void;
 };
 
-/** Which account the screen shows: `?account=0x…` if present (watch mode), otherwise the connected wallet. */
+/**
+ * Which account the screen shows: `?account=0x…` if present (watch mode), otherwise the instant-trading account
+ * when it is set up and chosen, otherwise the connected wallet.
+ */
 export function useAccountView(): AccountView {
   const wallet = useWallet();
+  const trading = useTradingAccount();
   const searchParams = useSearchParams();
   const raw = searchParams.get("account");
   const watched = useMemo(() => (raw && isAddress(raw, { strict: false }) ? getAddress(raw) : undefined), [raw]);
-  const watching = watched !== undefined && watched.toLowerCase() !== wallet.address?.toLowerCase();
+  const own = trading.active && trading.account ? trading.account : wallet.address;
+  const watching = watched !== undefined && watched.toLowerCase() !== own?.toLowerCase() && watched.toLowerCase() !== wallet.address?.toLowerCase();
 
   const watch = useCallback((address: Address | null) => {
     const params = new URLSearchParams(window.location.search);
@@ -49,10 +57,12 @@ export function useAccountView(): AccountView {
     window.history.pushState(null, "", text ? `?${text}` : window.location.pathname);
   }, []);
 
+  const instant = trading.active && !watching;
   return {
-    address: watched ?? wallet.address,
+    address: watching ? watched : own,
     watching,
-    canTrade: wallet.ready && !watching,
+    canTrade: !watching && (instant || wallet.ready),
+    instant,
     watch,
   };
 }

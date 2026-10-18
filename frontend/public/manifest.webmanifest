@@ -1,0 +1,22 @@
+{
+  "name": "Dry Powder",
+  "short_name": "Dry Powder",
+  "description": "Risk-first perpetuals on Arc, up to 1000x. See the most you can lose before you trade.",
+  "start_url": "./trade/",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0d0f12",
+  "theme_color": "#0d0f12",
+  "categories": ["finance"],
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Trade", "url": "./trade/", "icons": [{ "src": "./icon-192.png", "sizes": "192x192" }] },
+    { "name": "Portfolio", "url": "./portfolio/", "icons": [{ "src": "./icon-192.png", "sizes": "192x192" }] },
+    { "name": "Markets", "url": "./markets/", "icons": [{ "src": "./icon-192.png", "sizes": "192x192" }] }
+  ]
+}

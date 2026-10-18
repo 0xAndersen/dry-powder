@@ -65,7 +65,7 @@ export function ConfirmDialog({
 
   // Rendered at the document root: the ticket is sticky, which would otherwise trap the dialog below the chart.
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-[rgba(6,10,16,0.72)] p-3 sm:items-center" onPointerDown={(event) => event.target === event.currentTarget && onCancel()}>
+    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-[rgba(6,10,16,0.72)] p-3 sm:items-center" onPointerDown={(event) => event.target === event.currentTarget && onCancel()}>
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} className="panel w-full max-w-sm bg-raised p-4 shadow-[0_24px_60px_rgba(4,8,14,0.7)]" data-testid="confirm-dialog">
         <h2 id={`${id}-title`} className="wide text-base font-semibold">
           {title}

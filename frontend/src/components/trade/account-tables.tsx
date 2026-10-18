@@ -4,9 +4,10 @@ import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from "reac
 import type { Hex } from "viem";
 import { AppLink } from "@/components/app-link";
 import { useApp } from "@/components/providers";
+import { ConfirmDialog } from "@/components/trade/confirm-dialog";
 import { TxStatus } from "@/components/tx-status";
 import type { AccountData, OrderRow, PositionView } from "@/hooks/use-account-data";
-import { useActionContext } from "@/hooks/use-action-context";
+import { useTradeContext } from "@/hooks/use-action-context";
 import { useLocalStore } from "@/hooks/use-local-store";
 import type { LogFeedHandle } from "@/hooks/use-log-feed";
 import { useMarketData, type MarketPrice } from "@/hooks/use-market-data";
@@ -142,7 +143,7 @@ function PositionRow({
 }) {
   const { config: cfg } = useApp();
   const { params } = useMarketData();
-  const actionContext = useActionContext();
+  const actionContext = useTradeContext();
   const [settings] = useLocalStore(tradeSettings);
   const pos = view.position;
   const marketId = pos.priceId.toLowerCase();
@@ -213,7 +214,7 @@ function PositionRow({
 
   return (
     <tr data-testid={`position-${symbol}`}>
-      <td>
+      <td data-cell="market">
         <button type="button" className="text-left hover:text-accent" disabled={!instrument} onClick={() => instrument && onSelectMarket(instrument)}>
           <span className="wide font-semibold">{symbol}</span>
         </button>
@@ -221,18 +222,18 @@ function PositionRow({
           <SideTag isLong={pos.isLong} /> <span className="num text-faint">{value.leverage.toFixed(1)}x</span>
         </span>
       </td>
-      <td className="r">
+      <td className="r" data-label="Size" data-cell="size">
         <span className="num">{fmtUsdc(pos.size)}</span>
         <span className="num block text-xs text-faint">
           {fmtQty(unitsOf(pos.size, pos.entryPrice))} {instrument?.unitLabel ?? ""}
         </span>
       </td>
-      <td className="r num">{fmtPrice(pos.entryPrice, dp)}</td>
-      <td className="r num">
+      <td className="r num" data-label="Entry" data-cell="entry">{fmtPrice(pos.entryPrice, dp)}</td>
+      <td className="r num" data-label="Mark" data-cell="mark">
         {mark !== null ? fmtPrice(mark, dp) : "—"}
         {price?.status === "awaiting" ? <span className="block text-xs text-warn">indicative</span> : price?.status === "settled" ? <span className="block text-xs text-accent">settled</span> : null}
       </td>
-      <td className="r">
+      <td className="r" data-label="Liquidation" data-cell="liq">
         <span className={`num ${liqNear ? "text-short" : RISK_TEXT[riskTone(value.liquidationDistance) ?? "calm"]}`}>
           {value.liquidatableNow ? "Now" : value.liquidationPrice === null ? "None" : fmtPrice(value.liquidationPrice, dp)}
         </span>
@@ -240,7 +241,7 @@ function PositionRow({
           <span className={`num block text-xs ${liqNear ? "text-short" : "text-faint"}`}>{value.liquidationDistance <= 0 ? "past threshold" : `${fmtPercent(value.liquidationDistance, 2)} away`}</span>
         ) : null}
       </td>
-      <td className="r">
+      <td className="r" data-cell="pnl">
         <span className={`num font-semibold ${value.pnl === null ? "" : value.pnl >= 0n ? "text-long" : "text-short"}`} data-testid="position-pnl">
           {value.pnl === null ? "—" : fmtUsdc(value.pnl, 2, { sign: true })}
         </span>
@@ -249,12 +250,12 @@ function PositionRow({
           {value.capped ? " (capped)" : ""}
         </span>
       </td>
-      <td className="r">
+      <td className="r" data-label="Funding" data-cell="funding">
         <span className={`num ${view.fundingOwed > 0n ? "text-short" : view.fundingOwed < 0n ? "text-long" : "text-muted"}`} title="Funding accrued since entry. Negative: you have been paid.">
           {fmtUsdc(-view.fundingOwed, 4, { sign: true })}
         </span>
       </td>
-      <td className="r">
+      <td className="r" data-label="Margin" data-cell="margin">
         <span className="num">{fmtUsdc(pos.margin)}</span>
         {equity !== null && equity > 0n && value.pnl !== null ? (
           <span className="num block text-xs text-faint" title="This position's margin plus open PnL as a share of the account value">
@@ -262,7 +263,7 @@ function PositionRow({
           </span>
         ) : null}
       </td>
-      <td>
+      <td data-cell="brackets">
         <div className="flex flex-col gap-1">
           <span className="flex items-center gap-1.5">
             <span className="w-5 text-xs text-long">TP</span>
@@ -285,7 +286,7 @@ function PositionRow({
           {edit && edit.marketId === marketId && editError ? <span className="max-w-[16rem] whitespace-normal text-xs text-short">{editError}</span> : null}
         </div>
       </td>
-      <td className="r">
+      <td className="r" data-cell="actions">
         {canTrade ? (
           settled ? (
             <button type="button" className="btn btn-sm btn-primary" disabled={tx.busy || !instrument} onClick={close} data-testid="settle-close">
@@ -330,7 +331,7 @@ function OrdersTable({
 }) {
   const { config: cfg } = useApp();
   const { byId, prices } = useMarketData();
-  const actionContext = useActionContext();
+  const actionContext = useTradeContext();
   const sym = cfg.collateralSymbol;
   const sorted = useMemo(() => [...orders].sort((a, b) => (a.id < b.id ? 1 : -1)), [orders]);
 
@@ -658,6 +659,9 @@ export const AccountTables = forwardRef<
   const { byId, prices, params } = useMarketData();
   const tx = useTx({ autoDismissMs: 10000 });
   const [tab, setTab] = useState<Tab>("positions");
+  const [bulk, setBulk] = useState<null | "close" | "cancel">(null);
+  const bulkContext = useTradeContext();
+  const [bulkSettings] = useLocalStore(tradeSettings);
   const [edit, setEdit] = useState<EditState>(null);
   const rootRef = useRef<HTMLElement>(null);
 
@@ -692,6 +696,43 @@ export const AccountTables = forwardRef<
 
   const needsAccount = tab !== "alerts" && !view.address;
 
+  /** Close every open position (keeper orders where needed), one after another. */
+  const closeAll = () => {
+    setBulk(null);
+    if (!params) return;
+    void tx.run(async (api) => {
+      const ctx = bulkContext(api);
+      if (!ctx) throw new UserFacingError("Connect your wallet first.");
+      let done = 0;
+      for (const p of positions) {
+        if (p.position.closeOrderId !== 0n) continue;
+        const inst = byId.get(p.position.priceId.toLowerCase());
+        if (!inst) continue;
+        await closeFlow(ctx, {
+          instrument: inst,
+          view: p,
+          reference: prices.get(inst.id)?.reference ?? null,
+          slippageBps: bulkSettings.slippageBps,
+          executionFee: params.executionFee,
+          balance: account?.balance,
+        });
+        done += 1;
+      }
+      return `Sent ${done} close${done === 1 ? "" : "s"}. Keeper orders fill at the next price.`;
+    });
+  };
+
+  /** Cancel every resting order, take-profits and stop-losses included. */
+  const cancelAll = () => {
+    setBulk(null);
+    void tx.run(async (api) => {
+      const ctx = bulkContext(api);
+      if (!ctx) throw new UserFacingError("Connect your wallet first.");
+      for (const o of orders) await submitCancel(ctx, o.id, `Cancel order #${o.id}`);
+      return `Cancelled ${orders.length} order${orders.length === 1 ? "" : "s"}. Escrow refunded.`;
+    });
+  };
+
   return (
     <section ref={rootRef} className="panel" aria-label="Positions, orders, history and alerts">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pr-3">
@@ -702,6 +743,16 @@ export const AccountTables = forwardRef<
             </button>
           ))}
         </div>
+        {view.canTrade && tab === "positions" && positions.length > 1 ? (
+          <button type="button" className="btn btn-sm" disabled={tx.busy} onClick={() => setBulk("close")} data-testid="close-all">
+            Close all
+          </button>
+        ) : null}
+        {view.canTrade && tab === "orders" && orders.length > 1 ? (
+          <button type="button" className="btn btn-sm" disabled={tx.busy} onClick={() => setBulk("cancel")} data-testid="cancel-all">
+            Cancel all
+          </button>
+        ) : null}
         {view.watching && view.address ? (
           <span className="text-xs text-muted">
             Read-only view of <span className="num">{shortAddress(view.address)}</span>.{" "}
@@ -713,6 +764,27 @@ export const AccountTables = forwardRef<
       </div>
 
       {tx.state.phase !== "idle" ? <TxStatus state={tx.state} onDismiss={tx.reset} className="m-3 mb-0" /> : null}
+      {bulk ? (
+        <ConfirmDialog
+          title={bulk === "close" ? `Close all ${positions.length} positions?` : `Cancel all ${orders.length} orders?`}
+          lines={
+            bulk === "close"
+              ? positions.map((p) => ({ label: byId.get(p.position.priceId.toLowerCase())?.symbol ?? "Position", value: `${p.position.isLong ? "Long" : "Short"} ${fmtUsdc(p.position.size)}` }))
+              : [{ label: "Orders", value: String(orders.length) }]
+          }
+          note={
+            bulk === "close"
+              ? view.instant
+                ? "Sent from your trading account, no wallet pop-ups."
+                : "Your wallet asks once per position."
+              : "Take-profits and stop-losses are cancelled too, so open positions lose their protection."
+          }
+          confirmLabel={bulk === "close" ? "Close all" : "Cancel all"}
+          tone="short"
+          onConfirm={bulk === "close" ? closeAll : cancelAll}
+          onCancel={() => setBulk(null)}
+        />
+      ) : null}
 
       {needsAccount ? (
         <Empty>Connect a wallet to see your positions, or watch any account from the header.</Empty>
@@ -733,7 +805,7 @@ export const AccountTables = forwardRef<
           <Empty>{view.watching ? "This account has no open positions." : "No open positions. Pick a market, choose a size and go long or short."}</Empty>
         ) : (
           <div className="relative overflow-x-auto">
-            <table className="data-table">
+            <table className="data-table card-table" data-testid="positions-table">
               <thead>
                 <tr>
                   <th>Market</th>

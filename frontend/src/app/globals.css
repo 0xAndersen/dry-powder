@@ -844,3 +844,386 @@
     transition: width 400ms ease-out, background-color 160ms;
   }
 }
+
+@layer components {
+  /* Sheets: bottom sheet on phones, centred dialog from sm up. */
+  .sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    background: rgba(4, 6, 10, 0.72);
+    animation: sheet-fade 140ms ease-out;
+  }
+
+  .sheet-panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-height: min(92dvh, 52rem);
+    background: var(--color-raised);
+    border: 1px solid var(--color-line-strong);
+    border-bottom: 0;
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -12px 40px rgba(2, 4, 8, 0.6);
+    padding-bottom: env(safe-area-inset-bottom);
+    animation: sheet-up 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    outline: none;
+  }
+
+  .sheet-handle {
+    width: 36px;
+    height: 4px;
+    margin: 8px auto 0;
+    border-radius: 2px;
+    background: var(--color-line-strong);
+  }
+
+  .sheet-body {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .sheet-footer {
+    border-top: 1px solid var(--color-line);
+    background: var(--color-raised);
+  }
+
+  @media (min-width: 640px) {
+    .sheet-backdrop {
+      align-items: center;
+      padding: 1rem;
+    }
+
+    .sheet-panel {
+      border-bottom: 1px solid var(--color-line-strong);
+      border-radius: var(--radius-ui);
+      padding-bottom: 0;
+      animation: sheet-fade 140ms ease-out;
+    }
+
+    .sheet-handle {
+      display: none;
+    }
+  }
+
+  /* Small labelled value rows used in sheets and cards. */
+  .kv {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    font-size: 0.8125rem;
+  }
+
+  .kv > dt {
+    color: var(--color-muted);
+  }
+
+  .kv > dd {
+    text-align: right;
+  }
+
+  .segmented {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-ui);
+    background: var(--color-bg);
+  }
+
+  .segmented > button {
+    height: 2rem;
+    border-radius: var(--radius-sm-ui);
+    font-size: 0.8125rem;
+    color: var(--color-muted);
+  }
+
+  .segmented > button[aria-pressed="true"] {
+    background: var(--color-raised);
+    color: var(--color-text);
+    box-shadow: inset 0 0 0 1px var(--color-line-strong);
+  }
+
+  .status-dot {
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 9999px;
+    background: var(--color-faint);
+    flex: none;
+  }
+
+  .status-dot[data-tone="ok"] {
+    background: var(--color-long);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-long) 18%, transparent);
+  }
+
+  .status-dot[data-tone="warn"] {
+    background: var(--color-warn);
+  }
+
+  .status-dot[data-tone="bad"] {
+    background: var(--color-short);
+  }
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0.6;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes sheet-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@layer components {
+  /* Positions as cards on phones: the same rows, laid out for a thumb instead of a wide table. */
+  @media (max-width: 767px) {
+    .card-table thead {
+      display: none;
+    }
+
+    .card-table,
+    .card-table tbody {
+      display: block;
+    }
+
+    .card-table tr {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.6rem 1rem;
+      padding: 0.85rem 0.75rem;
+      border-bottom: 1px solid var(--color-line);
+    }
+
+    .card-table tr:last-child {
+      border-bottom: 0;
+    }
+
+    .card-table td {
+      display: block;
+      padding: 0 !important;
+      height: auto !important;
+      border: 0 !important;
+      text-align: left !important;
+      white-space: normal;
+    }
+
+    .card-table td[data-label]::before {
+      content: attr(data-label);
+      display: block;
+      margin-bottom: 1px;
+      font-size: 0.6875rem;
+      color: var(--color-muted);
+    }
+
+    .card-table td[data-cell="market"] {
+      order: -2;
+    }
+
+    .card-table td[data-cell="pnl"] {
+      order: -1;
+      text-align: right !important;
+    }
+
+    .card-table td[data-cell="pnl"] > span:first-child {
+      font-size: 1.05rem;
+    }
+
+    .card-table td[data-cell="brackets"],
+    .card-table td[data-cell="actions"] {
+      grid-column: span 2;
+    }
+
+    .card-table td[data-cell="actions"] .btn {
+      width: 100%;
+      height: 2.5rem;
+    }
+
+    .card-table td[data-cell="actions"]:empty {
+      display: none;
+    }
+  }
+}
+
+@layer components {
+  /* Bottom tab bar (phones and tablets). */
+  .mobile-nav {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 40;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    height: calc(3.6rem + env(safe-area-inset-bottom));
+    padding-bottom: env(safe-area-inset-bottom);
+    background: color-mix(in srgb, var(--color-bg) 94%, transparent);
+    backdrop-filter: blur(10px);
+    border-top: 1px solid var(--color-line);
+  }
+
+  .mobile-nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-width: 0;
+    color: var(--color-faint);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .mobile-nav-item[data-active="true"] {
+    color: var(--color-text);
+  }
+
+  .mobile-nav-item[data-active="true"] svg {
+    color: var(--color-accent);
+  }
+
+  /* Room for the tab bar below page content. */
+  .app-main {
+    padding-bottom: calc(4.6rem + env(safe-area-inset-bottom));
+  }
+
+  @media (min-width: 1024px) {
+    .app-main {
+      padding-bottom: 3rem;
+    }
+  }
+}
+
+@layer components {
+  .toast-region {
+    bottom: calc(4.4rem + env(safe-area-inset-bottom));
+  }
+
+  @media (min-width: 1024px) {
+    .toast-region {
+      bottom: 0.75rem;
+    }
+  }
+}
+
+@layer components {
+  /* Phone trade screen: a dock for the ticket and a bar with the two big buttons. */
+  @media (max-width: 1023px) {
+    .ticket-dock {
+      position: fixed;
+      inset: auto 0 0 0;
+      z-index: 55;
+      max-height: 90dvh;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      background: var(--color-raised);
+      border: 1px solid var(--color-line-strong);
+      border-bottom: 0;
+      border-radius: 14px 14px 0 0;
+      box-shadow: 0 -12px 40px rgba(2, 4, 8, 0.6);
+      padding-bottom: env(safe-area-inset-bottom);
+      transform: translateY(105%);
+      visibility: hidden;
+      transition:
+        transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        visibility 0s linear 220ms;
+    }
+
+    .ticket-dock[data-open="true"] {
+      transform: none;
+      visibility: visible;
+      transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    .ticket-dock > div > .panel,
+    .ticket-dock .panel:first-child {
+      border: 0;
+      background: transparent;
+    }
+
+    .ticket-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 54;
+      background: rgba(4, 6, 10, 0.72);
+      animation: sheet-fade 140ms ease-out;
+    }
+
+    .trade-actionbar {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: calc(3.6rem + env(safe-area-inset-bottom));
+      z-index: 39;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      background: color-mix(in srgb, var(--color-panel) 96%, transparent);
+      backdrop-filter: blur(10px);
+      border-top: 1px solid var(--color-line);
+    }
+
+    /* The action bar sits above the tab bar: leave room for both. */
+    .app-main:has(.trade-actionbar) {
+      padding-bottom: calc(8.4rem + env(safe-area-inset-bottom));
+    }
+  }
+}
+
+@media (max-width: 1023px) {
+  body:has(.trade-actionbar) .toast-region {
+    bottom: calc(8.2rem + env(safe-area-inset-bottom));
+  }
+}
+
+@layer components {
+  .update-banner {
+    position: fixed;
+    left: 50%;
+    top: calc(3.5rem + env(safe-area-inset-top));
+    z-index: 58;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: min(28rem, calc(100vw - 1.5rem));
+    padding: 0.5rem 0.6rem 0.5rem 0.85rem;
+    background: var(--color-raised);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-ui);
+    box-shadow: 0 12px 32px rgba(2, 4, 8, 0.6);
+  }
+}
+
+@layer components {
+  .chart-expanded {
+    position: fixed;
+    inset: 0;
+    z-index: 65;
+    border-radius: 0;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  .chart-expanded .chart-box {
+    height: calc(100dvh - 3rem - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+  }
+}

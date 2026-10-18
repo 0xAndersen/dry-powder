@@ -2,12 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
 import { useBlockNumber } from "wagmi";
 import { getAddress, isAddress } from "viem";
 import { AppLink } from "@/components/app-link";
 import { useApp } from "@/components/providers";
+import { HelpButton } from "@/components/help-sheet";
+import { StatusSheet } from "@/components/status-sheet";
+import { SettingsButton } from "@/components/settings-sheet";
 import { WalletButton } from "@/components/wallet-button";
+import { useKeeperStatus } from "@/hooks/use-keeper-status";
 import { useMarketData } from "@/hooks/use-market-data";
 import { useAccountView } from "@/hooks/use-wallet";
 import { shortAddress } from "@/lib/format";
@@ -32,7 +35,7 @@ function Wordmark() {
         <rect x="6.5" y="12.25" width="11" height="5.25" rx="1.5" fill="var(--color-accent)" />
         <path d="M6.5 9.25h11" stroke="var(--color-text)" strokeWidth="1.25" strokeLinecap="round" strokeDasharray="1.5 2.25" opacity="0.55" />
       </svg>
-      <span className="wide hidden text-[1.0625rem] leading-none lg:inline">Dry Powder</span>
+      <span className="wide text-[1.0625rem] leading-none lg:hidden xl:inline">Dry Powder</span>
     </AppLink>
   );
 }
@@ -59,49 +62,43 @@ function NetworkStatus() {
   const feedText =
     feedStatus === "live" ? `${source} live` : feedStatus === "polling" ? `${source} delayed` : feedStatus === "offline" ? `${source} offline` : `${source} connecting`;
 
+  const [statusOpen, setStatusOpen] = useState(false);
   return (
-    <div className="hidden items-center gap-4 text-xs text-muted xl:flex" role="status" aria-live="polite">
+    <>
+    {statusOpen ? <StatusSheet onClose={() => setStatusOpen(false)} /> : null}
+    <button
+      type="button"
+      className="hidden items-center gap-3 whitespace-nowrap rounded-[var(--radius-sm-ui)] px-1 text-xs text-muted hover:text-text xl:flex 2xl:gap-4"
+      onClick={() => setStatusOpen(true)}
+      aria-label="Venue status"
+      data-testid="network-status"
+    >
       <span className="flex items-center gap-1.5" title={`${chain.name}: ${chainText}`}>
         <StatusDot tone={chainTone} />
-        <span>{chain.name}</span>
+        <span className="hidden 2xl:inline">{chain.name}</span>
         <span className="num text-faint">{chainText}</span>
       </span>
-      <span className="flex items-center gap-1.5">
+      <span className="flex items-center gap-1.5" title={feedText}>
         <StatusDot tone={feedTone} />
-        <span>{feedText}</span>
+        <span className="hidden 2xl:inline">{feedText}</span>
+        <span className="2xl:hidden">Prices</span>
       </span>
       {config.chainId === 5042002 ? <KeeperStatus /> : null}
-    </div>
+    </button>
+    </>
   );
 }
 
-/** The hosted keeper's health snapshot (pushed to the repository's status branch every 5 minutes). */
-const KEEPER_STATUS_URL = "https://raw.githubusercontent.com/0xAndersen/dry-powder/status/status/keeper.json";
-
 function KeeperStatus() {
-  const health = useQuery({
-    queryKey: ["keeper-status"],
-    refetchInterval: 60_000,
-    retry: 1,
-    queryFn: async () => {
-      const r = await fetch(`${KEEPER_STATUS_URL}?t=${Math.floor(Date.now() / 60_000)}`, { cache: "no-store" });
-      if (!r.ok) throw new Error(String(r.status));
-      return (await r.json()) as { ok?: boolean; last?: { at?: number }; stats?: { executed?: number; liquidated?: number } };
-    },
-  });
-  const at = health.data?.last?.at ?? 0;
-  const ageMin = at ? Math.max(0, Math.round((Date.now() - at) / 60_000)) : null;
-  // Snapshots arrive every 5 minutes; older than 12 means the keeper (or its status push) has stopped.
-  const fresh = ageMin !== null && ageMin <= 12;
-  const tone = health.isError ? "idle" : !health.data ? "idle" : health.data.ok && fresh ? "ok" : fresh ? "warn" : "bad";
-  const text = !health.data ? "Keeper" : health.data.ok && fresh ? "Keeper running" : fresh ? "Keeper degraded" : "Keeper not reporting";
-  const title = health.data
-    ? `Hosted keeper: ${ageMin === null ? "no report" : `last report ${ageMin} min ago`}${health.data.stats ? `, ${health.data.stats.executed ?? 0} orders filled, ${health.data.stats.liquidated ?? 0} liquidations this run` : ""}. Anyone can run a keeper: see keeper/ in the repository.`
+  const keeper = useKeeperStatus();
+  const title = keeper.data
+    ? `Hosted keeper: ${keeper.ageMin === null ? "no report" : `last report ${keeper.ageMin} min ago`}${keeper.data.stats ? `, ${keeper.data.stats.executed ?? 0} orders filled, ${keeper.data.stats.liquidated ?? 0} liquidations this run` : ""}. Anyone can run a keeper: see keeper/ in the repository.`
     : "Hosted keeper status unavailable";
   return (
     <span className="flex items-center gap-1.5" title={title} data-testid="keeper-status">
-      <StatusDot tone={tone} />
-      <span>{text}</span>
+      <StatusDot tone={keeper.tone} />
+      <span className="hidden 2xl:inline">{keeper.text}</span>
+      <span className="2xl:hidden">Keeper</span>
     </span>
   );
 }
@@ -199,10 +196,11 @@ export function Header() {
   const { config } = useApp();
   const route = currentRoute(pathname);
   return (
-    <header className="sticky top-0 z-30 border-b border-line bg-bg/95 backdrop-blur">
+    <header className="sticky top-0 z-30 border-b border-line bg-bg/95 pt-[env(safe-area-inset-top)] backdrop-blur">
       <div className="mx-auto flex h-12 w-full max-w-[1760px] items-center gap-1 px-2 sm:gap-5 sm:px-3">
         <Wordmark />
-        <nav aria-label="Main" className="flex h-full items-stretch">
+        {/* Phones and tablets navigate with the bottom tab bar (MobileNav). */}
+        <nav aria-label="Main" className="hidden h-full items-stretch lg:flex">
           {NAV.map((item) => {
             const active = route === item.route;
             return (
@@ -210,10 +208,10 @@ export function Header() {
                 key={item.route}
                 route={item.route}
                 aria-current={active ? "page" : undefined}
-                className={`relative flex items-center px-[3px] text-xs font-medium tracking-[-0.01em] sm:px-3 sm:text-sm sm:tracking-normal ${active ? "text-text" : "text-muted hover:text-text"}`}
+                className={`relative flex items-center px-2 text-sm font-medium xl:px-3 ${active ? "text-text" : "text-muted hover:text-text"}`}
               >
                 {item.label}
-                {active ? <span aria-hidden="true" className="absolute inset-x-1 bottom-0 h-0.5 bg-accent sm:inset-x-3" /> : null}
+                {active ? <span aria-hidden="true" className="absolute inset-x-2 bottom-0 h-0.5 bg-accent xl:inset-x-3" /> : null}
               </AppLink>
             );
           })}
@@ -229,6 +227,8 @@ export function Header() {
           ) : null}
           <NetworkStatus />
           <WatchControl />
+          <HelpButton className="hidden sm:inline-flex" />
+          <SettingsButton className="hidden sm:inline-flex" />
           <WalletButton />
         </div>
       </div>

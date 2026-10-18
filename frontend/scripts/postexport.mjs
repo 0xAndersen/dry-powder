@@ -106,6 +106,14 @@ writeFileSync(
   )}\n`,
 );
 
+// Service worker: stamp it with this build's id so a new deployment replaces the cached shell.
+const swFile = join(out, "sw.js");
+if (existsSync(swFile)) {
+  const staticDir = join(out, "_next", "static");
+  const buildId = readdirSync(staticDir).find((name) => !["chunks", "css", "media"].includes(name)) ?? String(Date.now());
+  writeFileSync(swFile, readFileSync(swFile, "utf8").replace("__SW_VERSION__", buildId));
+}
+
 const html = readFileSync(join(out, "trade", "index.html"), "utf8");
 const absolute = html.match(/(?:src|href)="\/(?!\/)[^"]*"/g) ?? [];
 if (absolute.length > 0) {

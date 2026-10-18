@@ -17,6 +17,8 @@ type AppContextValue = {
   kraken: KrakenStore | null;
   /** Pyth prices and signed updates (pyth mode). */
   hermes: HermesStore | null;
+  /** RPCs in failover order: the configured one first, then Arc's public ones. Used by non-wallet signers. */
+  rpcUrls: readonly string[];
 };
 
 /** Public Arc Testnet RPCs (docs.arc.io) used when the configured one fails. */
@@ -49,6 +51,10 @@ export function isChainRead(query: Query): boolean {
 
 export function Providers({ config, children }: { config: RuntimeConfig; children: ReactNode }) {
   const chain = useMemo(() => buildChain(config), [config]);
+  const rpcUrls = useMemo(
+    () => [config.rpcUrl, ...(chain.id === 5042002 ? ARC_TESTNET_FALLBACK_RPCS : [])].filter((u, i, all) => all.indexOf(u) === i),
+    [config.rpcUrl, chain.id],
+  );
 
   const [wagmiConfig] = useState(() =>
     createConfig({
@@ -90,7 +96,7 @@ export function Providers({ config, children }: { config: RuntimeConfig; childre
     };
   }, [kraken, hermes]);
 
-  const value = useMemo<AppContextValue>(() => ({ config, chain, kraken, hermes }), [config, chain, kraken, hermes]);
+  const value = useMemo<AppContextValue>(() => ({ config, chain, kraken, hermes, rpcUrls }), [config, chain, kraken, hermes, rpcUrls]);
 
   return (
     <WagmiProvider config={wagmiConfig}>

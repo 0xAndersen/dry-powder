@@ -16,6 +16,7 @@ export const SHORTCUTS: readonly { keys: string[]; action: string }[] = [
   { keys: ["/"], action: "Search markets" },
   { keys: ["I"], action: "Show or hide chart indicators" },
   { keys: ["T"], action: "Pick a limit price on the chart" },
+  { keys: ["Ctrl / ⌘", "K"], action: "Command palette: any market, page or action" },
   { keys: ["?"], action: "Show this list" },
   { keys: ["Esc"], action: "Close dialogs, leave chart pick mode" },
 ];

@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { AppLink } from "@/components/app-link";
+import { InstantTradingChip } from "@/components/instant-trading";
+import { RiskSheet } from "@/components/trade/risk-sheet";
 import { useApp } from "@/components/providers";
 import { TxStatus } from "@/components/tx-status";
 import type { AccountData } from "@/hooks/use-account-data";
-import { useActionContext } from "@/hooks/use-action-context";
+import { useTradeContext } from "@/hooks/use-action-context";
 import { useMarketData } from "@/hooks/use-market-data";
 import { useTx } from "@/hooks/use-tx";
 import type { AccountView } from "@/hooks/use-wallet";
@@ -29,7 +31,8 @@ export function AccountBar({ view, account, loading }: { view: AccountView; acco
   const { config: cfg } = useApp();
   const { prices, params, byId } = useMarketData();
   const tx = useTx({ autoDismissMs: 6000 });
-  const actionContext = useActionContext();
+  const [riskOpen, setRiskOpen] = useState(false);
+  const actionContext = useTradeContext();
   const sym = cfg.collateralSymbol;
 
   const totals = useMemo(() => {
@@ -63,7 +66,7 @@ export function AccountBar({ view, account, loading }: { view: AccountView; acco
       if (!ctx) throw new UserFacingError("Connect your wallet first.");
       if (action === "mint") {
         await submitTestMint(ctx, label);
-        return `${fmtUsdc(TEST_MINT_AMOUNT, 0)} ${sym} of test funds added to your wallet.`;
+        return `${fmtUsdc(TEST_MINT_AMOUNT, 0)} ${sym} of test funds added to your ${view.instant ? "trading account" : "wallet"}.`;
       }
       await submitClaim(ctx, label);
       return `Claimed ${fmtUsdc(account?.claimable ?? 0n)} ${sym}.`;
@@ -85,6 +88,7 @@ export function AccountBar({ view, account, loading }: { view: AccountView; acco
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
         <div className="flex items-center gap-2">
           {view.watching ? <span className="watch-badge">Watching</span> : null}
+          {view.instant ? <span className="tag" data-tone="accent" title="Orders go out from your trading account, signed by this browser's key">Trading account</span> : null}
           <span className="num text-[0.8125rem] text-muted">{shortAddress(view.address)}</span>
         </div>
         <dl className="order-3 grid w-full grid-cols-3 gap-x-5 gap-y-2 sm:grid-cols-6 lg:order-none lg:w-auto lg:flex-1">
@@ -120,6 +124,7 @@ export function AccountBar({ view, account, loading }: { view: AccountView; acco
           </Cell>
         </dl>
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          {!view.watching ? <InstantTradingChip /> : null}
           {account && account.claimable > 0n ? (
             <button
               type="button"
@@ -138,14 +143,15 @@ export function AccountBar({ view, account, loading }: { view: AccountView; acco
           ) : null}
         </div>
       </div>
-      {totals?.nearest ? <NearestLiquidation {...totals.nearest} /> : null}
+      {totals?.nearest ? <NearestLiquidation {...totals.nearest} onOpen={() => setRiskOpen(true)} /> : null}
+      {riskOpen && account ? <RiskSheet positions={account.positions} onClose={() => setRiskOpen(false)} /> : null}
       {tx.state.phase !== "idle" ? <TxStatus state={tx.state} onDismiss={tx.reset} className="mt-2" /> : null}
     </section>
   );
 }
 
 /** The one number that matters most with open positions: how far the closest one is from liquidation. */
-function NearestLiquidation({ symbol, distance }: { symbol: string; distance: number }) {
+function NearestLiquidation({ symbol, distance, onOpen }: { symbol: string; distance: number; onOpen: () => void }) {
   // Full bar at a 10% cushion or more; colour by the same bands as the order ticket's risk card.
   const tone = RISK_COLOR[riskTone(distance) ?? "calm"];
   const width = `${Math.max(2, Math.min(100, (distance / 0.1) * 100))}%`;
@@ -158,6 +164,9 @@ function NearestLiquidation({ symbol, distance }: { symbol: string; distance: nu
       <span className="num shrink-0 text-[0.75rem]" style={{ color: tone }}>
         {symbol} {fmtPercent(distance, distance < 0.01 ? 2 : 1)} away
       </span>
+      <button type="button" className="btn btn-sm h-6 shrink-0 px-2 text-2xs" onClick={onOpen} data-testid="open-risk">
+        Risk
+      </button>
     </div>
   );
 }

@@ -13,13 +13,26 @@ import { Shell } from "@/components/shell";
 export const metadata: Metadata = {
   title: { default: "Dry Powder", template: "%s | Dry Powder" },
   description: "Risk-first perpetuals on Arc, up to 1000x. See the most you can lose before you trade. Built for people and agents.",
-  // The static bundle keeps every page one directory deep, so a relative icon works under any sub-path.
-  icons: { icon: IS_STATIC_BUILD ? "../favicon.svg" : "/favicon.svg" },
+  // The static bundle keeps every page one directory deep, so relative URLs work under any sub-path.
+  icons: {
+    icon: IS_STATIC_BUILD ? "../favicon.svg" : "/favicon.svg",
+    apple: IS_STATIC_BUILD ? "../apple-touch-icon.png" : "/apple-touch-icon.png",
+  },
+  manifest: IS_STATIC_BUILD ? "../manifest.webmanifest" : "/manifest.webmanifest",
+  appleWebApp: { capable: true, title: "Dry Powder", statusBarStyle: "black-translucent" },
+  openGraph: {
+    title: "Dry Powder",
+    description: "Up to 1000x. See the most you can lose before you trade. Open perpetuals on Arc, built for people and AI agents.",
+    images: [{ url: "https://0xandersen.github.io/dry-powder/og-card.png", width: 1200, height: 630 }],
+  },
+  twitter: { card: "summary_large_image", images: ["https://0xandersen.github.io/dry-powder/og-card.png"] },
 };
 
 export const viewport: Viewport = {
   themeColor: "#0d0f12",
   colorScheme: "dark",
+  // Edge to edge on phones with a notch; the layout pads with env(safe-area-inset-*).
+  viewportFit: "cover",
 };
 
 export default async function RootLayout({ children }: { children: ReactNode }) {

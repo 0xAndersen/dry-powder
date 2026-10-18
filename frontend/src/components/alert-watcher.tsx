@@ -4,14 +4,13 @@ import { useEffect } from "react";
 import { useMarketData } from "@/hooks/use-market-data";
 import { useLocalStore } from "@/hooks/use-local-store";
 import { fmtNum } from "@/lib/format";
-import { priceAlerts, tradeSettings } from "@/lib/storage";
-import { toast } from "@/lib/toasts";
+import { notify } from "@/lib/notify";
+import { priceAlerts } from "@/lib/storage";
 
 /** Fires price alerts on every page: a toast always, a system notification when the user allowed it. */
 export function AlertWatcher() {
   const { prices, byId } = useMarketData();
   const [alerts, setAlerts] = useLocalStore(priceAlerts);
-  const [settings] = useLocalStore(tradeSettings);
 
   useEffect(() => {
     const fired: string[] = [];
@@ -25,20 +24,13 @@ export function AlertWatcher() {
       const dp = byId.get(alert.marketId)?.priceDecimals ?? 2;
       const title = `${alert.symbol} ${alert.direction === "above" ? "rose to" : "fell to"} ${fmtNum(alert.price, dp)}`;
       const body = `Now ${fmtNum(price, dp)}`;
-      toast("warn", title, body, 15_000);
-      if (settings.notify && typeof Notification !== "undefined" && Notification.permission === "granted") {
-        try {
-          new Notification(`Dry Powder: ${title}`, { body, tag: alert.id });
-        } catch {
-          // Some browsers only allow notifications from a service worker; the toast still shows.
-        }
-      }
+      notify("warn", title, body, { tag: alert.id, ttlMs: 15_000 });
     }
     if (fired.length > 0) {
       const now = Date.now();
       setAlerts((prev) => prev.map((a) => (fired.includes(a.id) ? { ...a, firedAt: now } : a)));
     }
-  }, [alerts, prices, byId, settings.notify, setAlerts]);
+  }, [alerts, prices, byId, setAlerts]);
 
   return null;
 }

@@ -2,22 +2,27 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import type { TradeCommand } from "@/components/command-palette";
 import { AccountBar } from "@/components/trade/account-bar";
+import { Onboarding } from "@/components/trade/onboarding";
 import { AccountTables, type TablesHandle } from "@/components/trade/account-tables";
 import { MarketHeader } from "@/components/trade/market-header";
 import { OrderTicket, type TicketDraft, type TicketHandle } from "@/components/trade/order-ticket";
-import { PriceChart, type ChartLine, type PickTarget } from "@/components/trade/price-chart";
+import { PriceChart, type ChartLine, type ChartMarker, type PickTarget } from "@/components/trade/price-chart";
 import { ShortcutsOverlay } from "@/components/trade/shortcuts-overlay";
 import { useAccountData } from "@/hooks/use-account-data";
 import { useLocalStore } from "@/hooks/use-local-store";
 import { useLogFeed } from "@/hooks/use-log-feed";
 import { useChainNow, useMarketData, useMarketPrice } from "@/hooks/use-market-data";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { useAccountView } from "@/hooks/use-wallet";
-import { fmtPrice, priceToNum } from "@/lib/format";
+import { fmtNum, fmtPercent, fmtPrice, fmtUsdc, priceToNum } from "@/lib/format";
 import { findBySlug, groupInstruments, marketSlug, type Instrument } from "@/lib/instruments";
 import { orderTracker } from "@/lib/order-tracker";
 import { valuePosition } from "@/lib/position";
 import { priceAlerts, type PriceAlert } from "@/lib/storage";
+import { notify } from "@/lib/notify";
+import { prefs, utcDayStart } from "@/lib/prefs";
 import { toast } from "@/lib/toasts";
 
 /** How far back the account history is read on load. "Load earlier" extends it. */
@@ -58,12 +63,102 @@ export function TradeScreen() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [indicatorsHidden, setIndicatorsHidden] = useState(false);
+  // Phones and tablets: the ticket is a bottom sheet opened from the action bar; from `lg` it is the right rail.
+  const desktop = useMediaQuery("(min-width: 1024px)");
+  const [ticketOpen, setTicketOpen] = useState(false);
+  const openTicket = useCallback((long: boolean | null) => {
+    if (long !== null) ticketRef.current?.setSide(long);
+    setTicketOpen(true);
+  }, []);
+  // Commands from the palette (Ctrl/⌘ K).
+  useEffect(() => {
+    const onCommand = (event: Event) => {
+      const command = (event as CustomEvent<TradeCommand>).detail;
+      if (command.type === "side") {
+        ticketRef.current?.setSide(command.long);
+        if (desktop) ticketRef.current?.focusSize();
+        else setTicketOpen(true);
+      } else if (command.type === "close") {
+        ticketRef.current?.close();
+      } else if (command.type === "market") {
+        const next = findBySlug(instruments, command.symbol);
+        if (next) selectMarket(next);
+      }
+    };
+    window.addEventListener("dp:command", onCommand);
+    return () => window.removeEventListener("dp:command", onCommand);
+  }, [desktop, instruments, selectMarket]);
+
+  useEffect(() => {
+    if (!ticketOpen || desktop) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !document.querySelector('[aria-modal="true"]')) setTicketOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = overflow;
+    };
+  }, [ticketOpen, desktop]);
   const [alerts, setAlerts] = useLocalStore(priceAlerts);
 
   const position = useMemo(
     () => (instrument ? account.data?.positions.find((p) => p.position.priceId.toLowerCase() === instrument.id) : undefined),
     [account.data, instrument],
   );
+  const positionValue = position && params ? valuePosition(position, price.mark, params.maxProfitMultiple) : null;
+  const [preferences] = useLocalStore(prefs);
+  // Your own entries and exits in this market, drawn on the candles.
+  const markers = useMemo<ChartMarker[]>(() => {
+    if (!instrument) return [];
+    const id = instrument.id.toLowerCase();
+    const out: ChartMarker[] = [];
+    for (const e of feed.events) {
+      if (!("marketId" in e) || !e.marketId || e.marketId.toLowerCase() !== id) continue;
+      if (e.type === "open") out.push({ id: e.id, time: e.time, kind: "open", isLong: e.isLong, text: e.isLong ? "Long" : "Short" });
+      else if (e.type === "close") out.push({ id: e.id, time: e.time, kind: "close", isLong: null, text: `${e.pnl >= 0n ? "+" : ""}${(Number(e.pnl) / 1e6).toFixed(2)}` });
+      else if (e.type === "liquidation") out.push({ id: e.id, time: e.time, kind: "liquidation", isLong: null, text: "Liquidated" });
+    }
+    return out.slice(-80);
+  }, [feed.events, instrument]);
+  // Self-imposed daily loss limit: realised result since 00:00 UTC (price PnL, fees and liquidations).
+  const dayStart = utcDayStart();
+  const limit = preferences.dailyLossLimit;
+  useEffect(() => {
+    // Make sure the history covers the whole UTC day when a limit is set.
+    if (limit !== null && feed.status.phase === "live" && feed.status.loadedFromTime > dayStart) void feed.extend(feed.status.loadedFromTime - dayStart + 60);
+  }, [limit, feed, dayStart]);
+  const todayResult = useMemo(() => {
+    if (limit === null) return null;
+    let total = 0n;
+    for (const e of feed.events) {
+      if (e.time < dayStart) continue;
+      if (e.type === "close") total += e.pnl - e.fee;
+      else if (e.type === "open") total -= e.fee;
+      else if (e.type === "liquidation") total -= e.margin;
+    }
+    return total;
+  }, [limit, feed.events, dayStart]);
+  const lossLimitReached =
+    limit !== null && todayResult !== null && todayResult <= -BigInt(Math.round(limit * 1e6))
+      ? `Daily loss limit reached (${fmtUsdc(todayResult, 2, { sign: true })} today). New positions reopen at 00:00 UTC`
+      : null;
+  // Tab title ticker: price, and the position's PnL, readable from another tab or the task switcher.
+  const titlePrice = instrument && price.display !== null ? fmtNum(price.display, instrument.priceDecimals) : null;
+  const titlePnl = positionValue?.pnl ?? null;
+  useEffect(() => {
+    if (!preferences.titleTicker || !instrument || titlePrice === null) return;
+    const before = document.title;
+    const pnl = titlePnl === null ? "" : ` ${titlePnl >= 0n ? "▲" : "▼"} ${fmtUsdc(titlePnl, 2, { sign: true })}`;
+    document.title = `${titlePrice} ${instrument.symbol}${pnl} | Dry Powder`;
+    return () => {
+      document.title = before;
+    };
+  }, [preferences.titleTicker, instrument, titlePrice, titlePnl]);
+  const positionSummary =
+    position && positionValue ? { isLong: position.position.isLong, pnl: positionValue.pnl, roe: positionValue.roe, leverage: positionValue.leverage } : null;
 
   // ── Follow keeper orders placed here until they fill, and surface what happens to the account. ──
   const startedAt = useRef(Date.now() / 1000);
@@ -81,20 +176,20 @@ export function TradeScreen() {
           orderTracker.resolve(event.orderId, "filled", event.price);
           const dp = byId.get(tracked.marketId)?.priceDecimals ?? 2;
           const what = tracked.action === "close" ? `${tracked.symbol} position closed` : `${tracked.isLong ? "Long" : "Short"} ${tracked.symbol} filled`;
-          toast("ok", what, `Order #${event.orderId} executed at ${fmtPrice(event.price, dp)}`);
+          notify("ok", what, `Order #${event.orderId} executed at ${fmtPrice(event.price, dp)}`, { system: prefs.get().fillNotifications, tag: `fill-${event.orderId}` });
         } else {
           orderTracker.resolve(event.orderId, "cancelled");
         }
       } else if (event.type === "liquidation" && event.time > startedAt.current - 5 && !announced.current.has(event.id)) {
         announced.current.add(event.id);
         const symbol = byId.get(event.marketId)?.symbol ?? "Position";
-        toast("error", `${symbol} position liquidated`, view.watching ? "The watched account lost the position's margin." : "Losses reached 90% of margin. The margin is lost; DRY was minted as a rebate.", 15_000);
+        notify("error", `${symbol} position liquidated`, view.watching ? "The watched account lost the position's margin." : "Losses reached 90% of margin. The margin is lost; DRY was minted as a rebate.", { system: !view.watching, tag: `liq-${event.id}`, ttlMs: 15_000 });
       } else if (event.type === "close" && event.orderId !== undefined && event.time > startedAt.current - 5 && !announced.current.has(event.id)) {
         // Take-profit and stop-loss fills were not placed in this session, so nothing is tracking them.
         announced.current.add(event.id);
         if (!resting.some((o) => o.orderId === event.orderId) && !orderTracker.get().some((o) => o.orderId === event.orderId)) {
           const inst = byId.get(event.marketId);
-          toast(event.pnl >= 0n ? "ok" : "warn", `${inst?.symbol ?? "Position"} closed by order #${event.orderId}`, `At ${fmtPrice(event.price, inst?.priceDecimals ?? 2)}${event.pnl > 0n ? ". More powder for the next one." : ""}`);
+          notify(event.pnl >= 0n ? "ok" : "warn", `${inst?.symbol ?? "Position"} closed by order #${event.orderId}`, `At ${fmtPrice(event.price, inst?.priceDecimals ?? 2)}${event.pnl > 0n ? ". More powder for the next one." : ""}`, { system: !view.watching && prefs.get().fillNotifications, tag: `close-${event.id}` });
         }
       }
     }
@@ -242,6 +337,7 @@ export function TradeScreen() {
         </p>
       ) : null}
 
+      <Onboarding account={account.data} hasTraded={(account.data?.positions.length ?? 0) > 0 || feed.events.some((e) => e.type === "open" || e.type === "close")} />
       <AccountBar view={view} account={account.data} loading={account.isLoading} />
 
       <div className="trade-grid">
@@ -259,9 +355,27 @@ export function TradeScreen() {
             onPick={onPick}
             indicatorsHidden={indicatorsHidden}
             chainNow={chainNow}
+            markers={markers}
           />
         </div>
-        <div className="[grid-area:ticket] min-w-0">
+        {!desktop && ticketOpen ? <div className="ticket-backdrop" aria-hidden="true" onClick={() => setTicketOpen(false)} /> : null}
+        <div
+          className="ticket-dock [grid-area:ticket] min-w-0"
+          data-open={ticketOpen}
+          inert={!desktop && !ticketOpen}
+          role={desktop ? undefined : "dialog"}
+          aria-modal={!desktop && ticketOpen ? true : undefined}
+          aria-label={desktop ? undefined : `Order ticket, ${instrument.symbol}`}
+          data-testid="ticket-dock"
+        >
+          {!desktop ? (
+            <div className="flex items-center justify-between px-3 pt-2">
+              <span className="sheet-handle !m-0" aria-hidden="true" />
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setTicketOpen(false)} aria-label="Close the order ticket">
+                {"✕"}
+              </button>
+            </div>
+          ) : null}
           <div className="lg:sticky lg:top-[3.5rem] lg:max-h-[calc(100dvh-4rem)] lg:overflow-y-auto">
             <OrderTicket
               key={instrument.id}
@@ -276,6 +390,8 @@ export function TradeScreen() {
               onDraftChange={setDraft}
               onPickRequest={setPick}
               onShowShortcuts={() => setShortcutsOpen(true)}
+              onSubmitted={() => setTicketOpen(false)}
+              lossLimitReached={view.watching ? null : lossLimitReached}
             />
           </div>
         </div>
@@ -296,7 +412,64 @@ export function TradeScreen() {
         </div>
       </div>
 
+      {!desktop && !ticketOpen ? (
+        <TradeActionBar
+          symbol={instrument.symbol}
+          price={price.display !== null ? fmtNum(price.display, instrument.priceDecimals) : null}
+          position={positionSummary}
+          canTrade={!view.watching}
+          onOpen={openTicket}
+          onShowPosition={() => document.querySelector('[data-testid="positions-table"]')?.scrollIntoView({ behavior: "smooth", block: "start" })}
+        />
+      ) : null}
+
       {shortcutsOpen ? <ShortcutsOverlay onClose={() => setShortcutsOpen(false)} /> : null}
+    </div>
+  );
+}
+
+/** Phones: price and the two big buttons, above the tab bar. Opens the ticket sheet on a side. */
+function TradeActionBar({
+  symbol,
+  price,
+  position,
+  canTrade,
+  onOpen,
+  onShowPosition,
+}: {
+  symbol: string;
+  price: string | null;
+  position: { isLong: boolean; pnl: bigint | null; roe: number | null; leverage: number } | null;
+  canTrade: boolean;
+  onOpen: (long: boolean | null) => void;
+  onShowPosition: () => void;
+}) {
+  return (
+    <div className="trade-actionbar lg:hidden" data-testid="trade-actionbar">
+      <button type="button" className="min-w-0 flex-1 text-left" onClick={position ? onShowPosition : () => onOpen(null)}>
+        {position ? (
+          <>
+            <span className="block truncate text-2xs text-muted">
+              {position.isLong ? "Long" : "Short"} {symbol} {position.leverage.toFixed(position.leverage < 10 ? 1 : 0)}x
+            </span>
+            <span className={`num block truncate text-sm font-semibold ${position.pnl === null ? "" : position.pnl >= 0n ? "text-long" : "text-short"}`}>
+              {position.pnl === null ? "—" : fmtUsdc(position.pnl, 2, { sign: true })}
+              {position.roe !== null ? <span className="ml-1 text-xs font-normal">{fmtPercent(position.roe, 1, true)}</span> : null}
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="block truncate text-2xs text-muted">{symbol}</span>
+            <span className="num block truncate text-sm font-semibold">{price ?? "—"}</span>
+          </>
+        )}
+      </button>
+      <button type="button" className="btn btn-long h-11 min-w-[6.5rem] text-[0.9375rem]" disabled={!canTrade} onClick={() => onOpen(true)} data-testid="actionbar-long">
+        Long
+      </button>
+      <button type="button" className="btn btn-short h-11 min-w-[6.5rem] text-[0.9375rem]" disabled={!canTrade} onClick={() => onOpen(false)} data-testid="actionbar-short">
+        Short
+      </button>
     </div>
   );
 }

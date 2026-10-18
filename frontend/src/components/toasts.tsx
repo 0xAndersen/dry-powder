@@ -6,7 +6,7 @@ import { emptyToasts, toastStore } from "@/lib/toasts";
 export function Toasts() {
   const toasts = useSyncExternalStore(toastStore.subscribe, toastStore.get, emptyToasts);
   return (
-    <div className="pointer-events-none fixed bottom-3 left-3 z-50 flex w-[min(22rem,calc(100vw-1.5rem))] flex-col gap-2" role="region" aria-label="Notifications">
+    <div className="toast-region pointer-events-none fixed left-3 z-50 flex w-[min(22rem,calc(100vw-1.5rem))] flex-col gap-2" role="region" aria-label="Notifications">
       {toasts.map((t) => (
         <div
           key={t.id}

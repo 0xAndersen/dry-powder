@@ -2,7 +2,7 @@
 // with TRADERS >= 5 so the activity feed and the house have something to show).
 //
 //   node e2e/run.mjs                 # everything
-//   node e2e/run.mjs trade,house     # only some sections: trade, instruments, watch, activity, settle, house, extras, agents, responsive
+//   node e2e/run.mjs trade,house     # only some sections: trade, instruments, watch, activity, settle, house, extras, agents, pro, phone, instant, responsive
 //
 // Exits non-zero if any step fails. Screenshots land in e2e/out/shots/.
 import { mkdirSync } from "node:fs";
@@ -647,6 +647,122 @@ if (want("agents")) {
     await t("agents-list").getByRole("button", { name: "Revoke" }).click();
     await page.getByText(/revoked\. Its open positions stay/).waitFor({ timeout: 30_000 });
     return `account ${agentAccount}, agent ${agentAcct.address} traded ETH-USD and was revoked`;
+  });
+}
+
+if (want("pro")) {
+  await step("command palette: Ctrl+K jumps to a market", async () => {
+    await page.goto(`${WEB_URL}/trade/?market=BTC-USD`);
+    await t("market-price").waitFor({ timeout: 20_000 });
+    await page.keyboard.press("Control+k");
+    await t("command-palette").waitFor({ timeout: 5_000 });
+    await page.keyboard.type("ETH-USD");
+    await page.keyboard.press("Enter");
+    await page.getByRole("heading", { name: "Trade ETH-USD" }).waitFor({ state: "attached", timeout: 5_000 });
+  });
+
+  await step("settings: a personal leverage cap limits the ticket", async () => {
+    await ensureWallet();
+    await t("settings-button").click();
+    await t("settings-sheet").getByRole("group", { name: "Personal leverage cap" }).getByRole("button", { name: "25x", exact: true }).click();
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(400);
+    const capped = await page.getByRole("button", { name: "50x", exact: true }).count();
+    await t("settings-button").click();
+    await t("settings-sheet").getByRole("group", { name: "Personal leverage cap" }).getByRole("button", { name: "Market max", exact: true }).click();
+    await page.keyboard.press("Escape");
+    if (capped !== 0) throw new Error("the 50x preset is still offered with a 25x personal cap");
+  });
+}
+
+if (want("phone")) {
+  await step("phone: tab bar, action bar opens the ticket sheet, a long fills, the position shows as a card, risk sheet", async () => {
+    const { page: phone, context } = await newPage(browser, { viewport: { width: 390, height: 844 } });
+    try {
+      await phone.goto(`${WEB_URL}/trade/?market=BTC-USD`);
+      await phone.getByTestId("market-price").waitFor({ timeout: 20_000 });
+      await phone.getByTestId("mobile-nav").waitFor({ timeout: 5_000 });
+      const connect = phone.getByRole("button", { name: "Connect wallet", exact: true });
+      if ((await connect.count()) > 0) await connect.first().click();
+      await phone.waitForTimeout(1_500);
+      await phone.getByTestId("actionbar-long").click();
+      await phone.locator('[data-testid="ticket-dock"][data-open="true"]').waitFor({ timeout: 5_000 });
+      await phone.getByRole("group", { name: "Quantity entered as" }).getByRole("button", { name: "Margin", exact: true }).click();
+      await phone.getByTestId("ticket-qty").fill("150");
+      await phone.waitForTimeout(500);
+      await phone.screenshot({ path: join(SHOTS, "m-ticket-sheet.png") });
+      await phone.getByTestId("ticket-submit").click();
+      await phone.getByTestId("confirm-yes").click();
+      await phone.locator('[data-testid="ticket-dock"][data-open="false"]').waitFor({ state: "attached", timeout: 30_000 });
+      await phone.getByTestId("tab-positions").click();
+      await phone.getByTestId("position-BTC-USD").waitFor({ timeout: 40_000 });
+      await phone.waitForTimeout(800);
+      await phone.screenshot({ path: join(SHOTS, "m-position-card.png"), fullPage: true });
+      const [scroll, inner] = await phone.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
+      if (scroll > inner + 1) throw new Error(`horizontal overflow: ${scroll} > ${inner}`);
+      await phone.getByTestId("open-risk").click();
+      await phone.getByTestId("risk-sheet").waitFor({ timeout: 5_000 });
+      await phone.getByTestId("risk-sheet").getByRole("button", { name: "-1%", exact: true }).click();
+      await phone.screenshot({ path: join(SHOTS, "m-risk-sheet.png") });
+      await phone.keyboard.press("Escape");
+    } finally {
+      await context.close();
+    }
+  });
+}
+
+if (want("instant")) {
+  await step("instant trading: enable with two wallet confirmations, trade with no wallet prompt, revoke", async () => {
+    const { page: p, context } = await newPage(browser);
+    try {
+      // SOL-USD: the agents step leaves an ETH-USD position in this same account.
+      await p.goto(`${WEB_URL}/trade/?market=SOL-USD`);
+      await p.getByTestId("market-price").waitFor({ timeout: 20_000 });
+      const connect = p.getByRole("button", { name: "Connect wallet", exact: true });
+      if ((await connect.count()) > 0) await connect.first().click();
+      await p.getByRole("button", { name: /0x[0-9a-fA-F]{4}…/ }).waitFor({ timeout: 10_000 });
+      // Count what the wallet is asked to send from here on.
+      await p.evaluate(() => {
+        const eth = window.ethereum;
+        const original = eth.request.bind(eth);
+        window.__walletSends = 0;
+        eth.request = (args) => {
+          if (args.method === "eth_sendTransaction") window.__walletSends += 1;
+          return original(args);
+        };
+      });
+      await p.getByTestId("instant-chip").click();
+      await p.getByTestId("instant-enable").click();
+      await p.getByText(/Instant trading is on/).waitFor({ timeout: 60_000 });
+      const setupSends = await p.evaluate(() => window.__walletSends);
+      await p.keyboard.press("Escape");
+      await p.getByText("Trading account", { exact: true }).first().waitFor({ timeout: 15_000 });
+      await p.evaluate(() => {
+        window.__walletSends = 0;
+      });
+      await p.getByRole("group", { name: "Quantity entered as" }).getByRole("button", { name: "Margin", exact: true }).click();
+      await p.getByTestId("ticket-qty").fill("120");
+      await p.waitForTimeout(500);
+      await p.getByTestId("ticket-submit").click();
+      await p.getByTestId("confirm-yes").click();
+      const account = await read(addresses.agentFactory, "AgentAccountFactory", "accountOf", [UI_TRADER.address]);
+      const sol = addresses.markets.find((m) => m.symbol === "SOL-USD").marketId;
+      for (let i = 0; i < 45; i++) {
+        const pos = await read(addresses.engine, "PerpEngine", "getPosition", [account, sol]);
+        if (pos.trader.toLowerCase() === account.toLowerCase()) break;
+        if (i === 44) throw new Error("the instant order was not filled");
+        await sleep(1000);
+      }
+      const tradeSends = await p.evaluate(() => window.__walletSends);
+      if (tradeSends !== 0) throw new Error(`the wallet was asked to send ${tradeSends} transaction(s) for an instant order`);
+      await p.screenshot({ path: join(SHOTS, "26-instant-trading.png"), fullPage: true });
+      await p.getByTestId("instant-chip").click();
+      await p.getByTestId("instant-revoke").click();
+      await p.getByText(/Instant trading is off/).waitFor({ timeout: 60_000 });
+      return `${setupSends} wallet transactions to set up, 0 for the trade; account ${account}`;
+    } finally {
+      await context.close();
+    }
   });
 }
 

@@ -1,7 +1,7 @@
 import type { Config } from "wagmi";
 import { readContract, simulateContract, writeContract } from "wagmi/actions";
 import { maxUint256, parseEventLogs, type Address, type Hex, type TransactionReceipt } from "viem";
-import { perpEngineAbi, testUSDCAbi } from "./abi";
+import { agentAccountAbi, perpEngineAbi, testUSDCAbi } from "./abi";
 import { erc20Abi, pythAbi } from "./abis-extra";
 import type { RuntimeConfig } from "./config";
 import { UserFacingError } from "./errors";
@@ -9,6 +9,7 @@ import { feedIdsOf, type Instrument } from "./instruments";
 import { needsKeeperOrders, withSlippageDown, withSlippageUp } from "./math";
 import type { Quote } from "./oracle";
 import { fetchLatestUpdate, type HermesStore } from "./pyth";
+import { arcFees, type SessionClient } from "./session";
 import type { TxApi } from "@/hooks/use-tx";
 
 /** Everything an on-chain action needs. Built once per flow by the calling component. */
@@ -23,13 +24,58 @@ export type ActionContext = {
   pyth: Address | null;
   approveUnlimited: boolean;
   maxPriceAge: number;
+  /**
+   * Instant trading: orders go to the trader's AgentAccount, signed by the browser's session key (no wallet
+   * pop-up). `account` above is then the AgentAccount. Null for wallet trading.
+   */
+  session: { client: SessionClient; account: Address } | null;
 };
+
+/** AgentAccount forwarders plus the engine's errors, so reverts from the engine decode with their names. */
+const ACCOUNT_CALL_ABI = [...agentAccountAbi, ...perpEngineAbi.filter((item) => item.type === "error")] as const;
+
+type EngineFn = "openPosition" | "createLimitOrder" | "closePosition" | "setTriggerOrder" | "cancelOrder" | "claim";
+
+/**
+ * Sends a trading call: straight to the engine from the wallet, or through the AgentAccount from the session key.
+ * Both paths simulate first, so a revert surfaces with the engine's error before anything is signed.
+ */
+async function sendEngine(ctx: ActionContext, label: string, functionName: EngineFn, args: readonly unknown[], value?: bigint): Promise<TransactionReceipt> {
+  const { wagmi, cfg, api, account, session } = ctx;
+  if (session) {
+    return api.send(label, async () => {
+      const { client } = session;
+      const { request } = await client.simulateContract({
+        address: session.account,
+        abi: ACCOUNT_CALL_ABI,
+        functionName,
+        args,
+        value,
+        account: client.account,
+      } as never);
+      return client.writeContract({ ...(request as object), ...(await arcFees(client)) } as never);
+    });
+  }
+  return api.send(label, async () => {
+    const { request } = await simulateContract(wagmi, {
+      abi: perpEngineAbi,
+      address: cfg.perpEngine,
+      functionName,
+      args,
+      value,
+      account,
+      chainId: cfg.chainId,
+    } as never);
+    return writeContract(wagmi, request as never);
+  });
+}
 
 export const ORDER_TYPE = { LimitOpen: 0, TakeProfit: 1, StopLoss: 2, Close: 3 } as const;
 
 /** Makes sure `spender` may pull `amount` of the collateral token, approving when the allowance is short. */
 export async function ensureAllowance(ctx: ActionContext, spender: Address, amount: bigint): Promise<void> {
-  if (amount === 0n) return;
+  // An AgentAccount approves the engine for good when it is created.
+  if (amount === 0n || ctx.session) return;
   const { wagmi, cfg, api, account } = ctx;
   api.preparing(`Checking ${cfg.collateralSymbol} allowance`);
   const allowance = await readContract(wagmi, {
@@ -127,7 +173,7 @@ export function marketableTrigger(reference: Quote, isLong: boolean, slippageBps
  * keeper fills against the next price. Pyth mode opens directly with a fresh Hermes update.
  */
 export async function submitOpen(ctx: ActionContext, req: OpenRequest, label: string): Promise<OpenResult> {
-  const { wagmi, cfg, api, account } = ctx;
+  const { cfg, api } = ctx;
   await ensureAllowance(ctx, cfg.perpEngine, req.required);
   const { instrument, isLong, margin, size, takeProfit, stopLoss } = req;
 
@@ -139,17 +185,7 @@ export async function submitOpen(ctx: ActionContext, req: OpenRequest, label: st
       triggerPrice = marketableTrigger(req.reference, isLong, req.slippageBps);
     }
     if (triggerPrice === 0n) throw new UserFacingError("Enter a price greater than zero.");
-    const receipt = await api.send(label, async () => {
-      const { request } = await simulateContract(wagmi, {
-        abi: perpEngineAbi,
-        address: cfg.perpEngine,
-        functionName: "createLimitOrder",
-        args: [{ priceId: instrument.id, isLong, margin, size, triggerPrice, takeProfit, stopLoss }],
-        account,
-        chainId: cfg.chainId,
-      });
-      return writeContract(wagmi, request);
-    });
+    const receipt = await sendEngine(ctx, label, "createLimitOrder", [{ priceId: instrument.id, isLong, margin, size, triggerPrice, takeProfit, stopLoss }]);
     return { receipt, orderId: orderIdFrom(receipt, "OrderCreated"), trigger: triggerPrice };
   }
 
@@ -158,18 +194,13 @@ export async function submitOpen(ctx: ActionContext, req: OpenRequest, label: st
   // The engine accepts prices at most `maxPriceAge` seconds old, so the update is fetched last.
   api.preparing(`Fetching the latest ${instrument.symbol} price`);
   const oracle = await freshOracleUpdate(ctx, instrument);
-  const receipt = await api.send(label, async () => {
-    const { request } = await simulateContract(wagmi, {
-      abi: perpEngineAbi,
-      address: cfg.perpEngine,
-      functionName: "openPosition",
-      args: [{ priceId: instrument.id, isLong, margin, size, acceptablePrice, takeProfit, stopLoss }, oracle.updateData],
-      value: oracle.fee,
-      account,
-      chainId: cfg.chainId,
-    });
-    return writeContract(wagmi, request);
-  });
+  const receipt = await sendEngine(
+    ctx,
+    label,
+    "openPosition",
+    [{ priceId: instrument.id, isLong, margin, size, acceptablePrice, takeProfit, stopLoss }, oracle.updateData],
+    oracle.fee,
+  );
   return { receipt, orderId: null, trigger: null };
 }
 
@@ -196,15 +227,11 @@ export type CloseResult = { receipt: TransactionReceipt; orderId: bigint | null;
  * update. Otherwise publisher mode places (or moves) a keeper-executed Close order and Pyth mode closes directly.
  */
 export async function submitClose(ctx: ActionContext, req: CloseRequest, label: string): Promise<CloseResult> {
-  const { wagmi, cfg, api, account } = ctx;
+  const { cfg, api } = ctx;
   const { instrument, isLong } = req;
-  const engine = { abi: perpEngineAbi, address: cfg.perpEngine, account, chainId: cfg.chainId } as const;
 
   if (instrument.settlementPrice !== 0n) {
-    const receipt = await api.send(label, async () => {
-      const { request } = await simulateContract(wagmi, { ...engine, functionName: "closePosition", args: [instrument.id, 0n, []] });
-      return writeContract(wagmi, request);
-    });
+    const receipt = await sendEngine(ctx, label, "closePosition", [instrument.id, 0n, []]);
     return { receipt, orderId: null, direct: true };
   }
 
@@ -223,37 +250,19 @@ export async function submitClose(ctx: ActionContext, req: CloseRequest, label: 
 
   if (cfg.oracleMode === "publisher" && req.direct) {
     // No update data: this only succeeds while the on-chain price is fresh (the publisher posts about once a second).
-    const receipt = await api.send(label, async () => {
-      const { request } = await simulateContract(wagmi, { ...engine, functionName: "closePosition", args: [instrument.id, worst, []] });
-      return writeContract(wagmi, request);
-    });
+    const receipt = await sendEngine(ctx, label, "closePosition", [instrument.id, worst, []]);
     return { receipt, orderId: null, direct: true };
   }
 
   if (cfg.oracleMode === "publisher" || req.highLeverage) {
     await ensureAllowance(ctx, cfg.perpEngine, req.executionFee);
-    const receipt = await api.send(label, async () => {
-      const { request } = await simulateContract(wagmi, {
-        ...engine,
-        functionName: "setTriggerOrder",
-        args: [instrument.id, ORDER_TYPE.Close, worst],
-      });
-      return writeContract(wagmi, request);
-    });
+    const receipt = await sendEngine(ctx, label, "setTriggerOrder", [instrument.id, ORDER_TYPE.Close, worst]);
     return { receipt, orderId: orderIdFrom(receipt, "OrderCreated") ?? orderIdFrom(receipt, "OrderUpdated"), direct: false };
   }
 
   api.preparing(`Fetching the latest ${instrument.symbol} price`);
   const oracle = await freshOracleUpdate(ctx, instrument);
-  const receipt = await api.send(label, async () => {
-    const { request } = await simulateContract(wagmi, {
-      ...engine,
-      functionName: "closePosition",
-      args: [instrument.id, worst, oracle.updateData],
-      value: oracle.fee,
-    });
-    return writeContract(wagmi, request);
-  });
+  const receipt = await sendEngine(ctx, label, "closePosition", [instrument.id, worst, oracle.updateData], oracle.fee);
   return { receipt, orderId: null, direct: true };
 }
 
@@ -266,39 +275,25 @@ export async function submitTrigger(
   executionFee: bigint,
   label: string,
 ): Promise<TransactionReceipt> {
-  const { wagmi, cfg, api, account } = ctx;
-  await ensureAllowance(ctx, cfg.perpEngine, executionFee);
-  return api.send(label, async () => {
-    const { request } = await simulateContract(wagmi, {
-      abi: perpEngineAbi,
-      address: cfg.perpEngine,
-      functionName: "setTriggerOrder",
-      args: [marketId, orderType, triggerPrice],
-      account,
-      chainId: cfg.chainId,
-    });
-    return writeContract(wagmi, request);
-  });
+  await ensureAllowance(ctx, ctx.cfg.perpEngine, executionFee);
+  return sendEngine(ctx, label, "setTriggerOrder", [marketId, orderType, triggerPrice]);
 }
 
 export async function submitCancel(ctx: ActionContext, orderId: bigint, label: string): Promise<TransactionReceipt> {
-  const { wagmi, cfg, api, account } = ctx;
-  return api.send(label, async () => {
-    const { request } = await simulateContract(wagmi, {
-      abi: perpEngineAbi,
-      address: cfg.perpEngine,
-      functionName: "cancelOrder",
-      args: [orderId],
-      account,
-      chainId: cfg.chainId,
-    });
-    return writeContract(wagmi, request);
-  });
+  return sendEngine(ctx, label, "cancelOrder", [orderId]);
 }
 
 /** Fixes the settlement price of an expired dated market from the price already on-chain. Anyone may call. */
 export async function submitSettleMarket(ctx: ActionContext, marketId: Hex, label: string): Promise<TransactionReceipt> {
-  const { wagmi, cfg, api, account } = ctx;
+  const { wagmi, cfg, api, account, session } = ctx;
+  if (session) {
+    // Anyone may settle: the session key pays the gas itself.
+    return api.send(label, async () => {
+      const { client } = session;
+      const { request } = await client.simulateContract({ abi: perpEngineAbi, address: cfg.perpEngine, functionName: "settleMarket", args: [marketId, []], account: client.account });
+      return client.writeContract({ ...(request as object), ...(await arcFees(client)) } as never);
+    });
+  }
   return api.send(label, async () => {
     const { request } = await simulateContract(wagmi, {
       abi: perpEngineAbi,
@@ -313,24 +308,22 @@ export async function submitSettleMarket(ctx: ActionContext, marketId: Hex, labe
 }
 
 export async function submitClaim(ctx: ActionContext, label: string): Promise<TransactionReceipt> {
-  const { wagmi, cfg, api, account } = ctx;
-  return api.send(label, async () => {
-    const { request } = await simulateContract(wagmi, {
-      abi: perpEngineAbi,
-      address: cfg.perpEngine,
-      functionName: "claim",
-      account,
-      chainId: cfg.chainId,
-    });
-    return writeContract(wagmi, request);
-  });
+  return sendEngine(ctx, label, "claim", []);
 }
 
 export const TEST_MINT_AMOUNT = 10_000_000_000n;
 
 /** Mints test collateral to the caller (`TestUSDC.mint`). Only offered when the deployment says the token is a test token. */
 export async function submitTestMint(ctx: ActionContext, label: string): Promise<TransactionReceipt> {
-  const { wagmi, cfg, api, account } = ctx;
+  const { wagmi, cfg, api, account, session } = ctx;
+  if (session) {
+    // Test collateral is free to mint for anyone: the session key mints straight into the trading account.
+    return api.send(label, async () => {
+      const { client } = session;
+      const { request } = await client.simulateContract({ abi: testUSDCAbi, address: cfg.usdc, functionName: "mint", args: [session.account, TEST_MINT_AMOUNT], account: client.account });
+      return client.writeContract({ ...(request as object), ...(await arcFees(client)) } as never);
+    });
+  }
   return api.send(label, async () => {
     const { request } = await simulateContract(wagmi, {
       abi: testUSDCAbi,

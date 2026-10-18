@@ -3,6 +3,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { AlertWatcher } from "@/components/alert-watcher";
 import { Header } from "@/components/header";
+import { CommandPalette } from "@/components/command-palette";
+import { MobileNav } from "@/components/mobile-nav";
+import { ServiceWorkerManager } from "@/components/pwa";
+import { RiskWatcher } from "@/components/risk-watcher";
 import { Toasts } from "@/components/toasts";
 
 /**
@@ -34,10 +38,14 @@ export function Shell({ children }: { children: ReactNode }) {
         Skip to content
       </a>
       <Header />
-      <main id="main" className="mx-auto w-full max-w-[1760px] px-2 pb-12 pt-2 sm:px-3">
+      <main id="main" className="app-main mx-auto w-full max-w-[1760px] px-2 pt-2 sm:px-3">
         {children}
       </main>
+      <MobileNav />
+      <ServiceWorkerManager />
       <AlertWatcher />
+      <RiskWatcher />
+      <CommandPalette />
       <Toasts />
     </>
   );

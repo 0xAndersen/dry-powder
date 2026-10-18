@@ -8,7 +8,7 @@ import { ConfirmDialog, type ConfirmLine } from "@/components/trade/confirm-dial
 import { TrackedOrders } from "@/components/trade/tracked-orders";
 import { TxStatus } from "@/components/tx-status";
 import type { AccountData, PositionView } from "@/hooks/use-account-data";
-import { useActionContext } from "@/hooks/use-action-context";
+import { useTradeContext } from "@/hooks/use-action-context";
 import { useLocalStore } from "@/hooks/use-local-store";
 import { useMarketData, type MarketPrice } from "@/hooks/use-market-data";
 import { useTx } from "@/hooks/use-tx";
@@ -21,6 +21,7 @@ import { PRICE_DECIMALS, USDC_DECIMALS, fmtAge, fmtPercent, fmtPrice, fmtQty, fm
 import { isExpired, isSettled, type Instrument } from "@/lib/instruments";
 import { BPS, DIRECT_MAX_LEVERAGE, ONE, absDiff, baseFee, ceilDiv, liquidationPrice, maxOpenFee, needsKeeperOrders, notionalOf, pricePnl, profitCapPrice, ratio, unitsOf } from "@/lib/math";
 import { valuePosition } from "@/lib/position";
+import { prefs } from "@/lib/prefs";
 import { MAX_SLIPPAGE_BPS, tradeSettings } from "@/lib/storage";
 
 type OrderKind = "market" | "limit";
@@ -153,17 +154,22 @@ export const OrderTicket = forwardRef<
     onDraftChange: (draft: TicketDraft) => void;
     onPickRequest: (target: "limit" | "tp" | "sl") => void;
     onShowShortcuts: () => void;
+    /** Called after an order or close went through (the phone layout closes the ticket sheet). */
+    onSubmitted?: () => void;
+    /** Set when the trader's own daily loss limit has been reached: new positions are refused with this text. */
+    lossLimitReached?: string | null;
   }
->(function OrderTicket({ instrument, price, account, getAccount, view, position, chainNow, onDraftChange, onPickRequest, onShowShortcuts }, ref) {
+>(function OrderTicket({ instrument, price, account, getAccount, view, position, chainNow, onDraftChange, onPickRequest, onShowShortcuts, onSubmitted, lossLimitReached }, ref) {
   const { config: cfg, chain } = useApp();
   const { params, error: paramsError } = useMarketData();
   const wallet = useWallet();
   const { connect, connectors, isPending: connecting } = useConnect();
   const { switchChain, isPending: switching } = useSwitchChain();
   const tx = useTx({ autoDismissMs: 12000 });
-  const actionContext = useActionContext();
+  const actionContext = useTradeContext();
   const ids = useId();
   const [settings, setSettings] = useLocalStore(tradeSettings);
+  const [preferences] = useLocalStore(prefs);
   const sym = cfg.collateralSymbol;
   const dp = instrument.priceDecimals;
   const publisher = cfg.oracleMode === "publisher";
@@ -189,10 +195,34 @@ export const OrderTicket = forwardRef<
   const sizeInputRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
-  const maxLeverage = instrument.maxLeverage;
+  // The market's maximum, or the trader's own lower cap from Settings.
+  const maxLeverage = preferences.maxLeverage !== null ? Math.max(1, Math.min(instrument.maxLeverage, preferences.maxLeverage)) : instrument.maxLeverage;
   const sideWord = isLong ? "long" : "short";
   const expired = isExpired(instrument, chainNow);
   const settled = isSettled(instrument);
+
+  // Links such as "copy this trade" carry ?side=long|short&lev=N&margin=M: apply once, then drop them from the URL.
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    const side = query.get("side");
+    const lev = Number(query.get("lev"));
+    const marginParam = query.get("margin");
+    if (!side && !query.get("lev") && !marginParam) return;
+    if (side === "long" || side === "short") setIsLong(side === "long");
+    if (Number.isFinite(lev) && lev >= 1) {
+      const x10 = Math.max(10, Math.min(maxLeverage * 10, Math.round(lev * 10)));
+      setLevX10(x10);
+      setLevText(String(x10 / 10));
+    }
+    if (marginParam && Number(marginParam) > 0) {
+      setQtyMode("margin");
+      setQtyText(marginParam);
+    }
+    for (const key of ["side", "lev", "margin"]) query.delete(key);
+    const text = query.toString();
+    window.history.replaceState(null, "", text ? `?${text}` : window.location.pathname);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Keep leverage inside the market's range when switching markets.
   useEffect(() => {
@@ -384,7 +414,14 @@ export const OrderTicket = forwardRef<
     return null;
   })();
 
-  const levError = levX10 < 10 ? "Leverage starts at 1x" : levX10 > maxLeverage * 10 ? `${instrument.symbol} allows up to ${maxLeverage}x` : null;
+  const levError =
+    levX10 < 10
+      ? "Leverage starts at 1x"
+      : levX10 > maxLeverage * 10
+        ? maxLeverage < instrument.maxLeverage
+          ? `Your own cap is ${maxLeverage}x (Settings)`
+          : `${instrument.symbol} allows up to ${maxLeverage}x`
+        : null;
   const limitError = kind !== "limit" || limitText.trim() === "" ? null : !limitPrice ? "Enter a price greater than zero" : null;
 
   const refLabel =
@@ -438,6 +475,7 @@ export const OrderTicket = forwardRef<
 
   const blocking: string | null = (() => {
     if (view.watching) return "Watching: trading is off";
+    if (lossLimitReached && !position) return lossLimitReached;
     if (paramsError) return "Could not read the engine. Check the RPC";
     if (!params) return "Loading market";
     if (params.paused) return "Trading is paused";
@@ -458,7 +496,7 @@ export const OrderTicket = forwardRef<
     if (position && kind === "market") return "Close or reverse your open position first";
     if (capProblem) return capProblem;
     if (balance !== undefined && required !== null && required > balance) return `Not enough ${sym}: ${fmtUsdc(required)} needed`;
-    if (wallet.ready && balance === undefined) return "Loading balance";
+    if (view.canTrade && balance === undefined) return "Loading balance";
     return null;
   })();
 
@@ -552,6 +590,7 @@ export const OrderTicket = forwardRef<
       setTpText("");
       setSlText("");
       if (kind === "limit") setLimitText("");
+      onSubmitted?.();
     }
   };
 
@@ -602,7 +641,7 @@ export const OrderTicket = forwardRef<
   const getReference = () => referenceRef.current;
 
   const requestOpen = () => {
-    if (blocking || tx.busy || !wallet.ready) return;
+    if (blocking || tx.busy || !view.canTrade) return;
     // One-click never applies above 100x: the confirmation shows how small a move liquidates.
     if (settings.oneClick && !highLeverage) void runOpen();
     else setConfirming("open");
@@ -651,11 +690,11 @@ export const OrderTicket = forwardRef<
         { label: "Most you can lose", value: maxLoss !== null ? `${fmtUsdc(maxLoss)} ${sym}` : "—" },
         ...(takeProfit ? [{ label: "Take-profit", value: fmtPrice(takeProfit, dp) }] : []),
         ...(stopLoss ? [{ label: "Stop-loss", value: fmtPrice(stopLoss, dp) }] : []),
-        { label: "Taken from your wallet now", value: required !== null ? `${fmtUsdc(required)} ${sym}` : "—" },
+        { label: view.instant ? "Taken from your trading account now" : "Taken from your wallet now", value: required !== null ? `${fmtUsdc(required)} ${sym}` : "—" },
       ];
     }
     return [];
-  }, [confirming, kind, publisher, sideWord, instrument.symbol, instrument.unitLabel, size, units, margin, leverage, entry, bracketRef, liq, liqDistance, maxLoss, takeProfit, stopLoss, required, sym, dp]);
+  }, [confirming, kind, publisher, sideWord, instrument.symbol, instrument.unitLabel, size, units, margin, leverage, entry, bracketRef, liq, liqDistance, maxLoss, takeProfit, stopLoss, required, sym, dp, view.instant]);
 
   // ── Primary button ──
   let button: React.ReactNode;
@@ -665,14 +704,14 @@ export const OrderTicket = forwardRef<
         Watching: trading is off
       </button>
     );
-  } else if (!wallet.connected) {
+  } else if (!view.instant && !wallet.connected) {
     const connector = connectors[0];
     button = (
       <button type="button" className="btn btn-primary btn-lg" disabled={connecting || !connector} onClick={() => connector && connect({ connector, chainId: chain.id })}>
         {connecting ? "Connecting" : "Connect wallet to trade"}
       </button>
     );
-  } else if (wallet.wrongNetwork) {
+  } else if (!view.instant && wallet.wrongNetwork) {
     button = (
       <button type="button" className="btn btn-lg border-warn text-warn" disabled={switching} onClick={() => switchChain({ chainId: chain.id })}>
         Switch to {chain.name}

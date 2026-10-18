@@ -6,16 +6,18 @@ import { ArcGauge } from "@/components/arc-gauge";
 import { useApp } from "@/components/providers";
 import { Tip } from "@/components/tip";
 import { TxStatus } from "@/components/tx-status";
-import { useActionContext } from "@/hooks/use-action-context";
+import { useTradeContext } from "@/hooks/use-action-context";
 import { useMarketData, type MarketPrice } from "@/hooks/use-market-data";
 import { useTx } from "@/hooks/use-tx";
-import { useWallet } from "@/hooks/use-wallet";
+import { useAccountView, useWallet } from "@/hooks/use-wallet";
 import { submitSettleMarket } from "@/lib/actions";
 import { UserFacingError } from "@/lib/errors";
 import { USDC_DECIMALS, fmtAge, fmtCompact, fmtDuration, fmtNum, fmtPercent, fmtPrice, fmtUtc } from "@/lib/format";
 import { groupInstruments, isExpired, isSettled, kindInfo, krakenSource, type Instrument } from "@/lib/instruments";
 import { fetchInstrumentCandles } from "@/lib/kraken";
 import { ratio } from "@/lib/math";
+import { useLocalStore } from "@/hooks/use-local-store";
+import { toggleWatch, watchlist } from "@/lib/social";
 
 function StatusChip({ instrument, price, chainNow }: { instrument: Instrument; price: MarketPrice; chainNow: number }) {
   if (isSettled(instrument)) return <span className="tag" data-tone="muted">Settled</span>;
@@ -40,6 +42,7 @@ function MarketPicker({
   onClose: () => void;
 }) {
   const { prices } = useMarketData();
+  const [favourites] = useLocalStore(watchlist);
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -49,7 +52,11 @@ function MarketPicker({
     if (!q) return instruments;
     return instruments.filter((i) => `${i.symbol} ${i.name} ${i.base} ${i.quote} ${kindInfo(i.kind).label}`.toLowerCase().includes(q));
   }, [instruments, query]);
-  const groups = useMemo(() => groupInstruments(filtered), [filtered]);
+  const groups = useMemo(() => {
+    const byKind = groupInstruments(filtered);
+    const starred = filtered.filter((i) => favourites.includes(i.symbol));
+    return starred.length > 0 && !query.trim() ? [{ kind: { key: "favourites", label: "Favourites" }, items: starred }, ...byKind] : byKind;
+  }, [filtered, favourites, query]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -95,14 +102,24 @@ function MarketPicker({
             <ul>
               {group.items.map((i) => {
                 const p = prices.get(i.id);
+                const starred = favourites.includes(i.symbol);
                 return (
-                  <li key={i.id}>
+                  <li key={i.id} className="flex items-center">
                     <button
                       type="button"
-                      className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-panel focus-visible:bg-panel"
+                      className={`shrink-0 pl-3 pr-1 text-base leading-none ${starred ? "text-warn" : "text-faint hover:text-muted"}`}
+                      aria-label={starred ? `Remove ${i.symbol} from favourites` : `Add ${i.symbol} to favourites`}
+                      aria-pressed={starred}
+                      onClick={() => toggleWatch(i.symbol)}
+                    >
+                      {starred ? "★" : "☆"}
+                    </button>
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 items-center gap-3 px-2 py-2 text-left hover:bg-panel focus-visible:bg-panel"
                       aria-current={i.id === current.id ? "true" : undefined}
                       onClick={() => onSelect(i)}
-                      data-testid={`market-option-${i.symbol}`}
+                      data-testid={group.kind.key === "favourites" ? `favourite-option-${i.symbol}` : `market-option-${i.symbol}`}
                     >
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center gap-2">
@@ -159,8 +176,9 @@ export function MarketHeader({
   const { config: cfg } = useApp();
   const { prices } = useMarketData();
   const wallet = useWallet();
+  const view = useAccountView();
   const tx = useTx({ autoDismissMs: 8000 });
-  const actionContext = useActionContext();
+  const actionContext = useTradeContext();
   const dp = instrument.priceDecimals;
   const kind = kindInfo(instrument.kind);
   const expired = isExpired(instrument, chainNow);
@@ -353,7 +371,7 @@ export function MarketHeader({
             <button
               type="button"
               className="btn btn-sm btn-primary"
-              disabled={!wallet.ready || !canSettle || tx.busy}
+              disabled={!(wallet.ready || view.instant) || !canSettle || tx.busy}
               title={canSettle ? "Fixes the settlement price from the price now on-chain. Anyone may do this." : "Needs an on-chain price published after expiry. A keeper usually posts one within seconds."}
               onClick={settle}
               data-testid="settle-market"
