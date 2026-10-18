@@ -19,6 +19,7 @@ import {
   isRangeError,
   pricePnl,
   prune,
+  recent,
   runIndexer,
   serialize,
 } from "../src/indexer.mjs";
@@ -232,6 +233,27 @@ test("buckets older than the retention window are pruned; all-time totals stay",
   assert.equal(t.trades, 1);
   assert.equal(t.fees, usd(0.3));
   assert.equal(s.days.length, 1);
+});
+
+test("markets keep hourly buckets: rolling 24 h volume, fees and trades; pruned like the traders'", () => {
+  const s = fresh();
+  applyEvent(s, opened(ALICE, BTC, true, usd(10), usd(1_000), px(100_000), usd(0.5), T0));
+  applyEvent(s, closed(ALICE, BTC, px(101_000), usd(10), usd(0.5), usd(19.5), T0 + 2 * HOUR));
+  applyEvent(s, opened(BOB, BTC, false, usd(20), usd(2_000), px(101_000), usd(1), T0 + 30 * HOUR));
+  applyEvent(s, opened(BOB, ETH, true, usd(5), usd(500), px(4_000), usd(0.25), T0 + 30 * HOUR));
+  const btc = s.markets[BTC];
+  assert.equal(btc.hours.length, 3);
+  assert.equal(recent(btc.hours, "v", T0 + 3 * HOUR), usd(2_000), "opened 1,000 and closed 1,000 in the last 24 h");
+  assert.equal(recent(btc.hours, "f", T0 + 3 * HOUR), usd(1));
+  assert.equal(recent(btc.hours, "t", T0 + 3 * HOUR), 1);
+  // A day later only Bob's short is inside the window.
+  assert.equal(recent(btc.hours, "v", T0 + 31 * HOUR), usd(2_000));
+  assert.equal(recent(btc.hours, "v", T0 + 30 * HOUR, HOUR), usd(2_000));
+  assert.equal(recent(s.markets[ETH].hours, "v", T0 + 31 * HOUR), usd(500));
+  prune(s, T0 + 60 * HOUR);
+  assert.deepEqual(s.markets[BTC].hours.map((b) => b.i), [Math.floor((T0 + 30 * HOUR) / HOUR)]);
+  const back = deserialize(JSON.parse(JSON.stringify(serialize(s))));
+  assert.equal(back.markets[BTC].hours[0].v, usd(2_000));
 });
 
 test("the file format round-trips exactly", () => {

@@ -57,6 +57,20 @@ export function triggered(type, isLong, trigger, px) {
  *  Zero means a long no price can liquidate, or a short every price does; both fall out of the comparison. */
 export const isLiquidatable = (isLong, lp, mid) => (isLong ? mid <= lp : mid >= lp);
 
+/**
+ * Gas limit for a transaction estimated at `gas`. eth_estimateGas finds the least gas that works on the state it
+ * ran on; the transaction runs in a later block on a state other transactions may have changed (an addition to
+ * a position becomes a new position when the trader closed in between, funding accrues, the vault marks more
+ * positions), and a tight limit then runs out. A quarter more, plus room for a few fresh storage slots.
+ */
+export const withHeadroom = (gas) => (gas * 5n) / 4n + 50_000n;
+
+/** True when moving a stop from `current` to `next` is too small a step to be worth a transaction. */
+export const trailStepTooSmall = (current, next, stepBps = 10) => {
+  const diff = next > current ? next - current : current - next;
+  return diff * 10_000n < current * BigInt(stepBps);
+};
+
 /** True when an open order would fill at or through its take-profit or stop-loss (PerpEngine._validateBrackets). */
 export function gapsBracket(o, px) {
   const fill = o.isLong ? px.ask : px.bid;
@@ -100,9 +114,18 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
         log("dry-run", functionName, JSON.stringify(args, (_, v) => (typeof v === "bigint" ? String(v) : v)).slice(0, 160));
         return null;
       }
-      const hash = await wallet.writeContract({ ...request, ...(await fees()) });
+      // By address, not the local account: viem would otherwise estimate twice and cap the second estimate at the
+      // first, which fails whenever the state moved in between (funding accrues each second).
+      const gas = await pub.estimateContractGas({ account: wallet.account.address, address, abi: [...abi, ...ERRORS], functionName, args, value: request.value });
+      const hash = await wallet.writeContract({ ...request, gas: withHeadroom(gas), ...(await fees()) });
       const receipt = await pub.waitForTransactionReceipt({ hash, timeout: 60_000 });
       if (receipt.status !== "success") {
+        const limit = (await pub.getTransaction({ hash }).catch(() => null))?.gas ?? 0n;
+        if (limit > 0n && receipt.gasUsed * 100n >= limit * 99n) {
+          const oog = new Error(`${functionName} ran out of gas (${receipt.gasUsed} of ${limit}): ${hash}`);
+          oog.data = { errorName: "OutOfGas" };
+          throw oog;
+        }
         // Usually a lost race: a trader's transaction (a cancel, a close, a moved trigger) landed between the
         // simulation and this one. The receipt carries no reason, so replay the call on the new state to name it;
         // a benign reason is then counted as such instead of as a fault.
@@ -123,7 +146,10 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
       else {
         count(stats.errors, name ?? functionName);
         const msg = String(e?.shortMessage ?? e?.message ?? e).split("\n").map((l) => l.trim()).filter(Boolean);
-        stats.lastError = `${functionName}: ${msg.slice(0, 2).join(" ").slice(0, 240)}`;
+        // The node's own words ("nonce too low", "insufficient funds") sit at the bottom of viem's cause chain.
+        let detail = null;
+        for (let x = e; x; x = x.cause) if (typeof x.details === "string" && x.details) detail = x.details;
+        stats.lastError = `${functionName}: ${msg.slice(0, 2).join(" ")}${detail && !msg.join(" ").includes(detail) ? ` (${detail})` : ""}`.slice(0, 300);
         log("error", stats.lastError);
       }
       if (id) defer(id);
@@ -329,6 +355,15 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
       const r = await send(keeper, engine, perpEngineAbi, "executeOrder", [o.id, p.upd], id);
       if (r) stats.executed++;
     }
+    // 3b. Trailing stops (the TrailingStops add-on): move the stops whose trail has moved far enough.
+    if (addresses.trailingStops) {
+      try {
+        await trail(view);
+      } catch (e) {
+        count(stats.errors, "trail");
+        stats.lastError = `trail: ${String(e?.shortMessage ?? e?.message ?? e).split("\n")[0].slice(0, 240)}`;
+      }
+    }
     // 4. Vault epoch.
     if (!opts.settleEpochs) return;
     const [last, len] = await Promise.all([
@@ -338,6 +373,44 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
     if (chainNow >= Number(last + len)) {
       const r = await send(keeper, vault, houseVaultAbi, "settleEpoch", [], "epoch");
       if (r) stats.epochs++;
+    }
+  }
+
+  /**
+   * Pokes the trails whose stop would move by at least `trailStepBps` of its level (or that have no stop yet, or
+   * whose position is gone, which clears them), in batches. `pending()` is the contract's own answer, so the
+   * keeper never sends a poke that does nothing.
+   */
+  async function trail(view) {
+    const ts = addresses.trailingStops;
+    const abi = ABIS.trailingStopsAbi;
+    if (!abi) return;
+    const n = await pub.readContract({ address: ts, abi, functionName: "trailCount" });
+    if (n === 0n) return;
+    const posBy = new Map(view.positions.map((v) => [v.position.trader.toLowerCase() + v.position.priceId.toLowerCase(), v.position]));
+    const stopOf = new Map(view.orders.filter((o) => o.orderType === 2).map((o) => [o.id, o.triggerPrice]));
+    const due = [];
+    for (let at = 0n; at < n; at += PAGE) {
+      const [accounts, markets, trails] = await pub.readContract({ address: ts, abi, functionName: "getTrails", args: [at, PAGE] });
+      for (let i = 0; i < accounts.length; i += 1) {
+        const id = `trail:${accounts[i]}:${markets[i]}`;
+        if (!ready(id)) continue;
+        const pos = posBy.get(accounts[i].toLowerCase() + markets[i].toLowerCase());
+        if (!pos || pos.isLong !== trails[i].isLong) {
+          due.push({ account: accounts[i], market: markets[i], id });
+          continue;
+        }
+        const level = await pub.readContract({ address: ts, abi, functionName: "pending", args: [accounts[i], markets[i]] });
+        if (level === 0n) continue;
+        const current = pos.slOrderId !== 0n ? stopOf.get(pos.slOrderId) : undefined;
+        if (current && trailStepTooSmall(current, level, opts.trailStepBps)) continue;
+        due.push({ account: accounts[i], market: markets[i], id });
+      }
+    }
+    for (let i = 0; i < due.length; i += opts.batchSize) {
+      const batch = due.slice(i, i + opts.batchSize);
+      const r = await send(keeper, ts, abi, "poke", [batch.map((x) => x.account), batch.map((x) => x.market)], batch[0].id);
+      if (r) stats.trailed = (stats.trailed ?? 0) + batch.length;
     }
   }
 

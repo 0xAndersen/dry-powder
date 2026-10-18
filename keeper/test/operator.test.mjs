@@ -58,3 +58,17 @@ test("quote to oracle price: mid, conf = max(half spread, 1 bp)", () => {
   assert.equal(q.price, 110_000n);
   assert.equal(q.conf, 11n);
 });
+
+test("gas headroom: a quarter more plus room for fresh storage slots", async () => {
+  const { withHeadroom } = await import("../src/operator.mjs");
+  assert.equal(withHeadroom(400_000n), 550_000n);
+  assert.ok(withHeadroom(21_000n) > 21_000n * 2n);
+});
+
+test("a trailing stop moves only by a meaningful step", async () => {
+  const { trailStepTooSmall } = await import("../src/operator.mjs");
+  const E = 10n ** 18n;
+  assert.equal(trailStepTooSmall(100_000n * E, 100_050n * E, 10), true, "0.05% is not worth a transaction");
+  assert.equal(trailStepTooSmall(100_000n * E, 100_100n * E, 10), false, "0.1% is");
+  assert.equal(trailStepTooSmall(100_000n * E, 99_800n * E, 10), false, "either direction (shorts trail down)");
+});

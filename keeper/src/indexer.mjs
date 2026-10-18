@@ -153,7 +153,7 @@ const TOTALS = () => ({
 });
 const SIDE = () => ({ trades: 0, wins: 0, losses: 0, net: 0n, volume: 0n });
 const BUCKET = (i) => ({ i, r: 0n, f: 0n, v: 0n, m: 0n, t: 0, w: 0, l: 0, x: 0 });
-const MARKET = () => ({ symbol: "", ...TOTALS(), longVolume: 0n, shortVolume: 0n, settlementPrice: 0n });
+const MARKET = () => ({ symbol: "", ...TOTALS(), longVolume: 0n, shortVolume: 0n, settlementPrice: 0n, hours: [] });
 const TRADER = () => ({
   ...TOTALS(),
   grossWin: 0n,
@@ -263,7 +263,11 @@ export function applyEvent(state, ev) {
     for (const t of all) t[field] += amount;
   };
   const addB = (field, amount) => {
-    buckets ??= [bucketAt(trader.days, Math.floor(time / DAY)), bucketAt(trader.hours, Math.floor(time / HOUR)), bucketAt(state.days, Math.floor(time / DAY))];
+    if (!buckets) {
+      buckets = [bucketAt(trader.days, Math.floor(time / DAY)), bucketAt(trader.hours, Math.floor(time / HOUR)), bucketAt(state.days, Math.floor(time / DAY))];
+      // Per market by the hour: rolling 24 h volume, fees and trades for the Markets page.
+      if (market) buckets.push(bucketAt(market.hours, Math.floor(time / HOUR)));
+    }
     for (const b of buckets) b[field] += amount;
   };
   const side = (isLong) => (marketId ? [trader[isLong ? "long" : "short"], (trader.markets[marketId] ??= SIDE())] : [trader[isLong ? "long" : "short"]]);
@@ -424,6 +428,16 @@ export function prune(state, now) {
     t.days = t.days.filter((b) => b.i >= firstDay);
     t.hours = t.hours.filter((b) => b.i >= firstHour);
   }
+  for (const m of Object.values(state.markets)) m.hours = (m.hours ?? []).filter((b) => b.i >= firstHour);
+}
+
+/** Sum of `field` over the hourly buckets of the `seconds` up to `now` (default: the last 24 hours, by the hour). */
+export function recent(buckets, field, now, seconds = DAY) {
+  const from = Math.floor((now - seconds) / HOUR) + 1;
+  const to = Math.floor(now / HOUR);
+  let total = typeof (buckets[0]?.[field] ?? 0n) === "bigint" ? 0n : 0;
+  for (const b of buckets) if (b.i >= from && b.i <= to) total += b[field];
+  return total;
 }
 
 // ─────────────────────────────── File format ───────────────────────────────
@@ -469,7 +483,11 @@ export function deserialize(json) {
   state.events = Number(json.events) || 0;
   state.venue = shaped(TOTALS(), json.venue);
   state.days = (json.days ?? []).map((b) => shaped(BUCKET(0), b));
-  for (const [id, m] of Object.entries(json.markets ?? {})) state.markets[id] = shaped(MARKET(), m);
+  for (const [id, m] of Object.entries(json.markets ?? {})) {
+    const market = shaped(MARKET(), m);
+    market.hours = (m.hours ?? []).map((b) => shaped(BUCKET(0), b));
+    state.markets[id] = market;
+  }
   for (const [id, t] of Object.entries(json.traders ?? {})) {
     const trader = shaped(TRADER(), t);
     trader.best = t.best === null || t.best === undefined ? null : BigInt(t.best);

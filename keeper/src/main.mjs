@@ -42,7 +42,11 @@ function addresses() {
     vault: pick("vault", "HOUSE_VAULT_ADDRESS"),
     oracle: pick("pub", "PUBLISHER_ORACLE_ADDRESS") || d.publisherOracle,
   };
-  const optional = { factory: env.AGENT_FACTORY_ADDRESS || d.agentFactory || null, usdc: env.USDC_ADDRESS || d.usdc || null };
+  const optional = {
+    factory: env.AGENT_FACTORY_ADDRESS || d.agentFactory || null,
+    usdc: env.USDC_ADDRESS || d.usdc || null,
+    trailingStops: env.TRAILING_STOPS_ADDRESS || d.trailingStops || null,
+  };
   for (const [k, v] of Object.entries(a)) if (!/^0x[0-9a-fA-F]{40}$/.test(v || "")) throw fatal(`missing ${k} address (DEPLOYMENT file or env)`);
   return { ...a, ...optional, rpcUrl: env.RPC_URL || d.rpcUrl, chainId: num("CHAIN_ID", d.chainId ?? 5042002) };
 }
@@ -104,6 +108,8 @@ const opts = {
   settleEpochs: !["0", "false"].includes(String(env.SETTLE_EPOCHS ?? "1")),
   settlePositionsDelaySeconds: num("SETTLE_POSITIONS_DELAY_SECONDS", 600),
   batchSize: num("BATCH_SIZE", 20),
+  // A trailing stop moves only when its level improves by at least this many bps (one transaction per step).
+  trailStepBps: num("TRAIL_STEP_BPS", 10),
   priorityFeeGwei: num("PRIORITY_FEE_GWEI", 1),
   minFeeGwei: num("MIN_FEE_GWEI", 25),
   minGas: num("MIN_GAS_USDC", 1),
