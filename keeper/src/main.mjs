@@ -46,6 +46,7 @@ function addresses() {
     factory: env.AGENT_FACTORY_ADDRESS || d.agentFactory || null,
     usdc: env.USDC_ADDRESS || d.usdc || null,
     trailingStops: env.TRAILING_STOPS_ADDRESS || d.trailingStops || null,
+    twapOrders: env.TWAP_ORDERS_ADDRESS || d.twapOrders || null,
   };
   for (const [k, v] of Object.entries(a)) if (!/^0x[0-9a-fA-F]{40}$/.test(v || "")) throw fatal(`missing ${k} address (DEPLOYMENT file or env)`);
   return { ...a, ...optional, rpcUrl: env.RPC_URL || d.rpcUrl, chainId: num("CHAIN_ID", d.chainId ?? 5042002) };

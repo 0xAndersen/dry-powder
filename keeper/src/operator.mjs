@@ -364,6 +364,15 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
         stats.lastError = `trail: ${String(e?.shortMessage ?? e?.message ?? e).split("\n")[0].slice(0, 240)}`;
       }
     }
+    // 3c. TWAP orders (the TwapOrders add-on): place the slices that are due.
+    if (addresses.twapOrders) {
+      try {
+        await twap();
+      } catch (e) {
+        count(stats.errors, "twap");
+        stats.lastError = `twap: ${String(e?.shortMessage ?? e?.message ?? e).split("\n")[0].slice(0, 240)}`;
+      }
+    }
     // 4. Vault epoch.
     if (!opts.settleEpochs) return;
     const [last, len] = await Promise.all([
@@ -402,6 +411,12 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
         }
         const level = await pub.readContract({ address: ts, abi, functionName: "pending", args: [accounts[i], markets[i]] });
         if (level === 0n) continue;
+        // An account that no longer lets the contract act would refuse every move: do not spend gas on it.
+        const [expiry] = await pub.readContract({ address: accounts[i], abi: ABIS.agentAccountAbi, functionName: "agents", args: [ts] });
+        if (BigInt(expiry) <= BigInt(Math.floor(Date.now() / 1000))) {
+          defer(id);
+          continue;
+        }
         const current = pos.slOrderId !== 0n ? stopOf.get(pos.slOrderId) : undefined;
         if (current && trailStepTooSmall(current, level, opts.trailStepBps)) continue;
         due.push({ account: accounts[i], market: markets[i], id });
@@ -411,6 +426,40 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
       const batch = due.slice(i, i + opts.batchSize);
       const r = await send(keeper, ts, abi, "poke", [batch.map((x) => x.account), batch.map((x) => x.market)], batch[0].id);
       if (r) stats.trailed = (stats.trailed ?? 0) + batch.length;
+    }
+  }
+
+  /**
+   * Pokes the TWAPs with a slice due, in batches. `due()` is the contract's own answer (interval passed, a usable
+   * price, not holding the other side), so a poke always places or is refused; accounts that withdrew the
+   * contract's approval are skipped until they renew it. Each slice is an ordinary keeper order, filled by step 3.
+   */
+  async function twap() {
+    const tw = addresses.twapOrders;
+    const abi = ABIS.twapOrdersAbi;
+    if (!abi) return;
+    const n = await pub.readContract({ address: tw, abi, functionName: "twapCount" });
+    if (n === 0n) return;
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    const due = [];
+    for (let at = 0n; at < n; at += PAGE) {
+      const [accounts, markets, twaps] = await pub.readContract({ address: tw, abi, functionName: "getTwaps", args: [at, PAGE] });
+      for (let i = 0; i < accounts.length; i += 1) {
+        const id = `twap:${accounts[i]}:${markets[i]}`;
+        if (!ready(id) || BigInt(twaps[i].nextAt) > now) continue;
+        if (!(await pub.readContract({ address: tw, abi, functionName: "due", args: [accounts[i], markets[i]] }))) continue;
+        const [expiry] = await pub.readContract({ address: accounts[i], abi: ABIS.agentAccountAbi, functionName: "agents", args: [tw] });
+        if (BigInt(expiry) <= now) {
+          defer(id);
+          continue;
+        }
+        due.push({ account: accounts[i], market: markets[i], id });
+      }
+    }
+    for (let i = 0; i < due.length; i += opts.batchSize) {
+      const batch = due.slice(i, i + opts.batchSize);
+      const r = await send(keeper, tw, abi, "poke", [batch.map((x) => x.account), batch.map((x) => x.market)], batch[0].id);
+      if (r) stats.slices = (stats.slices ?? 0) + batch.length;
     }
   }
 
