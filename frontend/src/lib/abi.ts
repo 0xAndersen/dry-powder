@@ -6780,3 +6780,448 @@ export const agentAccountFactoryAbi = [
     "inputs": []
   }
 ] as const;
+
+export const trailingStopsAbi = [
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "engine_",
+        "type": "address",
+        "internalType": "contract PerpEngine"
+      },
+      {
+        "name": "factory_",
+        "type": "address",
+        "internalType": "contract AgentAccountFactory"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "MAX_DISTANCE_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MIN_DISTANCE_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "clearTrail",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "contract AgentAccount"
+      },
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "engine",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract PerpEngine"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "factory",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract AgentAccountFactory"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTrail",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct TrailingStops.Trail",
+        "components": [
+          {
+            "name": "distanceBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "isLong",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "size",
+            "type": "uint96",
+            "internalType": "uint96"
+          },
+          {
+            "name": "activation",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "best",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTrails",
+    "inputs": [
+      {
+        "name": "offset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "accounts",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "markets",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      },
+      {
+        "name": "trails",
+        "type": "tuple[]",
+        "internalType": "struct TrailingStops.Trail[]",
+        "components": [
+          {
+            "name": "distanceBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "isLong",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "size",
+            "type": "uint96",
+            "internalType": "uint96"
+          },
+          {
+            "name": "activation",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "best",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pending",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "level",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "poke",
+    "inputs": [
+      {
+        "name": "accounts",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "marketIds",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTrail",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "contract AgentAccount"
+      },
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "distanceBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "size",
+        "type": "uint96",
+        "internalType": "uint96"
+      },
+      {
+        "name": "activation",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "trailCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "trailId",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "event",
+    "name": "StopTrailed",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "best",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "stop",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TrailCleared",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TrailRefused",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "stop",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TrailSet",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "distanceBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "size",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "activation",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "InvalidDistance",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoPosition",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoTrail",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotAllowed",
+    "inputs": []
+  }
+] as const;

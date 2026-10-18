@@ -17,6 +17,7 @@ const contracts = [
   ["TestUSDC", "TestUSDC"],
   ["AgentAccount", "AgentAccount"],
   ["AgentAccountFactory", "AgentAccount"],
+  ["TrailingStops", "TrailingStops"],
 ];
 const targets = [
   ["frontend/src/lib/abi.ts", "ts"],

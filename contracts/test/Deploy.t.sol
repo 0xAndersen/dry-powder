@@ -83,6 +83,8 @@ contract DeployTest is Test {
         assertEq(d.engine.getMarketIds().length, 8);
         assertEq(d.marketIds.length, 8);
         assertEq(address(d.agentFactory.engine()), address(d.engine));
+        assertEq(address(d.trailingStops.engine()), address(d.engine));
+        assertEq(address(d.trailingStops.factory()), address(d.agentFactory));
         assertEq(d.futureExpiry, expiry);
         _assertMarket(d, 0, BTC, "BTC-USD", BTC, 0, false, 1000, 0);
         _assertMarket(d, 1, ETH, "ETH-USD", ETH, 0, false, 1000, 0);
@@ -212,6 +214,7 @@ contract DeployTest is Test {
         assertEq(vm.parseJsonString(json, ".collateral"), "test");
         assertEq(vm.parseJsonAddress(json, ".usdc"), d.usdc);
         assertEq(vm.parseJsonAddress(json, ".agentFactory"), address(d.agentFactory));
+        assertEq(vm.parseJsonAddress(json, ".trailingStops"), address(d.trailingStops));
         assertEq(vm.parseJsonAddress(json, ".owner"), multisig);
         assertEq(vm.parseJsonStringArray(json, ".marketSymbols")[7], "BTC-USD-251231");
         _tradeOnDeployment(d, publisherKey);

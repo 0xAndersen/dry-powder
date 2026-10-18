@@ -16,6 +16,8 @@ export interface Deployment {
   pub?: Address;
   oracle?: Address;
   agentFactory?: Address;
+  /** TrailingStops add-on (v3.1 deployments). */
+  trailingStops?: Address;
   markets?: { symbol: string; id: Hex }[];
 }
 
