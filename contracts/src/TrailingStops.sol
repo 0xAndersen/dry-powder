@@ -42,6 +42,9 @@ contract TrailingStops {
     }
 
     uint16 public constant MIN_DISTANCE_BPS = 10;
+    /// @notice Gas a move must have before it starts: creating a stop-loss (a new engine order and its escrow)
+    ///         takes about 260k. Pokes with less are refused whole rather than reported as the account's refusal.
+    uint256 public constant MOVE_GAS = 400_000;
     uint16 public constant MAX_DISTANCE_BPS = 5_000;
     uint256 private constant BPS = 10_000;
 
@@ -54,7 +57,9 @@ contract TrailingStops {
     mapping(bytes32 id => bytes32) private _marketOf;
     EnumerableSet.Bytes32Set private _ids;
 
-    event TrailSet(address indexed account, bytes32 indexed marketId, uint16 distanceBps, uint256 size, uint256 activation);
+    event TrailSet(
+        address indexed account, bytes32 indexed marketId, uint16 distanceBps, uint256 size, uint256 activation
+    );
     event TrailCleared(address indexed account, bytes32 indexed marketId);
     event StopTrailed(address indexed account, bytes32 indexed marketId, uint256 best, uint256 stop);
     /// @notice The account refused the move (this contract is not, or no longer, one of its agents).
@@ -64,6 +69,8 @@ contract TrailingStops {
     error NoPosition();
     error InvalidDistance();
     error NoTrail();
+    /// @notice The move ran out of gas: the poke as a whole is refused, so callers (and gas estimates) give it enough.
+    error InsufficientGas();
 
     constructor(PerpEngine engine_, AgentAccountFactory factory_) {
         engine = engine_;
@@ -106,7 +113,9 @@ contract TrailingStops {
     /// @notice Sets (or replaces) the trailing stop of `account`'s position in `marketId`. The account's owner or
     ///         one of its active agents may call; the account must have approved this contract as an agent for
     ///         pokes to move the stop. The trail starts from the current mid (or at `activation`).
-    function setTrail(AgentAccount account, bytes32 marketId, uint16 distanceBps, uint96 size, uint128 activation) external {
+    function setTrail(AgentAccount account, bytes32 marketId, uint16 distanceBps, uint96 size, uint128 activation)
+        external
+    {
         _authorize(account);
         if (distanceBps < MIN_DISTANCE_BPS || distanceBps > MAX_DISTANCE_BPS) revert InvalidDistance();
         Position memory pos = engine.getPosition(address(account), marketId);
@@ -119,7 +128,8 @@ contract TrailingStops {
                 best = uint128(px.mid);
             } catch {}
         }
-        _trails[id] = Trail({distanceBps: distanceBps, isLong: pos.isLong, size: size, activation: activation, best: best});
+        _trails[id] =
+            Trail({distanceBps: distanceBps, isLong: pos.isLong, size: size, activation: activation, best: best});
         if (_ids.add(id)) {
             _accountOf[id] = address(account);
             _marketOf[id] = marketId;
@@ -179,10 +189,17 @@ contract TrailingStops {
         (uint128 best, uint256 level) = _next(t, px.mid);
         if (best != t.best) _trails[id].best = best;
         if (level == 0 || !_better(pos, level, t.isLong)) return;
-        // One account's refusal (approval revoked, fee unpaid) must not stop the other trails in the batch.
+        // One account's refusal (approval revoked, fee unpaid) must not stop the other trails in the batch. But a
+        // call that fails for want of gas is the caller's doing, so it reverts the whole poke: otherwise a gas
+        // estimate settles on the cheaper path through the catch, and every estimated poke is "refused". Hence a
+        // floor before the call, and after a failure a check that the call did not just run dry (each call level
+        // keeps back 1/64 of its gas, so a failure deep in the engine leaves the caller a few 64ths).
+        uint256 gasBefore = gasleft();
+        if (gasBefore < MOVE_GAS) revert InsufficientGas();
         try AgentAccount(account).setTriggerOrder(marketId, OrderType.StopLoss, level, t.size) {
             emit StopTrailed(account, marketId, best, level);
         } catch {
+            if (gasleft() <= gasBefore / 16) revert InsufficientGas();
             emit TrailRefused(account, marketId, level);
         }
     }

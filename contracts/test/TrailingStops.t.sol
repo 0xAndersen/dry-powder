@@ -207,6 +207,23 @@ contract TrailingStopsTest is Base {
         assertEq(engine.getPosition(address(acct), BTC).slOrderId, 0);
     }
 
+    function test_aPokeShortOfGasIsRefusedWhole_notTakenForTheAccountsRefusal() public {
+        vm.prank(alice);
+        trails.setTrail(acct, BTC, 200, 0, 0);
+        address[] memory accounts = new address[](1);
+        bytes32[] memory markets = new bytes32[](1);
+        accounts[0] = address(acct);
+        markets[0] = BTC;
+        // Enough for the reads and the catch, not for the account's call into the engine: refused whole.
+        vm.expectRevert(TrailingStops.InsufficientGas.selector);
+        trails.poke{gas: 120_000}(accounts, markets);
+
+        assertEq(engine.getPosition(address(acct), BTC).slOrderId, 0);
+        // With the gas a normal estimate gives, it moves.
+        trails.poke(accounts, markets);
+        assertEq(_stop(address(acct)).triggerPrice, 98_000e18);
+    }
+
     function test_trailsArePagedForKeepers() public {
         AgentAccount b = _account(bob, true);
         vm.prank(agentKey);
@@ -216,7 +233,8 @@ contract TrailingStopsTest is Base {
         trails.setTrail(acct, BTC, 200, 0, 0);
         vm.prank(bob);
         trails.setTrail(b, BTC, 300, 1_000e6, 0);
-        (address[] memory accounts, bytes32[] memory markets, TrailingStops.Trail[] memory list) = trails.getTrails(1, 10);
+        (address[] memory accounts, bytes32[] memory markets, TrailingStops.Trail[] memory list) =
+            trails.getTrails(1, 10);
         assertEq(accounts.length, 1);
         assertEq(accounts[0], address(b));
         assertEq(markets[0], BTC);

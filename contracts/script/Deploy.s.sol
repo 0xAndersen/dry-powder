@@ -16,6 +16,7 @@ import {PublisherOracle} from "../src/testnet/PublisherOracle.sol";
 import {TestUSDC} from "../src/testnet/TestUSDC.sol";
 import {AgentAccountFactory} from "../src/AgentAccount.sol";
 import {TrailingStops} from "../src/TrailingStops.sol";
+import {TwapOrders} from "../src/TwapOrders.sol";
 import {MarketConfig} from "../src/Types.sol";
 
 /// @notice Deploys the protocol (PythOracle adapter, HouseVault, RewardToken, PerpEngine, EngineLens) and lists
@@ -77,6 +78,7 @@ contract Deploy is Script {
         EngineLens lens;
         AgentAccountFactory agentFactory;
         TrailingStops trailingStops;
+        TwapOrders twapOrders;
         uint64 futureExpiry;
         bytes32[] marketIds;
         string[] marketSymbols;
@@ -121,6 +123,7 @@ contract Deploy is Script {
         d.lens = new EngineLens(d.engine);
         d.agentFactory = new AgentAccountFactory(IERC20(d.usdc), d.engine);
         d.trailingStops = new TrailingStops(d.engine, d.agentFactory);
+        d.twapOrders = new TwapOrders(d.engine, d.agentFactory);
         _listMarkets(d);
         if (testCollateral) _seedVault(d, deployer, vm.envOr("VAULT_SEED", uint256(0)));
 
@@ -215,6 +218,7 @@ contract Deploy is Script {
         console2.log("EngineLens:          ", address(d.lens));
         console2.log("AgentAccountFactory: ", address(d.agentFactory));
         console2.log("TrailingStops:       ", address(d.trailingStops));
+        console2.log("TwapOrders:          ", address(d.twapOrders));
         console2.log("Dated future:        ", d.marketSymbols[7]);
 
         string memory json = "deployment";
@@ -232,6 +236,7 @@ contract Deploy is Script {
         vm.serializeAddress(json, "engineLens", address(d.lens));
         vm.serializeAddress(json, "agentFactory", address(d.agentFactory));
         vm.serializeAddress(json, "trailingStops", address(d.trailingStops));
+        vm.serializeAddress(json, "twapOrders", address(d.twapOrders));
         vm.serializeUint(json, "futureExpiry", d.futureExpiry);
         vm.serializeBytes32(json, "marketIds", d.marketIds);
         string memory out = vm.serializeString(json, "marketSymbols", d.marketSymbols);

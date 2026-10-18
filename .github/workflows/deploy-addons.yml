@@ -1,0 +1,84 @@
+name: Deploy add-ons to Arc Testnet
+
+# Deploys the contracts that sit beside the live venue without changing it (contracts/script/DeployAddons.s.sol:
+# TrailingStops and TwapOrders), wired to the engine and agent account factory in deployments/arc-testnet.json;
+# merges their addresses into that file, commits it, then republishes the app and restarts the keeper so both pick
+# them up. The venue itself (engine, vault, positions) is untouched; trails and TWAPs set on replaced copies end.
+#
+# Needs the DEPLOYER_KEY secret (testnet gas only).
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-arc-testnet
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: foundry-rs/foundry-toolchain@v1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Roles
+        env:
+          DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}
+        run: |
+          test -n "$DEPLOYER_KEY" || { echo "::error::DEPLOYER_KEY secret is not set"; exit 1; }
+          test -f deployments/arc-testnet.json || { echo "::error::no deployments/arc-testnet.json: deploy the venue first"; exit 1; }
+          cd keeper && npm ci --no-audit --no-fund && cd ..
+          node keeper/scripts/forge-deployment.mjs roles | tee -a "$GITHUB_ENV"
+          echo "ENGINE_ADDRESS=$(node -p 'require("./deployments/arc-testnet.json").engine')" >> "$GITHUB_ENV"
+          echo "AGENT_FACTORY_ADDRESS=$(node -p 'require("./deployments/arc-testnet.json").agentFactory')" >> "$GITHUB_ENV"
+      - name: Pick an RPC
+        run: |
+          for u in https://rpc.testnet.arc.io https://rpc.quicknode.testnet.arc.io https://rpc.drpc.testnet.arc.io https://rpc.blockdaemon.testnet.arc.io https://5042002.rpc.thirdweb.com; do
+            if [ "$(cast chain-id --rpc-url "$u" 2>/dev/null)" = "5042002" ]; then echo "RPC_URL=$u" >> "$GITHUB_ENV"; echo "::notice::using $u"; exit 0; fi
+          done
+          echo "::error::no Arc Testnet RPC reachable"; exit 1
+      - name: Gas
+        run: |
+          bal=$(cast balance "$DEPLOYER_ADDRESS" --rpc-url "$RPC_URL" --ether)
+          echo "::notice::deployer $DEPLOYER_ADDRESS holds $bal USDC for gas"
+          awk "BEGIN{exit !($bal >= 0.5)}" || { echo "::error::deployer needs at least 0.5 USDC for gas (https://faucet.circle.com)"; exit 1; }
+      - name: Deploy
+        working-directory: contracts
+        env:
+          DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}
+        run: |
+          forge script script/DeployAddons.s.sol:DeployAddons --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" --broadcast --slow \
+            --with-gas-price 40gwei --priority-gas-price 2gwei
+      - name: Deployment file
+        env:
+          DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}
+        run: |
+          node keeper/scripts/forge-deployment.mjs addons contracts/deployments/5042002-addons.json
+          echo "::notice::trailingStops $(node -p 'require("./deployments/arc-testnet.json").trailingStops')"
+          echo "::notice::twapOrders $(node -p 'require("./deployments/arc-testnet.json").twapOrders')"
+      - name: Commit the deployment
+        run: |
+          git config user.name "dry-powder-deployer"
+          git config user.email "actions@users.noreply.github.com"
+          git add deployments/arc-testnet.json
+          git commit -m "Arc Testnet add-ons (Forge) $(date -u +%Y-%m-%dT%H:%MZ)" || echo "nothing to commit"
+          git pull --rebase origin main && git push origin HEAD:main
+
+  app:
+    needs: deploy
+    uses: ./.github/workflows/pages.yml
+
+  keeper:
+    needs: deploy
+    uses: ./.github/workflows/keeper.yml
+    secrets:
+      DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}

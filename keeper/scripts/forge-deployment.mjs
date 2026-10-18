@@ -5,6 +5,10 @@
 //       prints PUBLISHER_ADDRESS=… KEEPER_ADDRESS=… DEPLOYER_ADDRESS=… (the role keys derive from the deployer key,
 //       the same rule as keeper/src/main.mjs and ops/run-testnet.mjs), for $GITHUB_ENV.
 //
+//   DEPLOYER_KEY=0x… node keeper/scripts/forge-deployment.mjs addons [contracts/deployments/5042002-addons.json]
+//       merges add-ons deployed by contracts/script/DeployAddons.s.sol (TrailingStops, TwapOrders) into the
+//       deployment file.
+//
 //   DEPLOYER_KEY=0x… node keeper/scripts/forge-deployment.mjs write [contracts/deployments/5042002.json]
 //       turns the Forge script's output into deployments/arc-testnet.json, the file the keeper, the MCP server,
 //       the SDK and the frontend build read. The previous deployment is archived under deployments/history/.
@@ -17,7 +21,8 @@ import { privateKeyToAccount } from "viem/accounts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const env = process.env;
-const [cmd = "write", src = join(root, "contracts/deployments/5042002.json")] = process.argv.slice(2);
+const [cmd = "write", argv1] = process.argv.slice(2);
+const src = argv1 ?? join(root, "contracts/deployments/5042002.json");
 
 const deployerKey = env.DEPLOYER_KEY || "";
 if (!/^0x[0-9a-fA-F]{64}$/.test(deployerKey)) throw new Error("set DEPLOYER_KEY");
@@ -29,7 +34,24 @@ if (cmd === "roles") {
   console.log(`PUBLISHER_ADDRESS=${roles.publisher}\nKEEPER_ADDRESS=${roles.keeper}\nDEPLOYER_ADDRESS=${roles.deployer}`);
   process.exit(0);
 }
-if (cmd !== "write") throw new Error(`unknown command ${cmd} (roles | write)`);
+if (cmd === "addons") {
+  // Merges contracts/deployments/<chainId>-addons.json (script/DeployAddons.s.sol) into the live deployment file.
+  // The add-ons must have been deployed for the engine that file describes.
+  const file = argv1 ?? join(root, "contracts/deployments/5042002-addons.json");
+  const a = JSON.parse(readFileSync(file, "utf8"));
+  const target = join(root, "deployments/arc-testnet.json");
+  const d = JSON.parse(readFileSync(target, "utf8"));
+  if (String(a.engine).toLowerCase() !== String(d.engine).toLowerCase()) throw new Error(`add-ons are for engine ${a.engine}, the deployment is ${d.engine}`);
+  const keys = ["trailingStops", "twapOrders"].filter((k) => /^0x[0-9a-fA-F]{40}$/.test(a[k] || "") && !/^0x0{40}$/.test(a[k]));
+  if (keys.length === 0) throw new Error("add-ons file has no add-on addresses");
+  for (const k of keys) {
+    console.log(`${k} ${d[k] ?? "(none)"} -> ${a[k]} in ${target}`);
+    d[k] = a[k];
+  }
+  writeFileSync(target, JSON.stringify(d, null, 2) + "\n");
+  process.exit(0);
+}
+if (cmd !== "write") throw new Error(`unknown command ${cmd} (roles | write | addons)`);
 
 const f = JSON.parse(readFileSync(src, "utf8"));
 const outFile = join(root, "deployments/arc-testnet.json");
@@ -58,6 +80,7 @@ const deployment = {
   oracle: f.pythOracle,
   agentFactory: f.agentFactory,
   ...(f.trailingStops && !/^0x0{40}$/.test(f.trailingStops) ? { trailingStops: f.trailingStops } : {}),
+  ...(f.twapOrders && !/^0x0{40}$/.test(f.twapOrders) ? { twapOrders: f.twapOrders } : {}),
   publisher: roles.publisher,
   keeper: roles.keeper,
   deployer: roles.deployer,

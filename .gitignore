@@ -6,6 +6,7 @@ contracts/out/
 contracts/cache/
 contracts/broadcast/
 contracts/deployments/31337.json
+contracts/deployments/31337-addons.json
 *.tsbuildinfo
 !ops/dist/
 ops/.env.testnet
