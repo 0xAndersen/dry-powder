@@ -262,7 +262,9 @@ if (want("trade")) {
     await page.getByRole("group", { name: "Quantity entered as" }).getByRole("button", { name: "Risk", exact: true }).click();
     await page.getByLabel("Amount to risk at the stop-loss").fill("10");
     await page.getByLabel("Stop-loss entered as").selectOption("pct");
-    await t("ticket-sl").fill("0.12");
+    // Tight, but not so tight that the random walk gaps it between the ticket and the fill (the keeper then leaves
+    // the order resting, as it must): 0.12% did on slow CI runners.
+    await t("ticket-sl").fill("0.3");
     await page.getByText(/Risking 10\.00 tUSDC to your stop gives/).waitFor({ timeout: 5_000 });
     const summary = await page.getByText(/Risking 10\.00 tUSDC to your stop gives/).innerText();
     await shot(page, "08-risk-sizing");
@@ -273,8 +275,8 @@ if (want("trade")) {
     const engineAbi = artifact("PerpEngine").abi;
     const opened = await pub.getContractEvents({ address: addresses.engine, abi: engineAbi, eventName: "PositionOpened", args: { trader: UI_TRADER.address }, fromBlock });
     const size = Number(opened[opened.length - 1]?.args.size ?? 0n) / 1e6;
-    // 10 USDC at a 0.12% stop with 0.05% x 2 fees: about 4,545 of size.
-    if (size < 4_300 || size > 4_800) throw new Error(`risk sizing produced ${size}`);
+    // 10 USDC at a 0.3% stop with 0.05% x 2 fees: about 2,500 of size.
+    if (size < 2_350 || size > 2_650) throw new Error(`risk sizing produced ${size}`);
     // Push the price through the stop rather than wait for the random walk to get there.
     await fetch(`${KRAKEN_URL}/control/move?feed=SOL&pct=-1.5`);
     for (let i = 0; i < 60; i += 1) {
