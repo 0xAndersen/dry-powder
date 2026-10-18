@@ -126,25 +126,6 @@ const kraken = extraSources.length
   : krakenOnly;
 const op = makeOperator({ pub, publisher, keeper, funder, chainId: a.chainId, addresses: a, kraken, opts, log });
 
-const actual = await pub.getChainId().catch((e) => { throw fatal(`no RPC reachable (${rpcUrls.join(", ")}): ${e?.shortMessage ?? e?.message ?? e}`); });
-if (actual !== a.chainId) throw fatal(`RPC is chain ${actual}, expected ${a.chainId}`);
-annotate("notice", `keeper started: publisher ${publisher.account.address}, keeper ${keeper.account.address}`);
-log("start", JSON.stringify({ multicall: hasMc3, sources: sourceNames, gasSponsor: Boolean(sponsor), rpcUrls, chainId: a.chainId, engine: a.engine, oracle: a.oracle, publisher: publisher.account.address, keeper: keeper.account.address, funder: funder?.account.address ?? null, opts }));
-
-let last = { at: 0 };
-let stopping = false;
-const started = Date.now();
-const runFor = num("RUN_SECONDS", 0) * 1000;
-const tickMs = num("TICK_MS", 3000);
-
-if (env.PORT) {
-  createServer((req, res) => {
-    const body = JSON.stringify({ ok: Date.now() - last.at < 60_000, last, stats: op.stats, kraken: op.krakenOk(), sources: sourceNames, sponsor: sponsor?.stats ?? null, uptimeS: Math.round((Date.now() - started) / 1000) });
-    res.writeHead(req.url === "/health" ? 200 : 404, { "content-type": "application/json" }).end(body);
-  }).listen(Number(env.PORT));
-}
-for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => (stopping = true));
-
 // Gas for instant-trading session keys (Arc Testnet by default; SPONSOR_GAS=0 turns it off).
 const sponsorOn = !["0", "false"].includes(String(env.SPONSOR_GAS ?? (a.chainId === 5042002 ? "1" : "0"))) && funder && a.factory && a.usdc;
 const usdc18 = (x) => BigInt(Math.round(Number(x) * 1e6)) * 10n ** 12n;
@@ -166,6 +147,25 @@ const sponsor = sponsorOn
       },
     })
   : null;
+const actual = await pub.getChainId().catch((e) => { throw fatal(`no RPC reachable (${rpcUrls.join(", ")}): ${e?.shortMessage ?? e?.message ?? e}`); });
+if (actual !== a.chainId) throw fatal(`RPC is chain ${actual}, expected ${a.chainId}`);
+annotate("notice", `keeper started: publisher ${publisher.account.address}, keeper ${keeper.account.address}`);
+log("start", JSON.stringify({ multicall: hasMc3, sources: sourceNames, gasSponsor: Boolean(sponsor), rpcUrls, chainId: a.chainId, engine: a.engine, oracle: a.oracle, publisher: publisher.account.address, keeper: keeper.account.address, funder: funder?.account.address ?? null, opts }));
+
+let last = { at: 0 };
+let stopping = false;
+const started = Date.now();
+const runFor = num("RUN_SECONDS", 0) * 1000;
+const tickMs = num("TICK_MS", 3000);
+
+if (env.PORT) {
+  createServer((req, res) => {
+    const body = JSON.stringify({ ok: Date.now() - last.at < 60_000, last, stats: op.stats, kraken: op.krakenOk(), sources: sourceNames, sponsor: sponsor?.stats ?? null, uptimeS: Math.round((Date.now() - started) / 1000) });
+    res.writeHead(req.url === "/health" ? 200 : 404, { "content-type": "application/json" }).end(body);
+  }).listen(Number(env.PORT));
+}
+for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => (stopping = true));
+
 let lastSponsor = 0;
 
 let lastReport = 0;
