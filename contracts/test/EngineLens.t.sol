@@ -62,9 +62,9 @@ contract EngineLensTest is Base {
         _publish(ETH, 4_100e8, 0, -8);
         EngineLens.MarketView[] memory ms = lens.getMarkets();
         assertEq(ms.length, 6);
-        assertFalse(ms[0].hasPrice); // BTC: stale
-        assertEq(ms[0].price.mid, 0);
-        assertEq(ms[0].price.publishTime, 0);
+        assertFalse(ms[0].hasPrice); // BTC: stale, so the last price is reported as a reference only
+        assertGt(ms[0].price.mid, 0);
+        assertLt(ms[0].price.publishTime, block.timestamp - engine.maxPriceAge());
         assertEq(ms[0].market.symbol, "BTC-USD"); // configuration is still reported
         assertTrue(ms[1].hasPrice); // ETH
         assertEq(ms[1].price.mid, 4_100e18);

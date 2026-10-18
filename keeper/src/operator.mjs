@@ -229,10 +229,21 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
   async function keep(chainNow, view) {
     const byId = new Map(view.markets.map((m) => [m.id.toLowerCase(), m]));
     // Stamped at the chain's clock (never ahead of the 2 s allowance, never older than the block being built on).
-    const pt = Math.max(chainNow, Math.min(Math.floor(Date.now() / 1000), chainNow + 1));
-    const fresh = freshFeeds(pt);
-    const prices = new Map();
-    const P = async (m) => (prices.has(m.id) ? prices.get(m.id) : prices.set(m.id, await priceFor(m, fresh, pt)).get(m.id));
+    // A busy tick can outlast a short maxPriceAge, so prices are re-stamped (and re-signed) every second.
+    // The chain's clock can run ahead of the wall clock (a local chain gives every block its own second), so
+    // re-stamping reads the latest block rather than assuming one second per second.
+    let pt, fresh, prices, stampedAt;
+    const restamp = (now) => {
+      pt = Math.max(now, Math.min(Math.floor(Date.now() / 1000), now + 1));
+      fresh = freshFeeds(pt);
+      prices = new Map();
+      stampedAt = Date.now();
+    };
+    restamp(chainNow);
+    const P = async (m) => {
+      if (Date.now() - stampedAt > 1_000) restamp(Number((await pub.getBlock()).timestamp));
+      return prices.has(m.id) ? prices.get(m.id) : prices.set(m.id, await priceFor(m, fresh, pt)).get(m.id);
+    };
     const merge = (lists) => [...new Set(lists.flat())];
 
     // 1. Liquidations first: they protect the vault.

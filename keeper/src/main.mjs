@@ -85,7 +85,10 @@ const transport = fallback(
 const MC3 = chain.contracts.multicall3.address;
 const probe = createPublicClient({ chain, transport });
 const hasMc3 = ((await probe.getCode({ address: MC3 }).catch(() => undefined)) ?? "0x").length > 2;
-const pub = createPublicClient({ chain, transport, pollingInterval: 1_000, ...(hasMc3 ? { batch: { multicall: { wait: 50 } } } : {}) });
+// Receipt polling: every send waits for its receipt, so this bounds how many fills fit in a tick. Public RPCs
+// rate-limit, so 1 s on Arc; a local chain mines instantly.
+const pollingInterval = num("POLL_MS", a.chainId === 31337 ? 150 : 1_000);
+const pub = createPublicClient({ chain, transport, pollingInterval, ...(hasMc3 ? { batch: { multicall: { wait: 50 } } } : {}) });
 const wallet = (pk) => createWalletClient({ chain, transport, account: privateKeyToAccount(pk) });
 const publisher = wallet(key("PUBLISHER_KEY", "publisher"));
 const keeper = wallet(key("KEEPER_KEY", "keeper"));

@@ -3,7 +3,7 @@ pragma solidity 0.8.28;
 
 import {PositionMath} from "./libraries/PositionMath.sol";
 import {PerpEngine} from "./PerpEngine.sol";
-import {Market, OraclePrice, Order, Position, PositionView} from "./Types.sol";
+import {Market, OraclePrice, Order, Position, PositionView, PriceStatus} from "./Types.sol";
 
 /// @title EngineLens
 /// @notice Read-only aggregation over PerpEngine for front-ends and keepers. Holds no state and no funds; it
@@ -17,6 +17,7 @@ contract EngineLens {
         Market market;
         int256 fundingRate; // per second, 1e18; positive: longs pay
         bool hasPrice; // false when the oracle has no usable price right now (stale, closed market, ...)
+        // The usable price; when hasPrice is false, the last price the oracle holds (zero if none).
         OraclePrice price;
     }
 
@@ -37,7 +38,15 @@ contract EngineLens {
             try engine.getPrice(ids[i]) returns (OraclePrice memory px) {
                 out[i].hasPrice = true;
                 out[i].price = px;
-            } catch {}
+            } catch {
+                // No usable price: report the last one the oracle holds (too old to trade on directly, but a
+                // reference for keeper orders, which always fill at a newer price).
+                Market memory mk = out[i].market;
+                try engine.oracle().peek(mk.feedId, mk.quoteFeedId, mk.invert, type(uint256).max, 10_000)
+                returns (PriceStatus status, OraclePrice memory last) {
+                    if (status == PriceStatus.Ok) out[i].price = last;
+                } catch {}
+            }
         }
     }
 
