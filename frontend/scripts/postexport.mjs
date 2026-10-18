@@ -62,13 +62,13 @@ writeFileSync(
 <body>
 <div>
 <h1 style="font-size:22px;margin:0 0 8px">This page does not exist</h1>
-<p style="color:#b0a898;margin:0 0 16px">The address may be mistyped. Pages live at <code>trade/</code>, <code>activity/</code>, <code>house/</code> and <code>agents/</code>, with the trailing slash.</p>
+<p style="color:#b0a898;margin:0 0 16px">The address may be mistyped. Pages live at <code>trade/</code>, <code>markets/</code>, <code>portfolio/</code>, <code>activity/</code>, <code>leaderboard/</code>, <code>house/</code> and <code>agents/</code>, with the trailing slash.</p>
 <p><a id="home" href="./trade/">Go to trading</a></p>
 </div>
 <script>
 // Unknown paths can be any depth below the app, so find the app root from a known page name when there is one.
 (function () {
-  var m = location.pathname.match(/^(.*?\\/)(trade|activity|house|agents)(\\.html)?$/);
+  var m = location.pathname.match(/^(.*?\\/)(trade|markets|portfolio|activity|leaderboard|trader|house|agents)(\\.html)?$/);
   if (m) { location.replace(m[1] + m[2] + "/" + location.search); return; }
 })();
 </script>
