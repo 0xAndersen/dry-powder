@@ -88,6 +88,25 @@ await agent.open({ market: "ETH", side: "short", margin: usd(20), leverage: 25, 
 call, so an agent can build a larger position by adding to it several times: size the cap and the account's
 balance for that.
 
+### Trailing stops and TWAPs (add-ons)
+
+Two contracts beside the engine act on an agent account once the owner approves them as agents; the keeper
+pokes them. Their addresses are in the deployment file (`trailingStops`, `twapOrders`) and their ABIs are exported.
+
+```ts
+import { maxUint64 } from "viem";
+import { agentAccountAbi, trailingStopsAbi, twapOrdersAbi } from "@dry-powder/sdk";
+
+// Trailing stop: the smallest policy (it can only move stops), then a 1% trail on the whole position.
+await ownerWallet.writeContract({ address: account, abi: agentAccountAbi, functionName: "setAgent", args: [d.trailingStops, maxUint64, 1, 1n] });
+await agentWallet.writeContract({ address: d.trailingStops, abi: trailingStopsAbi, functionName: "setTrail", args: [account, marketId, 100, 0n, 0n] });
+
+// TWAP: approve slices up to 50 margin at 10x until tomorrow, then 6 slices of 50 margin / 500 size, one a
+// minute, at most 0.5% past the price. An agent key may only start slices inside its own policy.
+await ownerWallet.writeContract({ address: account, abi: agentAccountAbi, functionName: "setAgent", args: [d.twapOrders, BigInt(now + 86_400), 10, usd(50)] });
+await agentWallet.writeContract({ address: d.twapOrders, abi: twapOrdersAbi, functionName: "setTwap", args: [account, marketId, true, usd(50), usd(500), 6, 60, 50] });
+```
+
 ## Units
 
 Sizes and margins are USDC with 6 decimals (`usd(12.5)`); prices have 18 decimals (`price(100_000)`).

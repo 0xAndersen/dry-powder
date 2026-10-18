@@ -18,6 +18,8 @@ export interface Deployment {
   agentFactory?: Address;
   /** TrailingStops add-on (v3.1 deployments). */
   trailingStops?: Address;
+  /** TwapOrders add-on (v3.1 deployments). */
+  twapOrders?: Address;
   markets?: { symbol: string; id: Hex }[];
 }
 
