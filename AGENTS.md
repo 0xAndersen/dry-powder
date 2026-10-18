@@ -62,6 +62,7 @@ then choose margin. `examples/risk-capped-agent.mjs` does exactly this.
 | Add margin | `addMargin(marketId, amount)` (approve first) | Not while in profit; not below 1x |
 | Cancel | `cancelOrder(id)` | Escrow refunded |
 | Several at once | `AgentAccount.multicall([...])` | Atomic: ladders, close all, cancel all |
+| Trailing stop | approve `TrailingStops` on the account (`setAgent(trailingStops, maxUint64, 1, 1)`), then `TrailingStops.setTrail(account, marketId, distanceBps, size, activation)` | The keeper pokes it; the stop only ever tightens |
 
 `openPosition` / `closePosition(marketId, size, acceptablePrice, priceUpdate)` (no keeper, 100x and below) need an on-chain price at most 30 s old; the keeper keeps prices
 fresh within about a minute, and immediately when an order needs one, so the order path above is the reliable one.

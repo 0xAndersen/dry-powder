@@ -57,6 +57,13 @@ stop-loss, stop-entry orders. Each new path keeps the v3 guarantees:
   balance for that.
 - **Removed:** `liquidate(address)` and `liquidate(address, bytes[])` (keepers use `liquidateBatch`) and the
   getters of ten owner-bound constants, to stay under the EIP-170 size limit. No check was removed.
+- **Trailing stops** (`TrailingStops`, outside the engine). An account approves the contract as an agent; anyone
+  may `poke`, which moves the position's stop-loss behind the best mid seen, read from the engine's own
+  `getPrice`. It only ever tightens a stop (a poker picks when, never where), works only for accounts from the
+  venue's factory, and its only call into an account is `setTriggerOrder(market, StopLoss, …)`: approve it with
+  the smallest policy an account allows (1 micro-USDC margin cap, 1x). A refused move (approval revoked) is
+  skipped without failing the batch. Accepted: a trail only sees the prices it is poked at, so between pokes a
+  spike can pass unseen (the stop then trails less tightly, never more). Tests: `TrailingStops.t.sol`.
 - Tests: `contracts/test/PositionManagement.t.sol` (32), `AgentAccount.t.sol`, and the invariant handler, which
   now adds, closes in part, adds margin and places sized and stop-entry orders while every invariant holds.
 

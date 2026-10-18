@@ -34,10 +34,10 @@ item 98), and takes the rest as the list below.
 | 2 | A market pauses when the venues disagree by more than 50 bp, instead of trading on one of them | Live |
 | 3 | Gas sponsorship for instant-trading keys (0.25 USDC at a time, capped per key and per day) | Live |
 | 4 | Keeper health reports its price sources and sponsorship; shown in the app's Status sheet | Live |
-| 5 | System check before every deploy: 44 UI steps on desktop and phone, SDK and MCP smoke tests | Live |
+| 5 | System check before every deploy: 45 UI steps on desktop and phone, SDK and MCP smoke tests | Live |
 | 6 | Keeper fills stop-entry orders and additions, and leaves a fill resting if it would gap through its own bracket | v3.1 |
 | 7 | Serverless indexer: per-trader and per-market totals in `stats.json`, every 5 minutes | Live |
-| 8 | 24h volume per market in the indexer, on the Markets page | Next |
+| 8 | 24h volume per market in the indexer, on the Markets page | v3.1 |
 | 9 | Funding-rate and open-interest history in the indexer | Next |
 | 10 | A second keeper run by someone else, so fills never depend on one operator | Next |
 
@@ -76,7 +76,7 @@ item 98), and takes the rest as the list below.
 | 34 | Full-screen chart with your entries and exits on the candles | Live |
 | 35 | Settings, Help (FAQ, staying safe) and a venue Status sheet | Live |
 | 36 | Getting-started checklist | Live |
-| 37 | Scale orders in the ticket: a ladder of limits in one step | Next |
+| 37 | Scale orders in the ticket: a ladder of limits in one step (one transaction with instant trading) | v3.1 |
 | 38 | Sized take-profit and stop-loss in the positions table | Next |
 | 39 | Chart drawing tools: horizontal lines and trend lines | Next |
 | 40 | Several charts side by side on wide screens | Later |

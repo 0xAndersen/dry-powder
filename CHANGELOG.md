@@ -19,10 +19,13 @@
 - Agent accounts: `multicall` for atomic batches (ladders, close all, cancel all), each call checked against the
   agent's policy; `AgentAccountFactory.createAccountWithAgent` creates an account, approves its first key and
   funds the key's gas in one transaction.
+- Trailing stops without an engine change: `TrailingStops`, deployed with the venue, moves an agent account's
+  stop-loss behind the best price seen (from the engine's own price, only ever tighter) when anyone pokes it;
+  optional activation price and size. The keeper pokes when a stop would move by at least 0.1%.
 - Events `PositionIncreased`, `PositionDecreased`, `MarginAdded`.
 - **Breaking:** `closePosition` and `setTriggerOrder` take a size. `liquidate(address)` and
   `liquidate(address, bytes[])` are gone (use `liquidateBatch`), as are the getters of ten owner-bound constants.
-  Engine runtime 24,289 bytes, 287 under the EIP-170 limit. 380 tests, invariants extended to every new path.
+  Engine runtime 24,289 bytes, 287 under the EIP-170 limit. 389 tests, invariants extended to every new path.
 
 **Prices you can trust, gas you don't think about.** (Keeper; live since 2026-10-18.)
 - The publisher signs the median of Kraken, Coinbase and Bitstamp when they agree within 50 bp, with the widest
@@ -31,20 +34,27 @@
   key and 25 USDC a day, only for accounts holding collateral).
 - A transaction that reverts on-chain after a clean simulation (a trader's transaction landed in between) is
   replayed to name the reason, so lost races count as benign rather than as faults.
+- Gas limits carry headroom (a quarter more plus 50k) everywhere a key signs: keeper, instant trading, SDK, MCP.
+  A tight estimate ran out when the state moved before inclusion (an addition becoming a new position, funding
+  accruing). Estimates go by address: with a local account viem estimated twice, capping the second at the
+  first, which failed whenever a second passed in between.
+- The indexer keeps hourly buckets per market: 24h volume, fees and trades on the Markets page.
 
 **A trading app for phones and desks.** (Live since 2026-10-18.)
 - Phone first: bottom tabs, the ticket as a sheet, positions as cards, a full-screen chart with your fills on
   the candles. Installable (PWA) with an offline shell, an update prompt and system notifications.
 - Instant trading: a key in this browser trades through your agent account inside an on-chain policy; no wallet
   pop-up per order. Setup is one confirmation on v3.1 (two before).
-- Order ticket: Market, Limit and Stop; "adds to your long" preview with the merged entry and liquidation price.
-  Positions: close 25/50/75/100% or any size, add margin with a leverage preview, edit TP/SL inline.
+- Order ticket: Market, Limit and Stop; "adds to your long" preview with the merged entry and liquidation price;
+  scale in with a ladder of 2 to 20 equal limit orders between two prices (one transaction with instant
+  trading), with the average entry and liquidation if all fill. Positions: close 25/50/75/100% or any size, add
+  margin with a leverage preview, edit TP/SL inline.
 - Risk: liquidation warnings at half and three quarters of the buffer, an account risk sheet with a what-if
   slider, a personal leverage cap and daily loss limit.
 - Pro: Ctrl/⌘ K command palette, favourites in the market picker, close all and cancel all (one transaction
   with instant trading), links that prefill a trade, Settings, Help and a venue Status sheet (chain, keeper,
   price sources and age per market).
-- Markets page (24h change, sparklines, funding, open interest, favourites); Portfolio (PnL curve, calendar,
+- Markets page (24h change and volume, sparklines, funding, open interest, favourites); Portfolio (PnL curve, calendar,
   win rate, profit factor, drawdown) with a trade journal; weekly leaderboard seasons; trader profiles with
   Copy; follows and nicknames in Activity.
 - Social: an alert (with a link to the profile) when a trader you follow opens, adds to, closes or is
