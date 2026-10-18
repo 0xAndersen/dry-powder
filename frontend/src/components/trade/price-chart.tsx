@@ -23,7 +23,7 @@ import {
 import { useAppConfig } from "@/components/providers";
 import { useLocalStore } from "@/hooks/use-local-store";
 import type { MarketPrice } from "@/hooks/use-market-data";
-import { fmtNum, fmtPercent } from "@/lib/format";
+import { fmtNum, fmtPercent, safeLocale } from "@/lib/format";
 import { bollinger, ema, macd, rsi, sma, vwap, type IndicatorSettings, type Series } from "@/lib/indicators";
 import { krakenSource, type Instrument } from "@/lib/instruments";
 import { RESOLUTIONS, fetchInstrumentCandles, resolutionInfo, type Candle, type Resolution } from "@/lib/kraken";
@@ -287,6 +287,7 @@ export function PriceChart({
       rightPriceScale: { borderColor: COLORS.border, scaleMargins: { top: 0.08, bottom: 0.2 } },
       timeScale: { borderColor: COLORS.border, timeVisible: true, secondsVisible: false, rightOffset: 8 },
       crosshair: { mode: CrosshairMode.Normal },
+      localization: { locale: safeLocale() },
     });
     const series = chart.addSeries(CandlestickSeries, {
       upColor: COLORS.long,

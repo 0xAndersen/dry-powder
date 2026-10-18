@@ -81,6 +81,8 @@ export type OpenPosition = {
   peakSize?: bigint;
   committed?: bigint;
   partials?: number;
+  /** Notional opened, increased and partly closed so far in this round trip. */
+  traded?: bigint;
 };
 export type StatsState = {
   schema: 1;
@@ -118,6 +120,8 @@ export type ClosedTrade = {
   margin: bigint | null;
   /** Leverage chosen at open (size / margin). */
   leverage: number | null;
+  /** Notional traded over the round trip: opened, increased, partly and finally closed. Null when the open is unknown. */
+  volume: bigint | null;
   realised: bigint;
   /** All fees of the trade; null when the open (and its fee) is unknown. */
   fees: bigint | null;
@@ -322,6 +326,7 @@ export function applyEvent(state: StatsState, e: EngineEvent, onTrade?: (trade: 
     exit,
     margin: p ? (p.committed ?? p.margin) : e.type === "liquidation" ? e.margin : null,
     leverage: p && (p.openMargin ?? p.margin) > 0n ? Number(((p.openSize ?? p.size) * 10n) / (p.openMargin ?? p.margin)) / 10 : null,
+    volume: p && p.traded !== undefined ? p.traded + (e.type === "decrease" ? e.closedSize : p.size) : null,
     realised: (p ? p.realised : 0n) + realised,
     fees: p ? p.fees + exitFee : null,
     openTime: p ? p.openTime : null,
@@ -352,6 +357,7 @@ export function applyEvent(state: StatsState, e: EngineEvent, onTrade?: (trade: 
         peakSize: e.size,
         committed: e.margin,
         partials: 0,
+        traded: e.size,
       };
       add("opens", 1);
       volume(e.size, e.isLong);
@@ -377,6 +383,7 @@ export function applyEvent(state: StatsState, e: EngineEvent, onTrade?: (trade: 
       p.fees += e.fee;
       if (p.peakSize === undefined || e.newSize > p.peakSize) p.peakSize = e.newSize;
       p.committed = (p.committed ?? e.newMargin - e.addedMargin) + e.addedMargin;
+      if (p.traded !== undefined) p.traded += e.addedSize;
       add("increases", 1);
       volume(e.addedSize, e.isLong);
       fee(e.fee);
@@ -404,6 +411,7 @@ export function applyEvent(state: StatsState, e: EngineEvent, onTrade?: (trade: 
         pos.fees += e.fee;
         pos.realised += realised;
         pos.partials = (pos.partials ?? 0) + 1;
+        if (pos.traded !== undefined) pos.traded += e.closedSize;
         if (pos.size <= 0n) finish(pos.realised - pos.fees, pos.long, false, { ...trade, realised: pos.realised, fees: pos.fees, partials: pos.partials - 1 });
       }
       break;

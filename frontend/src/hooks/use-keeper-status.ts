@@ -10,6 +10,10 @@ export type KeeperHealth = {
   last?: { at?: number };
   stats?: { executed?: number; liquidated?: number; pushes?: number; feedsPushed?: number; ticks?: number; errors?: Record<string, number> };
   kraken?: unknown;
+  /** Exchanges the keeper prices from (median when several agree). */
+  sources?: string[];
+  /** Gas sponsorship of instant-trading keys (testnet). */
+  sponsor?: { sponsored?: number; spent?: string; keys?: number } | null;
   uptimeS?: number;
 };
 

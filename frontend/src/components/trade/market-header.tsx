@@ -1,20 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { ArcGauge } from "@/components/arc-gauge";
-import { useApp } from "@/components/providers";
 import { Tip } from "@/components/tip";
 import { TxStatus } from "@/components/tx-status";
 import { useTradeContext } from "@/hooks/use-action-context";
+import { useDayStats } from "@/hooks/use-day-stats";
 import { useMarketData, type MarketPrice } from "@/hooks/use-market-data";
 import { useTx } from "@/hooks/use-tx";
 import { useAccountView, useWallet } from "@/hooks/use-wallet";
 import { submitSettleMarket } from "@/lib/actions";
 import { UserFacingError } from "@/lib/errors";
 import { USDC_DECIMALS, fmtAge, fmtCompact, fmtDuration, fmtNum, fmtPercent, fmtPrice, fmtUtc } from "@/lib/format";
-import { groupInstruments, isExpired, isSettled, kindInfo, krakenSource, type Instrument } from "@/lib/instruments";
-import { fetchInstrumentCandles } from "@/lib/kraken";
+import { groupInstruments, isExpired, isSettled, kindInfo, type Instrument } from "@/lib/instruments";
 import { ratio } from "@/lib/math";
 import { useLocalStore } from "@/hooks/use-local-store";
 import { toggleWatch, watchlist } from "@/lib/social";
@@ -173,7 +171,6 @@ export function MarketHeader({
   onPickerChange: (open: boolean) => void;
   onSelect: (instrument: Instrument) => void;
 }) {
-  const { config: cfg } = useApp();
   const { prices } = useMarketData();
   const wallet = useWallet();
   const view = useAccountView();
@@ -184,26 +181,7 @@ export function MarketHeader({
   const expired = isExpired(instrument, chainNow);
   const settled = isSettled(instrument);
 
-  const source = useMemo(() => krakenSource(instrument), [instrument.feedId, instrument.quoteFeedId, instrument.invert]); // eslint-disable-line react-hooks/exhaustive-deps
-  const dayRef = useQuery({
-    queryKey: ["day-reference", cfg.krakenUrl, instrument.id],
-    enabled: source !== null,
-    staleTime: 5 * 60_000,
-    refetchInterval: 5 * 60_000,
-    retry: 1,
-    queryFn: async ({ signal }) => {
-      const candles = await fetchInstrumentCandles(cfg.krakenUrl, source!, 60, signal);
-      const last = candles[candles.length - 1];
-      if (!last) return null;
-      let reference = candles[0]!;
-      for (const c of candles) {
-        if (c.time <= last.time - 86_400) reference = c;
-        else break;
-      }
-      return reference.close;
-    },
-  });
-  const change = price.display !== null && dayRef.data ? price.display / dayRef.data - 1 : null;
+  const { change } = useDayStats(instrument, price.display);
 
   const fundingPerHour = (Number(instrument.fundingRate) * 3600) / 1e18;
   const totalOi = instrument.longOi + instrument.shortOi;

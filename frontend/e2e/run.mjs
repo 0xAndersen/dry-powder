@@ -2,7 +2,7 @@
 // with TRADERS >= 5 so the activity feed and the house have something to show).
 //
 //   node e2e/run.mjs                 # everything
-//   node e2e/run.mjs trade,house     # only some sections: trade, instruments, watch, activity, settle, house, extras, agents, pro, phone, instant, responsive
+//   node e2e/run.mjs trade,house     # only some sections: trade, instruments, watch, activity, portfolio, settle, house, extras, agents, pro, phone, instant, responsive
 //
 // Exits non-zero if any step fails. Screenshots land in e2e/out/shots/.
 import { mkdirSync } from "node:fs";
@@ -476,16 +476,84 @@ if (want("activity")) {
     return `${stats.frames} frames in 6 s, p95 ${stats.p95.toFixed(1)} ms, worst ${stats.max.toFixed(0)} ms`;
   });
 
-  await step("clicking a trader in the feed opens watch mode", async () => {
-    const link = page.locator(".feed-table tbody tr a").first();
+  await step("a trader in the feed opens their profile: follow, nickname, watch in Trade", async () => {
+    const link = page.locator('.feed-table tbody tr a[href*="trader"]').first();
     const title = await link.getAttribute("title");
     await link.click();
+    await page.waitForURL(/\/trader\/?\?.*address=0x/, { timeout: 10_000 });
+    await t("trader-profile").waitFor({ timeout: 15_000 });
+    await t("trader-profile").getByRole("button", { name: "Follow", exact: true }).click();
+    await t("trader-profile").getByRole("button", { name: "Following" }).waitFor({ timeout: 5_000 });
+    await t("trader-profile").getByRole("button", { name: "Nickname" }).click();
+    await page.getByLabel("Nickname").fill("Desk 7");
+    await page.getByRole("button", { name: "Save" }).click();
+    await page.getByRole("heading", { name: /Desk 7/ }).waitFor({ timeout: 5_000 });
+    await shot(page, "18-trader-profile");
+    await page.getByRole("link", { name: "Watch in Trade" }).click();
     await page.waitForURL(/\/trade\/?\?.*account=0x/, { timeout: 10_000 });
     await t("account-bar").getByText("Watching").waitFor({ timeout: 15_000 });
-    await shot(page, "18-watch-from-activity");
     await page.getByRole("button", { name: "Stop watching this account" }).click();
     await page.waitForFunction(() => !location.search.includes("account="), null, { timeout: 5_000 });
     return title ?? "";
+  });
+
+  await step("markets: every market, search, favourites, sort, a row opens the trade screen", async () => {
+    await page.goto(`${WEB_URL}/markets/`);
+    await page.locator('[data-testid^="market-row-"]').first().waitFor({ timeout: 20_000 });
+    const rows = await page.locator('[data-testid^="market-row-"]').count();
+    if (rows !== addresses.markets.length) throw new Error(`expected ${addresses.markets.length} rows, saw ${rows}`);
+    await t("markets-search").fill("gold");
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid^="market-row-"]').length === 1, null, { timeout: 5_000 });
+    await t("markets-search").fill("");
+    await t("star-SOL-USD").click();
+    await t("filter-favourites").click();
+    await t("market-row-SOL-USD").waitFor({ timeout: 5_000 });
+    await page.getByRole("button", { name: "All", exact: true }).click();
+    await t("markets-sort").selectOption("oi");
+    await shot(page, "18b-markets");
+    await t("market-row-ETH-USD").locator("td").nth(2).click();
+    await page.waitForURL(/\/trade\/?\?.*market=ETH-USD/, { timeout: 10_000 });
+    return `${rows} markets`;
+  });
+
+  await step("leaderboard: season, rankings by metric, following filter", async () => {
+    await page.goto(`${WEB_URL}/leaderboard/`);
+    await t("season").waitFor({ timeout: 15_000 });
+    await t("lb-row").first().waitFor({ timeout: 30_000 });
+    const rows = await t("lb-row").count();
+    await t("lb-metric-volume").click();
+    await t("lb-period-all").click();
+    await t("lb-row").first().waitFor({ timeout: 10_000 });
+    await t("lb-following").click();
+    await page.getByText("Desk 7").first().waitFor({ timeout: 10_000 });
+    const followed = await t("lb-row").count();
+    if (followed !== 1) throw new Error(`following filter shows ${followed} rows`);
+    await t("lb-following").click();
+    await shot(page, "18c-leaderboard");
+    return `${rows} ranked traders`;
+  });
+}
+
+// ─────────────────────────────── portfolio ───────────────────────────────
+if (want("portfolio")) {
+  await step("portfolio: stats, curve, journal note with a tag, CSV export", async () => {
+    await ensureWallet();
+    await page.goto(`${WEB_URL}/portfolio/`);
+    await t("portfolio").waitFor({ timeout: 15_000 });
+    await t("period-all").click();
+    await t("journal-row").first().waitFor({ timeout: 45_000 });
+    const trades = await t("journal-row").count();
+    await t("journal-edit").first().click();
+    await t("journal-note").fill("Waited for the retest; stop under the range.");
+    await t("journal-sheet").getByRole("button", { name: "Plan", exact: true }).click();
+    await t("journal-save").click();
+    await t("journal").getByText("Plan").first().waitFor({ timeout: 5_000 });
+    const [download] = await Promise.all([page.waitForEvent("download", { timeout: 10_000 }), t("journal-export").click()]);
+    const path = await download.path();
+    const csv = path ? (await import("node:fs")).readFileSync(path, "utf8") : "";
+    if (!csv.includes("Waited for the retest") || !csv.includes("Plan")) throw new Error("the CSV is missing the note or the tag");
+    await shot(page, "18d-portfolio");
+    return `${trades} closed trades, net ${await t("portfolio-net").innerText()}`;
   });
 }
 

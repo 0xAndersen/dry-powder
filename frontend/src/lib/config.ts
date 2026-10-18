@@ -26,6 +26,8 @@ export type RuntimeConfig = {
    * chain, if any (see lib/stats-file.ts). Never taken from the page address.
    */
   statsUrl: string | null;
+  /** Unix seconds the engine was deployed (from the deployment file), or null: bounds how far back history reads. */
+  deployedAt: number | null;
   /** Query parameters that replaced a configured value. Shown in the UI so a crafted link is visible. */
   overrides: string[];
 };
@@ -50,6 +52,7 @@ export const CONFIG_KEYS = [
   { env: "PYTH_API_KEY", json: "pythApiKey", query: null },
   { env: "EXPLORER_URL", json: "explorerUrl", query: "explorer" },
   { env: "STATS_URL", json: "statsUrl", query: null },
+  { env: "DEPLOYED_AT", json: "deployedAt", query: null },
 ] as const;
 
 export type ConfigEnvName = (typeof CONFIG_KEYS)[number]["env"];
@@ -178,6 +181,14 @@ export function readRuntimeConfig(raw: RawConfig, overrides: string[] = []): Run
     else problems.push(`STATS_URL must be an http(s) URL or a relative path (got "${rawStats}")`);
   }
 
+  // ISO time or unix seconds; anything else is ignored (it only bounds history reads).
+  const rawDeployed = value("DEPLOYED_AT");
+  let deployedAt: number | null = null;
+  if (rawDeployed) {
+    const n = /^\d+$/.test(rawDeployed) ? Number(rawDeployed) : Math.floor(Date.parse(rawDeployed) / 1000);
+    if (Number.isFinite(n) && n > 1_500_000_000) deployedAt = n;
+  }
+
   if (problems.length > 0) return { ok: false, problems };
   return {
     ok: true,
@@ -198,6 +209,7 @@ export function readRuntimeConfig(raw: RawConfig, overrides: string[] = []): Run
       hermesUrl,
       pythApiKey: value("PYTH_API_KEY"),
       statsUrl,
+      deployedAt,
       overrides,
     },
   };

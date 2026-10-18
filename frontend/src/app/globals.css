@@ -720,6 +720,11 @@
     background: color-mix(in srgb, var(--color-short) 7%, transparent);
   }
 
+  /* Traders you follow: a thin marker on the left edge of their rows. */
+  .feed-table tr[data-followed="true"] td:first-child {
+    box-shadow: inset 2px 0 0 var(--color-warn);
+  }
+
   .oi-bar {
     position: relative;
     flex: 1;

@@ -49,9 +49,29 @@ export function StatusSheet({ onClose }: { onClose: () => void }) {
             </div>
           ) : null}
           <div className="kv">
-            <dt>Price tape</dt>
+            <dt>Price tape (charts)</dt>
             <dd>{cfg.oracleMode === "publisher" ? `Kraken, ${feedStatus}` : `Pyth, ${feedStatus}`}</dd>
           </div>
+          {cfg.oracleMode === "publisher" ? (
+            <div className="kv">
+              <dt>On-chain prices</dt>
+              <dd className="text-right">
+                {keeper.data?.sources && keeper.data.sources.length > 1
+                  ? `Median of ${keeper.data.sources.map((x) => x[0]!.toUpperCase() + x.slice(1)).join(", ")}: one venue cannot move it`
+                  : keeper.data?.sources?.length === 1
+                    ? `${keeper.data.sources[0]![0]!.toUpperCase()}${keeper.data.sources[0]!.slice(1)}, signed by the keeper`
+                    : "Signed by the keeper from exchange prices"}
+              </dd>
+            </div>
+          ) : null}
+          {keeper.data?.sponsor ? (
+            <div className="kv">
+              <dt>Instant-trading gas</dt>
+              <dd className="num">
+                Topped up by the venue: {keeper.data.sponsor.sponsored ?? 0} top-ups for {keeper.data.sponsor.keys ?? 0} keys this run
+              </dd>
+            </div>
+          ) : null}
           <div className="kv">
             <dt>Engine</dt>
             <dd>{params ? (params.paused ? <span className="text-warn">Paused: closes only</span> : "Open") : "…"}</dd>

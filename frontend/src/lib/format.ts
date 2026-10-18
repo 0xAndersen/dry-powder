@@ -176,3 +176,13 @@ export function fmtDateTime(unixSeconds: number): string {
 export function fmtUtc(unixSeconds: number): string {
   return `${UTC_FORMAT.format(new Date(unixSeconds * 1000))} UTC`;
 }
+
+/** The browser's locale when it is a valid tag (some environments report things like "en-US@posix"), else en-GB. */
+export function safeLocale(): string {
+  try {
+    const wanted = typeof navigator === "undefined" ? "en-GB" : navigator.language;
+    return Intl.DateTimeFormat.supportedLocalesOf([wanted]).length > 0 ? wanted : "en-GB";
+  } catch {
+    return "en-GB";
+  }
+}

@@ -19,6 +19,7 @@ const config = {
   collateralIsTest: d.collateral === "test",
   krakenUrl: "https://api.kraken.com",
   explorerUrl: d.explorerUrl,
+  ...(d.deployedAt ? { deployedAt: d.deployedAt } : {}),
 };
 writeFileSync(dest, JSON.stringify(config, null, 2) + "\n");
 console.log(`wrote ${dest}`);

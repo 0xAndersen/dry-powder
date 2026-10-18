@@ -14,7 +14,7 @@ import type { AccountView } from "@/hooks/use-wallet";
 import { TEST_MINT_AMOUNT, submitClaim, submitTestMint } from "@/lib/actions";
 import { UserFacingError } from "@/lib/errors";
 import { TOKEN_DECIMALS, fmtCompact, fmtPercent, fmtUsdc, shortAddress } from "@/lib/format";
-import { valuePosition } from "@/lib/position";
+import { accountTotals } from "@/lib/account-totals";
 import { RISK_COLOR, riskTone } from "@/lib/risk-tone";
 
 function Cell({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
@@ -35,30 +35,7 @@ export function AccountBar({ view, account, loading }: { view: AccountView; acco
   const actionContext = useTradeContext();
   const sym = cfg.collateralSymbol;
 
-  const totals = useMemo(() => {
-    if (!account || !params) return null;
-    let margin = 0n;
-    let pnl = 0n;
-    let priced = true;
-    let nearest: { symbol: string; distance: number } | null = null;
-    for (const p of account.positions) {
-      margin += p.position.margin;
-      const id = p.position.priceId.toLowerCase();
-      const value = valuePosition(p, prices.get(id)?.mark ?? null, params.maxProfitMultiple);
-      if (value.pnl === null) priced = false;
-      else pnl += value.pnl;
-      const d = value.liquidatableNow ? 0 : value.liquidationDistance;
-      if (d !== null && (nearest === null || d < nearest.distance)) nearest = { symbol: byId.get(id)?.symbol ?? "Position", distance: Math.max(0, d) };
-    }
-    let escrow = 0n;
-    for (const { order } of account.orders) {
-      escrow += order.executionFee;
-      if (order.orderType !== 0) continue;
-      const brackets = (order.takeProfit !== 0n ? 1n : 0n) + (order.stopLoss !== 0n ? 1n : 0n);
-      escrow += order.margin + order.feeBudget + brackets * order.executionFee;
-    }
-    return { margin, pnl, priced, escrow, nearest, equity: account.balance + margin + escrow + pnl };
-  }, [account, prices, params, byId]);
+  const totals = useMemo(() => (account && params ? accountTotals(account, prices, params, byId) : null), [account, prices, params, byId]);
 
   const run = (label: string, action: "mint" | "claim") => {
     void tx.run(async (api) => {

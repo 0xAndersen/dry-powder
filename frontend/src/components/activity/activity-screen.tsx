@@ -4,15 +4,18 @@ import { useDeferredValue, useMemo, useRef, useState } from "react";
 import { useReadContracts } from "wagmi";
 import { AppLink } from "@/components/app-link";
 import { useApp } from "@/components/providers";
+import { FollowButton, TraderName } from "@/components/social/trader-name";
 import { Tip } from "@/components/tip";
+import { useLocalStore } from "@/hooks/use-local-store";
 import { useLogFeed } from "@/hooks/use-log-feed";
 import { useChainNow, useMarketData } from "@/hooks/use-market-data";
 import { houseVaultAbi, perpEngineAbi } from "@/lib/abi";
 import type { EngineEvent } from "@/lib/events";
 import { orderTypeLabel } from "@/lib/events";
-import { USDC_DECIMALS, fmtAge, fmtClock, fmtCompact, fmtPercent, fmtPrice, fmtUsdc, shortAddress } from "@/lib/format";
-import { groupInstruments } from "@/lib/instruments";
+import { USDC_DECIMALS, fmtAge, fmtClock, fmtCompact, fmtPercent, fmtPrice, fmtUsdc } from "@/lib/format";
+import { groupInstruments, marketSlug } from "@/lib/instruments";
 import { ratio } from "@/lib/math";
+import { follows, isFollowing } from "@/lib/social";
 
 const WINDOWS = [
   { seconds: 300, label: "5 min" },
@@ -130,9 +133,10 @@ function Figure({ label, children, tip }: { label: string; children: React.React
 
 function Trader({ address }: { address: string }) {
   return (
-    <AppLink route="trade" params={{ account: address }} className="num hover:text-accent hover:underline" title={`Watch ${address}`}>
-      {shortAddress(address)}
-    </AppLink>
+    <span className="inline-flex items-center gap-1.5">
+      <FollowButton address={address} />
+      <TraderName address={address} />
+    </span>
   );
 }
 
@@ -143,6 +147,8 @@ export function ActivityScreen() {
   const [marketFilter, setMarketFilter] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
   const [showOrders, setShowOrders] = useState(false);
+  const [followingOnly, setFollowingOnly] = useState(false);
+  const [followed] = useLocalStore(follows);
   const sym = cfg.collateralSymbol;
 
   const feed = useLogFeed({ lookbackSeconds: windowSeconds, pollMs: 1_000, maxEvents: 8_000 });
@@ -178,10 +184,11 @@ export function ActivityScreen() {
       if (e.type === "orderExecuted") continue;
       if (!showOrders && (e.type === "orderCreated" || e.type === "orderCancelled")) continue;
       if (marketFilter && (!("marketId" in e) || e.marketId !== marketFilter)) continue;
+      if (followingOnly && (!("trader" in e) || !isFollowing(followed, e.trader))) continue;
       out.push(e);
     }
     return out;
-  }, [tableEvents, marketFilter, showOrders]);
+  }, [tableEvents, marketFilter, showOrders, followingOnly, followed]);
 
   const ordered = useMemo(() => groupInstruments(instruments).flatMap((g) => g.items), [instruments]);
   const maxOi = useMemo(() => ordered.reduce((m, i) => (i.longOi > m ? i.longOi : i.shortOi > m ? i.shortOi : m), 0n), [ordered]);
@@ -262,6 +269,9 @@ export function ActivityScreen() {
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3 py-2">
             <h2 className="panel-title">Live feed</h2>
             <div className="flex items-center gap-3">
+              <button type="button" className="chip" aria-pressed={followingOnly} onClick={() => setFollowingOnly((v) => !v)} data-testid="feed-following">
+                ★ Following <span className="num ml-1 text-faint">{followed.length}</span>
+              </button>
               <label className="flex items-center gap-1.5 text-xs text-muted">
                 <input type="checkbox" className="check" checked={showOrders} onChange={(event) => setShowOrders(event.target.checked)} />
                 Order placements
@@ -273,7 +283,13 @@ export function ActivityScreen() {
           </div>
           {rows.length === 0 ? (
             <div className="px-4 py-14 text-center text-muted">
-              {status.phase === "starting" || status.pending > 0 ? "Reading block logs…" : `Nothing has traded${marketFilter ? " in this market" : ""} in the last ${fmtAge(Math.max(covered, 1))}.`}
+              {status.phase === "starting" || status.pending > 0
+                ? "Reading block logs…"
+                : followingOnly
+                  ? followed.length === 0
+                    ? "You follow nobody yet: tap the star next to a trader to follow them."
+                    : `No trades from traders you follow in the last ${fmtAge(Math.max(covered, 1))}.`
+                  : `Nothing has traded${marketFilter ? " in this market" : ""} in the last ${fmtAge(Math.max(covered, 1))}.`}
             </div>
           ) : (
             <div className="feed-scroll">
@@ -287,6 +303,9 @@ export function ActivityScreen() {
                     <th className="r">Size</th>
                     <th className="r">Price</th>
                     <th className="r">Result</th>
+                    <th className="r">
+                      <span className="sr-only">Copy</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -335,8 +354,9 @@ export function ActivityScreen() {
                       label = <span className="text-accent">Market settled</span>;
                       price = fmtPrice(e.price, dp);
                     }
+                    const lev = e.type === "open" && e.margin > 0n ? Math.max(1, Math.round(Number(e.size) / Number(e.margin))) : null;
                     return (
-                      <tr key={e.id} data-type={e.type}>
+                      <tr key={e.id} data-type={e.type} data-followed={"trader" in e && isFollowing(followed, e.trader) ? "true" : undefined}>
                         <td className="num text-muted">{fmtClock(e.time)}</td>
                         <td>
                           {label}
@@ -347,6 +367,18 @@ export function ActivityScreen() {
                         <td className="r num">{size}</td>
                         <td className="r num">{price}</td>
                         <td className="r num">{result}</td>
+                        <td className="r">
+                          {e.type === "open" && inst && lev !== null ? (
+                            <AppLink
+                              route="trade"
+                              params={{ market: marketSlug(inst), side: e.isLong ? "long" : "short", lev: String(lev), account: null }}
+                              className="text-xs text-muted hover:text-accent"
+                              title={`Open the ticket with ${inst.symbol} ${e.isLong ? "long" : "short"} at ${lev}x; you choose the size`}
+                            >
+                              Copy
+                            </AppLink>
+                          ) : null}
+                        </td>
                       </tr>
                     );
                   })}
