@@ -24,8 +24,9 @@ import {Base} from "./Base.t.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 
 /// @dev Drives the protocol with random but well-formed actions from a fixed set of actors: plain, cross and
-///      dated markets, all four order types, liquidations, market and position settlement, epoch settlement,
-///      staking, LP flows and USDC blocklisting.
+///      dated markets, every order type (limit and stop-entry opens, sized take-profit / stop-loss / close),
+///      increases, partial closes, margin top-ups, liquidations, market and position settlement, epoch
+///      settlement, staking, LP flows and USDC blocklisting.
 contract Handler is Test {
     MockUSDC internal usdc;
     MockPyth internal pyth;
@@ -63,6 +64,10 @@ contract Handler is Test {
     uint256 public yieldSettled;
     uint256 public deferrals;
     uint256 public claims;
+    uint256 public increases;
+    uint256 public partialCloses;
+    uint256 public marginAdds;
+    uint256 public stopEntries;
 
     constructor(
         MockUSDC usdc_,
@@ -156,9 +161,12 @@ contract Handler is Test {
             takeProfit: brackets & 1 != 0 ? (isLong ? price + price / 50 : price - price / 50) : 0,
             stopLoss: brackets & 2 != 0 ? (isLong ? price - price / 200 : price + price / 200) : 0
         });
-        vm.prank(_actor(actorSeed));
+        address actor = _actor(actorSeed);
+        bool existed = engine.getPosition(actor, id).trader != address(0);
+        vm.prank(actor);
         try engine.openPosition(p, new bytes[](0)) {
             ++opens;
+            if (existed) ++increases;
         } catch {}
     }
 
@@ -166,22 +174,28 @@ contract Handler is Test {
         address actor = _actor(actorSeed);
         uint256 owed = engine.claimable(actor);
         vm.prank(actor);
-        try engine.closePosition(_id(marketSeed), 0, new bytes[](0)) {
+        try engine.closePosition(_id(marketSeed), 0, 0, new bytes[](0)) {
             ++closes;
             if (engine.claimable(actor) != owed) ++deferrals;
         } catch {}
     }
 
-    function createLimit(uint256 actorSeed, uint256 marketSeed, bool isLong, uint256 margin, uint256 leverage, bool mkt)
-        external
-        tick
-    {
+    function createLimit(
+        uint256 actorSeed,
+        uint256 marketSeed,
+        bool isLong,
+        uint256 margin,
+        uint256 leverage,
+        bool mkt,
+        bool stopEntry
+    ) external tick {
         bytes32 id = _id(marketSeed);
         uint256 price = _mid(id);
         if (price == 0) return;
         margin = bound(margin, 5e6, 5_000e6);
-        // Either a resting limit 1% away, or a marketable one (the keeper-executed market order).
-        uint256 trigger = isLong == mkt ? price + price / 100 : price - price / 100;
+        // A limit: resting 1% away, or marketable (the keeper-executed market order). A stop-entry: waiting 1%
+        // beyond the market in the breakout direction, or already through it.
+        uint256 trigger = (isLong == mkt) != stopEntry ? price + price / 100 : price - price / 100;
         LimitParams memory p = LimitParams({
             priceId: id,
             isLong: isLong,
@@ -189,21 +203,53 @@ contract Handler is Test {
             size: margin * bound(leverage, 1, 100),
             triggerPrice: trigger,
             takeProfit: 0,
-            stopLoss: isLong ? trigger - trigger / 50 : trigger + trigger / 50
+            stopLoss: isLong ? trigger - trigger / 50 : trigger + trigger / 50,
+            stopEntry: stopEntry
         });
         vm.prank(_actor(actorSeed));
-        try engine.createLimitOrder(p) {} catch {}
+        try engine.createLimitOrder(p) {
+            if (stopEntry) ++stopEntries;
+        } catch {}
     }
 
-    function setTrigger(uint256 actorSeed, uint256 marketSeed, uint8 kind, uint256 offsetBps) external tick {
+    /// @dev Take-profit, stop-loss or close of the whole position or of a random part of it.
+    function setTrigger(uint256 actorSeed, uint256 marketSeed, uint8 kind, uint256 offsetBps, uint256 partBps)
+        external
+        tick
+    {
         bytes32 id = _id(marketSeed);
         uint256 price = _mid(id);
         OrderType orderType = OrderType(1 + (kind % 3));
         uint256 trigger = (price * (9_500 + bound(offsetBps, 0, 1_000))) / 10_000;
         // Half of the Close orders are unbounded.
         if (orderType == OrderType.Close && offsetBps % 2 == 0) trigger = 0;
-        vm.prank(_actor(actorSeed));
-        try engine.setTriggerOrder(id, orderType, trigger) {} catch {}
+        address actor = _actor(actorSeed);
+        uint256 size = (engine.getPosition(actor, id).size * bound(partBps, 0, 12_000)) / 10_000;
+        vm.prank(actor);
+        try engine.setTriggerOrder(id, orderType, trigger, size) {} catch {}
+    }
+
+    /// @dev Closes part of a position (sometimes all of it, sometimes so much that the rest would be too small).
+    function closePart(uint256 actorSeed, uint256 marketSeed, uint256 partBps) external tick {
+        address actor = _actor(actorSeed);
+        bytes32 id = _id(marketSeed);
+        Position memory pos = engine.getPosition(actor, id);
+        if (pos.trader == address(0)) return;
+        uint256 size = (pos.size * bound(partBps, 1, 10_000)) / 10_000;
+        vm.prank(actor);
+        try engine.closePosition(id, size, 0, new bytes[](0)) {
+            if (engine.getPosition(actor, id).trader != address(0)) ++partialCloses;
+            else ++closes;
+        } catch {}
+    }
+
+    /// @dev Tops up margin (refused while the position is in profit, or below 1x leverage).
+    function addMargin(uint256 actorSeed, uint256 marketSeed, uint256 amount) external tick {
+        address actor = _actor(actorSeed);
+        vm.prank(actor);
+        try engine.addMargin(_id(marketSeed), bound(amount, 1, 5_000e6)) {
+            ++marginAdds;
+        } catch {}
     }
 
     /// @dev Cancelling one's own order must always succeed, whatever the state of the market or of USDC.
@@ -491,7 +537,7 @@ contract InvariantTest is Base {
         uint256 triggers;
         for (uint256 i; i < orders.length; ++i) {
             assertLt(orderIds[i], engine.nextOrderId());
-            if (orders[i].orderType == OrderType.LimitOpen) {
+            if (orders[i].orderType == OrderType.LimitOpen || orders[i].orderType == OrderType.StopOpen) {
                 assertGt(orders[i].margin, 0);
                 continue;
             }
@@ -573,10 +619,19 @@ contract InvariantTest is Base {
         handler.open(1, 3, true, 1_000e6, 10, 0); // bob future long
         handler.open(2, 3, false, 50e6, 100, 0); // carol future short, 100x
         assertEq(handler.opens(), 5);
-        handler.createLimit(2, 0, true, 1_000e6, 5, true); // carol marketable BTC long
-        handler.setTrigger(1, 1, 2, 0); // bob unbounded Close on ETH
+        handler.createLimit(2, 0, true, 1_000e6, 5, true, false); // carol marketable BTC long
+        handler.setTrigger(1, 1, 2, 0, 0); // bob unbounded Close on ETH
         handler.executeOrders();
         assertEq(handler.fills(), 2);
+        handler.open(2, 0, true, 500e6, 4, 0); // carol adds to her BTC long
+        assertEq(handler.increases(), 1);
+        handler.closePart(2, 0, 3_000); // ... and closes 30% of it
+        assertEq(handler.partialCloses(), 1);
+        handler.setTrigger(2, 0, 0, 900, 5_000); // a take-profit on half of what is left
+        handler.addMargin(2, 0, 100e6); // the position is flat or under water after fees: allowed
+        assertEq(handler.marginAdds(), 1);
+        handler.createLimit(1, 0, true, 500e6, 5, false, true); // bob: stop-entry long 1% above BTC
+        assertEq(handler.stopEntries(), 1);
         handler.movePrice(0, -150, 10); // BTC -1.5%: alice is liquidated
         assertEq(handler.liquidations(), 1);
         handler.setBlocklisted(2, true);

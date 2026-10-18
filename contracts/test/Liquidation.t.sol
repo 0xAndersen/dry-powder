@@ -19,13 +19,13 @@ contract LiquidationTest is Base {
         _setBtc(99_101); // loss 899 < 900
         vm.prank(keeper);
         vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
-        engine.liquidate(alice);
+        _liquidate(alice);
 
         _setBtc(99_100); // loss 900
         vm.expectEmit(address(engine));
         emit PerpEngine.PositionLiquidated(key, alice, keeper, BTC, 99_100e18, 1_000e6, 20e6, 980e6);
         vm.prank(keeper);
-        assertEq(engine.liquidate(alice), 1);
+        assertEq(_liquidate(alice), 1);
     }
 
     function test_liquidation_distribution() public {
@@ -36,7 +36,7 @@ contract LiquidationTest is Base {
         _setBtc(99_000);
 
         vm.prank(keeper);
-        engine.liquidate(alice);
+        _liquidate(alice);
 
         // 2% of margin to the liquidator.
         assertEq(usdc.balanceOf(keeper), 20e6);
@@ -62,10 +62,10 @@ contract LiquidationTest is Base {
         _setEth(4_071);
         vm.prank(keeper);
         vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
-        engine.liquidate(alice);
+        _liquidate(alice);
         _setEth(4_072);
         vm.prank(keeper);
-        engine.liquidate(alice);
+        _liquidate(alice);
         assertEq(usdc.balanceOf(keeper), 20e6);
     }
 
@@ -76,11 +76,11 @@ contract LiquidationTest is Base {
 
         vm.prank(keeper);
         vm.expectRevert(PerpEngine.InsufficientOracleFee.selector);
-        engine.liquidate(alice, update);
+        engine.liquidateBatch(_traderKeys(alice), update);
 
         uint256 nativeBefore = keeper.balance;
         vm.prank(keeper);
-        assertEq(engine.liquidate{value: 1_000}(alice, update), 1);
+        assertEq(engine.liquidateBatch{value: 1_000}(_traderKeys(alice), update), 1);
         assertEq(nativeBefore - keeper.balance, PYTH_FEE);
         assertEq(address(engine).balance, 0);
         assertEq(usdc.balanceOf(keeper), 20e6);
@@ -92,7 +92,7 @@ contract LiquidationTest is Base {
         skip(4);
         vm.prank(keeper);
         vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
-        engine.liquidate(alice);
+        _liquidate(alice);
         assertEq(engine.positionCount(), 1);
     }
 
@@ -105,7 +105,7 @@ contract LiquidationTest is Base {
         _setPrice(EUR, 110_000, 0, -5);
 
         vm.prank(keeper);
-        assertEq(engine.liquidate(alice), 2);
+        assertEq(_liquidate(alice), 2);
         assertEq(usdc.balanceOf(keeper), 20e6 + 40e6);
         assertEq(engine.positionCount(), 1);
         assertEq(engine.getPosition(alice, EUR).trader, alice);
@@ -118,7 +118,7 @@ contract LiquidationTest is Base {
         skip(3);
         _setBtc(99_000); // ETH's price is now 4 seconds old
         vm.prank(keeper);
-        assertEq(engine.liquidate(alice), 1);
+        assertEq(_liquidate(alice), 1);
         assertEq(engine.getPosition(alice, ETH).trader, alice);
     }
 
@@ -182,7 +182,7 @@ contract LiquidationTest is Base {
         uint256 navBefore = vault.totalHouseBalance();
         _setBtc(95_000); // -5% at 100x: the loss is 5x the margin
         vm.prank(keeper);
-        engine.liquidate(alice);
+        _liquidate(alice);
         // The house is the counterparty, so the un-collectable part is simply profit it does not book.
         assertEq(vault.totalHouseBalance(), navBefore + 980e6);
         assertEq(vault.totalShortfall(), 0);
@@ -278,7 +278,7 @@ contract LiquidationTest is Base {
         uint256 before = usdc.balanceOf(alice);
         _setBtc(99_000);
         vm.prank(alice);
-        engine.liquidate(alice);
+        _liquidate(alice);
         // She recovers only the 2% keeper fee of a margin she has otherwise lost.
         assertEq(usdc.balanceOf(alice), before + 20e6);
     }
@@ -328,9 +328,9 @@ contract LiquidationPriceTest is Base {
         // The engine agrees on both sides of that price.
         _setPrice(BTC, int64(uint64(liq / 1e10 + 1e8)), 0, -8);
         vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
-        engine.liquidate(alice);
+        _liquidate(alice);
         _setPrice(BTC, int64(uint64(liq / 1e10 - 1e8)), 0, -8);
         vm.prank(keeper);
-        assertEq(engine.liquidate(alice), 1);
+        assertEq(_liquidate(alice), 1);
     }
 }

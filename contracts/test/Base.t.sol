@@ -213,7 +213,7 @@ abstract contract Base is Test {
 
     function _close(address who, bytes32 id) internal {
         vm.prank(who);
-        engine.closePosition(id, 0, _noBytes());
+        engine.closePosition(id, 0, 0, _noBytes());
     }
 
     function _limit(bytes32 id, bool isLong, uint256 margin, uint256 size, uint256 trigger)
@@ -222,8 +222,42 @@ abstract contract Base is Test {
         returns (LimitParams memory)
     {
         return LimitParams({
-            priceId: id, isLong: isLong, margin: margin, size: size, triggerPrice: trigger, takeProfit: 0, stopLoss: 0
+            priceId: id,
+            isLong: isLong,
+            margin: margin,
+            size: size,
+            triggerPrice: trigger,
+            takeProfit: 0,
+            stopLoss: 0,
+            stopEntry: false
         });
+    }
+
+    /// @dev A stop-entry (breakout) order: a long fills once the ask is at or above `trigger`, a short once the
+    ///      bid is at or below it.
+    function _stopEntry(bytes32 id, bool isLong, uint256 margin, uint256 size, uint256 trigger)
+        internal
+        pure
+        returns (LimitParams memory p)
+    {
+        p = _limit(id, isLong, margin, size, trigger);
+        p.stopEntry = true;
+    }
+
+    /// @dev Keys of `who`'s positions in the fixture's six markets, computed here (no external call, so a
+    ///      preceding `vm.prank` or `vm.expectRevert` still applies to the engine call that uses them).
+    function _traderKeys(address who) internal pure returns (bytes32[] memory keys) {
+        bytes32[6] memory ids = [BTC, ETH, EUR, JPY, ETHBTC, FUT];
+        keys = new bytes32[](6);
+        for (uint256 i; i < 6; ++i) {
+            keys[i] = keccak256(abi.encode(who, ids[i]));
+        }
+    }
+
+    /// @dev Liquidates whatever of `who`'s positions qualifies at the prices on-chain; reverts with
+    ///      {PerpEngine.NothingToLiquidate} when none does.
+    function _liquidate(address who) internal returns (uint256) {
+        return engine.liquidateBatch(_traderKeys(who), _noBytes());
     }
 
     function _exec(uint256 orderId) internal {

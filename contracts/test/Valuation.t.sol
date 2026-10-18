@@ -102,7 +102,7 @@ contract ValuationTest is Base {
         _setBtc(90_000);
         assertEq(engine.unrealizedTraderPnl(), -1_000e6); // ten times her margin
         vm.prank(keeper);
-        engine.liquidate(alice);
+        _liquidate(alice);
         assertEq(engine.unrealizedTraderPnl(), 0);
         assertEq(engine.getPositionByKey(key).trader, address(0));
 

@@ -131,7 +131,7 @@ contract PullPaymentsTest is Base {
     function test_blocklisted_closeOrder() public {
         _open(alice, BTC, true, 1_000e6, 10_000e6);
         vm.prank(alice);
-        uint256 id = engine.setTriggerOrder(BTC, OrderType.Close, 0);
+        uint256 id = engine.setTriggerOrder(BTC, OrderType.Close, 0, 0);
         _blocklist(alice);
         _setBtc(100_000);
         _exec(id);
@@ -181,7 +181,7 @@ contract PullPaymentsTest is Base {
     function test_blocklisted_cancelTriggerOrder() public {
         _open(alice, BTC, true, 1_000e6, 10_000e6);
         vm.prank(alice);
-        uint256 id = engine.setTriggerOrder(BTC, OrderType.StopLoss, 99_000e18);
+        uint256 id = engine.setTriggerOrder(BTC, OrderType.StopLoss, 99_000e18, 0);
         _blocklist(alice);
         vm.prank(alice);
         engine.cancelOrder(id);
@@ -286,7 +286,7 @@ contract PullPaymentsTest is Base {
         vm.expectEmit(address(s.engine));
         emit PerpEngine.PaymentDeferred(alice, 1_095e6);
         vm.prank(alice);
-        s.engine.closePosition(BTC, 0, _noBytes());
+        s.engine.closePosition(BTC, 0, 0, _noBytes());
         assertEq(s.engine.positionCount(), 0);
         assertEq(s.engine.claimable(alice), 1_095e6);
         assertEq(s.token.balanceOf(address(s.engine)), 1_095e6);
@@ -314,7 +314,7 @@ contract PullPaymentsTest is Base {
         s.token.setNoReturnData(true);
         _setBtc(101_000);
         vm.prank(alice);
-        s.engine.closePosition(BTC, 0, _noBytes());
+        s.engine.closePosition(BTC, 0, 0, _noBytes());
         assertEq(s.engine.claimable(alice), 0);
         assertEq(s.token.balanceOf(alice), 10_000e6 + 90e6);
         assertEq(s.token.balanceOf(address(s.engine)), 0);

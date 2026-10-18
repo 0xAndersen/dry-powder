@@ -197,7 +197,7 @@ contract RegressionsTest is Base {
 
         vm.startPrank(carol);
         vault.deposit(9_000_000e6, carol);
-        engine.liquidate(alice);
+        _liquidate(alice);
         vm.stopPrank();
 
         skip(LOCK);
@@ -242,7 +242,7 @@ contract RegressionsTest is Base {
 
         _setBtc(79_000); // stop-loss level reached, position far from liquidation
         vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
-        engine.liquidate(alice);
+        _liquidate(alice);
 
         // The keeper executes her stop. v1: reverted with Blocklisted(alice).
         _exec(slId);
@@ -273,7 +273,7 @@ contract RegressionsTest is Base {
         uint256 before = _bal(carol);
         vm.startPrank(carol);
         house.stake(99_000e18);
-        engine.liquidate(alice);
+        _liquidate(alice);
         uint256 toStakers = vault.settleEpoch();
         vm.expectRevert(RewardToken.NothingToClaim.selector);
         house.claimYield();

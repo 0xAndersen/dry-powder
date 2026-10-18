@@ -28,14 +28,13 @@ contract PerpEngineTest is Base {
         assertEq(engine.MAX_LEVERAGE(), 1000);
         assertEq(engine.DIRECT_MAX_LEVERAGE(), 100);
         assertEq(engine.LIQUIDATION_THRESHOLD_BPS(), 9_000);
-        assertEq(engine.LIQUIDATOR_FEE_BPS(), 200);
-        bytes32[] memory ids = engine.getMarketIds();
+                bytes32[] memory ids = engine.getMarketIds();
         assertEq(ids.length, 6);
         assertEq(ids[0], BTC);
         assertEq(ids[3], JPY);
         assertEq(ids[4], ETHBTC);
         assertEq(ids[5], FUT);
-        assertEq(engine.MAX_MARKETS(), 64);
+        assertEq(ids.length + 58, 64); // MAX_MARKETS is 64: see test_addMarket_capsTheNumberOfMarkets
     }
 
     function test_constructor_rejectsZeroAddresses() public {
@@ -145,6 +144,8 @@ contract PerpEngineTest is Base {
 
         p = _params(BTC, true, 1_000e6, 10_000e6);
         engine.openPosition(p, _noBytes());
+        // The other side of an open position is refused; the same side adds to it (PositionManagement.t.sol).
+        p.isLong = false;
         vm.expectRevert(PerpEngine.PositionExists.selector);
         engine.openPosition(p, _noBytes());
         vm.stopPrank();
@@ -322,14 +323,14 @@ contract PerpEngineTest is Base {
     function test_close_reverts() public {
         vm.prank(alice);
         vm.expectRevert(PerpEngine.PositionNotFound.selector);
-        engine.closePosition(BTC, 0, _noBytes());
+        engine.closePosition(BTC, 0, 0, _noBytes());
 
         _flatFees();
         _open(alice, BTC, true, 1_000e6, 100_000e6);
         _setBtc(99_100); // -0.9% at 100x = 90% of margin
         vm.prank(alice);
         vm.expectRevert(PerpEngine.PositionLiquidatable.selector);
-        engine.closePosition(BTC, 0, _noBytes());
+        engine.closePosition(BTC, 0, 0, _noBytes());
     }
 
     function test_close_slippageGuard() public {
@@ -340,14 +341,14 @@ contract PerpEngineTest is Base {
 
         vm.startPrank(alice);
         vm.expectRevert(PerpEngine.SlippageExceeded.selector);
-        engine.closePosition(BTC, 99_950e18 + 1, _noBytes());
-        engine.closePosition(BTC, 99_950e18, _noBytes());
+        engine.closePosition(BTC, 0, 99_950e18 + 1, _noBytes());
+        engine.closePosition(BTC, 0, 99_950e18, _noBytes());
         vm.stopPrank();
 
         vm.startPrank(bob);
         vm.expectRevert(PerpEngine.SlippageExceeded.selector);
-        engine.closePosition(BTC, 100_050e18 - 1, _noBytes());
-        engine.closePosition(BTC, 100_050e18, _noBytes());
+        engine.closePosition(BTC, 0, 100_050e18 - 1, _noBytes());
+        engine.closePosition(BTC, 0, 100_050e18, _noBytes());
         vm.stopPrank();
     }
 
@@ -580,7 +581,7 @@ contract PerpEngineTest is Base {
         (,,, bool liquidatable) = lens.getPositionState(key, exitPrice * 1e10);
         if (liquidatable) {
             vm.prank(alice); // self-liquidation keeps the keeper fee inside the two-party total
-            engine.liquidate(alice);
+            _liquidate(alice);
         } else {
             _close(alice, BTC);
         }

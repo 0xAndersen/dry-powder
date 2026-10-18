@@ -14,7 +14,7 @@ contract CloseOrdersTest is Base {
 
     function _closeOrder(address who, bytes32 id, uint256 bound_) internal returns (uint256) {
         vm.prank(who);
-        return engine.setTriggerOrder(id, OrderType.Close, bound_);
+        return engine.setTriggerOrder(id, OrderType.Close, bound_, 0);
     }
 
     function test_closeOrder_create() public {
@@ -49,7 +49,7 @@ contract CloseOrdersTest is Base {
     function test_closeOrder_requiresAPosition() public {
         vm.prank(alice);
         vm.expectRevert(PerpEngine.PositionNotFound.selector);
-        engine.setTriggerOrder(BTC, OrderType.Close, 0);
+        engine.setTriggerOrder(BTC, OrderType.Close, 0, 0);
     }
 
     function test_closeOrder_moveIsFreeAndKeepsTheOrder() public {
@@ -243,7 +243,7 @@ contract CloseOrdersTest is Base {
         vm.expectEmit(address(engine));
         emit PerpEngine.OrderCancelled(id, alice);
         vm.prank(keeper);
-        engine.liquidate(alice);
+        _liquidate(alice);
         assertEq(usdc.balanceOf(alice), before); // nothing back, not even the order's escrow
         assertEq(usdc.balanceOf(keeper), 2e6); // the liquidation fee only
         assertEq(vault.totalFeesCollected(), 5e6 + EXEC_FEE);

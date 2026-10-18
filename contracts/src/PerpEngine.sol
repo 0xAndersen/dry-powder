@@ -75,20 +75,22 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
     uint256 public constant MARGIN_FEE_CAP_BPS = 1_000;
     /// @notice A position is liquidated once its loss (price move plus funding) reaches this share of margin.
     uint256 public constant LIQUIDATION_THRESHOLD_BPS = PositionMath.LIQUIDATION_THRESHOLD_BPS;
-    /// @notice Share of the liquidated margin paid to the liquidator; the remainder goes to the vault.
-    uint256 public constant LIQUIDATOR_FEE_BPS = 200;
+    // Bounds on what the owner can set. Internal (no getters) to keep the engine under the EIP-170 size limit;
+    // they are fixed in this source and documented in SECURITY.md.
 
-    uint256 public constant MAX_BASE_FEE_BPS = 50;
-    uint256 public constant MAX_SKEW_FEE_BPS = 100;
-    /// @notice Ceiling for the full-skew funding rate: 1000% of notional per year.
-    uint256 public constant MAX_FUNDING_RATE_PER_SECOND = 317_097_919_837;
-    uint256 public constant MAX_EXECUTION_FEE = 10e6;
-    uint256 public constant MAX_PRICE_AGE = 60;
-    uint256 public constant MAX_CONF_BPS = 500;
-    /// @notice Bounds for `maxOiToNavBps` (0.5x to 10x of NAV).
-    uint256 public constant MIN_OI_TO_NAV_BPS = 5_000;
-    uint256 public constant MAX_OI_TO_NAV_BPS = 100_000;
-    uint256 public constant MAX_MARKETS = 64;
+    /// @dev Share of the liquidated margin paid to the liquidator; the remainder goes to the vault.
+    uint256 internal constant LIQUIDATOR_FEE_BPS = 200;
+    uint256 internal constant MAX_BASE_FEE_BPS = 50;
+    uint256 internal constant MAX_SKEW_FEE_BPS = 100;
+    /// @dev Ceiling for the full-skew funding rate: 1000% of notional per year.
+    uint256 internal constant MAX_FUNDING_RATE_PER_SECOND = 317_097_919_837;
+    uint256 internal constant MAX_EXECUTION_FEE = 10e6;
+    uint256 internal constant MAX_PRICE_AGE = 60;
+    uint256 internal constant MAX_CONF_BPS = 500;
+    /// @dev Bounds for `maxOiToNavBps` (0.5x to 10x of NAV).
+    uint256 internal constant MIN_OI_TO_NAV_BPS = 5_000;
+    uint256 internal constant MAX_OI_TO_NAV_BPS = 100_000;
+    uint256 internal constant MAX_MARKETS = 64;
 
     // ───────────────────────────── Immutables ─────────────────────────────
 
@@ -447,7 +449,9 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
     ///         its leverage and moving its liquidation price away. Works while paused.
     /// @dev Refused with {PositionInProfit} while the position's PnL after funding is above zero at the last price
     ///      on-chain, however old (with no usable price at all it is allowed): margin added to a winner would lift
-    ///      its profit cap. Leverage can be brought down to 1x, not below ({LeverageOutOfRange}).
+    ///      its profit cap. Leverage can be brought down to 1x, not below ({LeverageOutOfRange}). Restarts
+    ///      `openedAt` like an increase: margin can bring a keeper-only position under `DIRECT_MAX_LEVERAGE`, and
+    ///      the direct close that then becomes possible must not use a price from before the top-up.
     function addMargin(bytes32 marketId, uint256 amount) external nonReentrant {
         bytes32 key = positionKey(msg.sender, marketId);
         Position storage pos = _positions[key];
@@ -456,9 +460,11 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         _accrueFunding(m);
         (PriceStatus status, OraclePrice memory px) = _peekPrice(m, type(uint256).max);
         if (status == PriceStatus.Ok && PositionMath.pnl(pos, px.mid, m.fundingIndex) > 0) revert PositionInProfit();
+        if (amount == 0) revert InvalidParam();
         uint256 margin = pos.margin + amount;
         if (margin > pos.size) revert LeverageOutOfRange();
         pos.margin = margin;
+        pos.openedAt = uint64(block.timestamp);
         emit MarginAdded(key, msg.sender, amount, margin);
         usdc.safeTransferFrom(msg.sender, address(this), amount);
     }
