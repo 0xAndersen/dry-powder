@@ -9,10 +9,6 @@ name: Deploy add-ons to Arc Testnet
 on:
   workflow_dispatch:
 
-concurrency:
-  group: deploy-arc-testnet
-  cancel-in-progress: false
-
 permissions:
   contents: write
   pages: write
@@ -21,6 +17,11 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Only this job holds the lock on deployments/arc-testnet.json. The keeper job a run starts lasts for hours
+    # (until the next run's keeper replaces it), so a workflow-wide lock would hold every later deploy back.
+    concurrency:
+      group: arc-testnet-deployment-file
+      cancel-in-progress: false
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

@@ -14,10 +14,6 @@ on:
         description: Minutes the cohort trades
         default: "30"
 
-concurrency:
-  group: deploy-arc-testnet
-  cancel-in-progress: false
-
 permissions:
   contents: write
   pages: write
@@ -26,6 +22,11 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Only this job holds the lock on deployments/arc-testnet.json. The keeper job a run starts lasts for hours
+    # (until the next run's keeper replaces it), so a workflow-wide lock would hold every later deploy back.
+    concurrency:
+      group: arc-testnet-deployment-file
+      cancel-in-progress: false
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
