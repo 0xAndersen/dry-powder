@@ -70,7 +70,7 @@ jobs:
       - name: UI run with the production keeper
         working-directory: frontend
         run: e2e/with-keeper.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: e2e

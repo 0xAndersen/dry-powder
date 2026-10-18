@@ -55,7 +55,7 @@ jobs:
         run: |
           cd keeper && npm ci && cd ..
           node keeper/scripts/finish-deploy.mjs ops/output-testnet/addresses.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: testnet-run
