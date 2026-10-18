@@ -29,7 +29,7 @@ jobs:
         run: |
           if test -f deployments/arc-testnet.json; then echo "ok=true" >> "$GITHUB_OUTPUT"
           else echo "No deployments/arc-testnet.json yet. Run the Deploy to Arc Testnet workflow first."; fi
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.dep.outputs.ok == 'true'
         with:
           node-version: 22
