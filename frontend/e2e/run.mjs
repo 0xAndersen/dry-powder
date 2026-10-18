@@ -28,7 +28,13 @@ async function step(name, fn) {
     log("e2e", `ok    ${name}${note ? `  (${note})` : ""}  ${((Date.now() - started) / 1000).toFixed(1)}s`);
     return true;
   } catch (error) {
-    results.push({ name, ok: false, error: String(error?.message ?? error).split("\n").slice(0, 3).join(" | ") });
+    // What the app said, if anything (a failed transaction shows as an alert): CI keeps only this line.
+    const said = await page
+      .locator('[role="alert"]')
+      .allInnerTexts()
+      .then((texts) => texts.map((x) => x.trim()).filter(Boolean).slice(0, 2).join(" / "))
+      .catch(() => "");
+    results.push({ name, ok: false, error: String(error?.message ?? error).split("\n").slice(0, 3).join(" | ") + (said ? ` | app: ${said.slice(0, 300)}` : "") });
     log("e2e", `FAIL  ${name} :: ${results[results.length - 1].error}`);
     await page.screenshot({ path: join(SHOTS, `fail-${results.length}.png`) }).catch(() => {});
     return false;

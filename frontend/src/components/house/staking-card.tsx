@@ -2,7 +2,6 @@
 
 import { useId, useState } from "react";
 import { useConfig, useConnect, useReadContracts, useSwitchChain } from "wagmi";
-import { simulateContract, writeContract } from "wagmi/actions";
 import { useApp } from "@/components/providers";
 import type { HouseStats } from "@/components/house/house-screen";
 import { TxStatus } from "@/components/tx-status";
@@ -12,6 +11,7 @@ import { rewardTokenAbi } from "@/lib/abi";
 import { useChainNow } from "@/hooks/use-market-data";
 import { TOKEN_DECIMALS, fmtDuration, fmtPercent, fmtToken, fmtUsdc, parseAmount, toInputString } from "@/lib/format";
 import { ONE, ratio } from "@/lib/math";
+import { walletWrite } from "@/lib/wallet-write";
 
 type Mode = "stake" | "unstake";
 
@@ -88,15 +88,7 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
     if (blocking || !who || !wallet.ready || amount === null || amount === 0n) return;
     const ok = await tx.run(async (api) => {
       const label = isStake ? "Stake DRY" : "Unstake DRY";
-      await api.send(label, async () => {
-        const { request } = await simulateContract(wagmiConfig, {
-          ...reward,
-          functionName: isStake ? "stake" : "unstake",
-          args: [amount],
-          account: who,
-        });
-        return writeContract(wagmiConfig, request);
-      });
+      await api.send(label, () => walletWrite(wagmiConfig, { ...reward, functionName: isStake ? "stake" : "unstake", args: [amount], account: who }));
       return isStake
         ? `Staked ${fmtToken(amount)} DRY. It earns its share of the yield stream from now on.`
         : `Unstaked ${fmtToken(amount)} DRY. Yield earned so far stays claimable.`;
@@ -108,14 +100,7 @@ export function StakingCard({ stats }: { stats: HouseStats | undefined }) {
     const who = wallet.address;
     if (!who || !wallet.ready || !earned || tx.busy) return;
     void tx.run(async (api) => {
-      await api.send("Claim yield", async () => {
-        const { request } = await simulateContract(wagmiConfig, {
-          ...reward,
-          functionName: "claimYield",
-          account: who,
-        });
-        return writeContract(wagmiConfig, request);
-      });
+      await api.send("Claim yield", () => walletWrite(wagmiConfig, { ...reward, functionName: "claimYield", account: who }));
       return `Claimed ${fmtUsdc(earned, 6)} ${sym} of staking yield.`;
     });
   };

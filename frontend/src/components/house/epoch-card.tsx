@@ -1,7 +1,6 @@
 "use client";
 
 import { useConfig } from "wagmi";
-import { simulateContract, writeContract } from "wagmi/actions";
 import { useAppConfig } from "@/components/providers";
 import { Tip } from "@/components/tip";
 import { TxStatus } from "@/components/tx-status";
@@ -12,6 +11,7 @@ import { useWallet } from "@/hooks/use-wallet";
 import { houseVaultAbi } from "@/lib/abi";
 import { fmtDuration, fmtPercent, fmtUsdc } from "@/lib/format";
 import { BPS } from "@/lib/math";
+import { walletWrite } from "@/lib/wallet-write";
 
 const HWM_PRECISION = 10n ** 30n;
 
@@ -53,16 +53,9 @@ export function EpochCard({ stats }: { stats: HouseStats | undefined }) {
     const who = wallet.address;
     if (!who || !wallet.ready) return;
     void tx.run(async (api) => {
-      await api.send("Settle epoch", async () => {
-        const { request } = await simulateContract(wagmiConfig, {
-          abi: houseVaultAbi,
-          address: cfg.houseVault,
-          functionName: "settleEpoch",
-          account: who,
-          chainId: cfg.chainId,
-        });
-        return writeContract(wagmiConfig, request);
-      });
+      // Headroom: settling streams yield only when the house is above its mark at inclusion, which costs more gas
+      // than the estimate taken a moment earlier may have seen.
+      await api.send("Settle epoch", () => walletWrite(wagmiConfig, { abi: houseVaultAbi, address: cfg.houseVault, functionName: "settleEpoch", account: who, chainId: cfg.chainId }));
       return toStakers > 0n
         ? `Epoch settled: about ${fmtUsdc(toStakers)} ${sym} now streams to DRY stakers.`
         : aboveMark > 0n

@@ -2,7 +2,6 @@
 
 import { useId, useState } from "react";
 import { useConfig, useConnect, useReadContract, useReadContracts, useSwitchChain } from "wagmi";
-import { simulateContract, writeContract } from "wagmi/actions";
 import { useApp } from "@/components/providers";
 import type { HouseStats } from "@/components/house/house-screen";
 import { TxStatus } from "@/components/tx-status";
@@ -15,6 +14,7 @@ import { erc20Abi } from "@/lib/abis-extra";
 import { ensureAllowance } from "@/lib/actions";
 import { UserFacingError } from "@/lib/errors";
 import { USDC_DECIMALS, fmtDuration, fmtToken, fmtUsdc, parseAmount, toInputString } from "@/lib/format";
+import { walletWrite } from "@/lib/wallet-write";
 
 type Mode = "deposit" | "withdraw";
 
@@ -155,40 +155,16 @@ export function VaultCard({ stats }: { stats: HouseStats | undefined }) {
         if (!ctx) throw new UserFacingError("Connect your wallet first.");
         // The vault is approved for exactly what is deposited.
         await ensureAllowance({ ...ctx, approveUnlimited: false }, cfg.houseVault, amount);
-        await api.send(`Deposit ${sym}`, async () => {
-          const { request } = await simulateContract(wagmiConfig, {
-            ...vault,
-            functionName: "deposit",
-            // The vault only accepts deposits credited to the caller.
-            args: [amount, who],
-            account: who,
-          });
-          return writeContract(wagmiConfig, request);
-        });
+        // The vault only accepts deposits credited to the caller.
+        await api.send(`Deposit ${sym}`, () => walletWrite(wagmiConfig, { ...vault, functionName: "deposit", args: [amount, who], account: who }));
         return `Deposited ${fmtUsdc(amount)} ${sym} into the house vault.`;
       }
       if (redeemAll && maxRedeem !== undefined) {
         // Redeeming by shares empties the position exactly, with no dust left from rounding.
-        await api.send(`Withdraw ${sym}`, async () => {
-          const { request } = await simulateContract(wagmiConfig, {
-            ...vault,
-            functionName: "redeem",
-            args: [maxRedeem, who, who],
-            account: who,
-          });
-          return writeContract(wagmiConfig, request);
-        });
+        await api.send(`Withdraw ${sym}`, () => walletWrite(wagmiConfig, { ...vault, functionName: "redeem", args: [maxRedeem, who, who], account: who }));
         return "Withdrew the maximum available from the house vault.";
       }
-      await api.send(`Withdraw ${sym}`, async () => {
-        const { request } = await simulateContract(wagmiConfig, {
-          ...vault,
-          functionName: "withdraw",
-          args: [amount, who, who],
-          account: who,
-        });
-        return writeContract(wagmiConfig, request);
-      });
+      await api.send(`Withdraw ${sym}`, () => walletWrite(wagmiConfig, { ...vault, functionName: "withdraw", args: [amount, who, who], account: who }));
       return `Withdrew ${fmtUsdc(amount)} ${sym} from the house vault.`;
     });
     if (ok) {
