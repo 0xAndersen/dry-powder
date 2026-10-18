@@ -19,13 +19,20 @@
 - Agent accounts: `multicall` for atomic batches (ladders, close all, cancel all), each call checked against the
   agent's policy; `AgentAccountFactory.createAccountWithAgent` creates an account, approves its first key and
   funds the key's gas in one transaction.
-- Trailing stops without an engine change: `TrailingStops`, deployed with the venue, moves an agent account's
+- Trailing stops without an engine change: `TrailingStops`, an add-on beside the venue, moves an agent account's
   stop-loss behind the best price seen (from the engine's own price, only ever tighter) when anyone pokes it;
-  optional activation price and size. The keeper pokes when a stop would move by at least 0.1%.
+  optional activation price and size. The keeper pokes when a stop would move by at least 0.1%. A poke short of
+  gas is refused whole (a 400k floor before each move), so estimated pokes never pass for refusals.
+  `DeployAddons.s.sol` and the "Deploy add-ons" workflow deploy or replace add-ons without touching the venue.
+- TWAP orders, also without an engine change: `TwapOrders` splits a size into 2 to 100 equal slices, one every
+  30 s to a day, each a keeper-filled market order through the account with its own slippage bound (at most 5%).
+  The account's policy for the contract caps every slice, an agent key may only start slices inside its own
+  policy, a poke cannot speed a TWAP up, slices wait while the account holds the other side, and three refusals
+  in a row end it. Same gas floor as trailing stops (500k per slice).
 - Events `PositionIncreased`, `PositionDecreased`, `MarginAdded`.
 - **Breaking:** `closePosition` and `setTriggerOrder` take a size. `liquidate(address)` and
   `liquidate(address, bytes[])` are gone (use `liquidateBatch`), as are the getters of ten owner-bound constants.
-  Engine runtime 24,289 bytes, 287 under the EIP-170 limit. 389 tests, invariants extended to every new path.
+  Engine runtime 24,289 bytes, 287 under the EIP-170 limit. 399 tests, invariants extended to every new path.
 
 **Prices you can trust, gas you don't think about.** (Keeper; live since 2026-10-18.)
 - The publisher signs the median of Kraken, Coinbase and Bitstamp when they agree within 50 bp, with the widest
@@ -50,10 +57,23 @@
   trading), with the average entry and liquidation if all fill. Positions: close 25/50/75/100% or any size, add
   margin with a leverage preview, edit TP/SL inline.
 - Risk: liquidation warnings at half and three quarters of the buffer, an account risk sheet with a what-if
-  slider, a personal leverage cap and daily loss limit.
+  slider, a personal leverage cap, a daily loss limit and an optional cool-off after a liquidation (15 minutes to
+  4 hours without new positions).
+- Trailing stops on positions in the trading account: distance, how much it closes, an optional activation
+  price; one wallet confirmation allows the contract once, then no pop-ups.
+- TWAP in the ticket (Market, with instant trading): slices and the time between them, with what each slice is,
+  how long it runs and the total it draws; running TWAPs in Orders with progress, the next slice and Stop. Start
+  over and Cancel all stop TWAPs first. Take-profit and stop-loss edits in
+  the positions table take a size (all, 75, 50 or 25%).
+- Practice: "Start over" closes every position, cancels entry orders and adds test funds in one step (one
+  transaction with instant trading); history and the journal stay. Challenges on the Portfolio page: a goal with
+  risk rules (Steady hand: +5% in a week without a 3% drawdown; Evaluation: the prop-firm test, +10% in 30 days
+  with 5% drawdown and 2.5% daily limits; Sharpshooter; Survivor), measured from trades opened after the start,
+  each rule shown with its budget, a share card when passed.
 - Pro: Ctrl/⌘ K command palette, favourites in the market picker, close all and cancel all (one transaction
   with instant trading), links that prefill a trade, Settings, Help and a venue Status sheet (chain, keeper,
-  price sources and age per market).
+  price sources and age per market); horizontal lines drawn on the chart (kept per market in this browser); the
+  open fee by size for both sides in the ticket's details, the depth view of a venue without an order book.
 - Markets page (24h change and volume, sparklines, funding, open interest, favourites); Portfolio (PnL curve, calendar,
   win rate, profit factor, drawdown) with a trade journal; weekly leaderboard seasons; trader profiles with
   Copy; follows and nicknames in Activity.

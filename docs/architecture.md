@@ -38,6 +38,10 @@ How Dry Powder works, in more depth than the README. Addresses: `deployments/arc
 - **Batches.** `AgentAccount.multicall` for ladders, close all and cancel all in one transaction;
   `AgentAccountFactory.createAccountWithAgent` sets up an account, its first key and the key's gas at once,
   which is what makes instant trading one confirmation.
+- **Add-ons beside the engine.** `TrailingStops` and `TwapOrders` act on agent accounts that approve them as
+  agents, with nothing changed in the engine: one ratchets a stop-loss behind the best price, the other places a
+  TWAP's slices as keeper-filled market orders. Anyone may poke them (the keeper does); both refuse a poke short
+  of gas whole, and `DeployAddons.s.sol` replaces them without touching the venue.
 - **Prices from three venues.** The publisher signs the median of Kraken, Coinbase and Bitstamp when they agree
   within 50 bp (the widest agreeing half-spread is the band); when they disagree the market waits rather than
   trade on one venue's price.

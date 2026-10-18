@@ -63,6 +63,7 @@ then choose margin. `examples/risk-capped-agent.mjs` does exactly this.
 | Cancel | `cancelOrder(id)` | Escrow refunded |
 | Several at once | `AgentAccount.multicall([...])` | Atomic: ladders, close all, cancel all |
 | Trailing stop | approve `TrailingStops` on the account (`setAgent(trailingStops, maxUint64, 1, 1)`), then `TrailingStops.setTrail(account, marketId, distanceBps, size, activation)` | The keeper pokes it; the stop only ever tightens |
+| TWAP | approve `TwapOrders` on the account with a policy that covers a slice (`setAgent(twapOrders, expiry, leverage, sliceMargin)`), then `TwapOrders.setTwap(account, marketId, isLong, sliceMargin, sliceSize, slices, interval, maxSlippageBps)` | 2-100 slices, 30 s to 1 day apart, slippage up to 500 bp; the keeper places each slice when due; `cancelTwap` stops it. An agent may only start slices inside its own policy |
 
 `openPosition` / `closePosition(marketId, size, acceptablePrice, priceUpdate)` (no keeper, 100x and below) need an on-chain price at most 30 s old; the keeper keeps prices
 fresh within about a minute, and immediately when an order needs one, so the order path above is the reliable one.
@@ -71,8 +72,9 @@ Units: USDC amounts 6 decimals, prices 18 decimals.
 
 ## Running the venue's keeper
 
-`keeper/` is the publisher + keeper (fills, liquidations, dated-market settlement, vault epochs). Anyone may run
-another keeper: execution fees go to whoever executes an order first. Liquidate with `liquidateBatch(keys,
+`keeper/` is the publisher + keeper (fills, liquidations, dated-market settlement, vault epochs, trailing-stop
+moves and TWAP slices). Anyone may run another keeper: execution fees go to whoever executes an order first, and
+add-on pokes are open to anyone. Liquidate with `liquidateBatch(keys,
 priceUpdate)`. See `keeper/.env.example`.
 
 ## Venue data without an RPC scan

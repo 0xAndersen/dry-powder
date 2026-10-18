@@ -62,8 +62,22 @@ stop-loss, stop-entry orders. Each new path keeps the v3 guarantees:
   `getPrice`. It only ever tightens a stop (a poker picks when, never where), works only for accounts from the
   venue's factory, and its only call into an account is `setTriggerOrder(market, StopLoss, …)`: approve it with
   the smallest policy an account allows (1 micro-USDC margin cap, 1x). A refused move (approval revoked) is
-  skipped without failing the batch. Accepted: a trail only sees the prices it is poked at, so between pokes a
-  spike can pass unseen (the stop then trails less tightly, never more). Tests: `TrailingStops.t.sol`.
+  skipped without failing the batch; a move short of gas is not taken for a refusal (a floor of 400k before the
+  call, and a check that the call did not run dry), so gas estimates always leave enough. Accepted: a trail only
+  sees the prices it is poked at, so between pokes a spike can pass unseen (the stop then trails less tightly,
+  never more). Tests: `TrailingStops.t.sol`. Deployed as an add-on (`DeployAddons.s.sol`), so it can be
+  replaced without touching the venue.
+- **TWAP orders** (`TwapOrders`, outside the engine). An account approves the contract as an agent with a policy
+  that covers a slice; anyone may `poke`, which places the next due slice as a keeper-filled market order through
+  the account (`createLimitOrder` with a trigger of the engine's ask plus the TWAP's slippage, or bid minus it).
+  What bounds it: the account's own policy for the contract caps every slice; an agent key may only start a TWAP
+  whose slices fit its own policy (`AgentPolicyExceeded`), so approving the contract never widens what a key can
+  open per call; a slice is due no earlier than `interval` after the last, whoever pokes; keeper fills use a
+  price published after the order, so a poker picks when a due slice goes, never its price; a slice waits while
+  the account holds the other side or the market has no usable price; three refusals in a row end the TWAP; a
+  slice short of gas reverts the poke whole (a 500k floor). Accepted: a slice that cannot fill inside its bound
+  rests as a limit at that bound until it fills or is cancelled; the owner can always cancel it or revoke the
+  approval. Tests: `TwapOrders.t.sol`.
 - Tests: `contracts/test/PositionManagement.t.sol` (32), `AgentAccount.t.sol`, and the invariant handler, which
   now adds, closes in part, adds margin and places sized and stop-entry orders while every invariant holds.
 
