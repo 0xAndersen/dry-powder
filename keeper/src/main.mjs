@@ -15,6 +15,8 @@ import { createServer } from "node:http";
 import { createPublicClient, createWalletClient, defineChain, fallback, http, keccak256, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { makeKraken } from "./feeds.mjs";
+import { makeBitstamp, makeCoinbase, makeMedianSource } from "./sources.mjs";
+import { makeGasSponsor } from "./sponsor.mjs";
 import { makeOperator } from "./operator.mjs";
 
 const env = process.env;
@@ -40,8 +42,9 @@ function addresses() {
     vault: pick("vault", "HOUSE_VAULT_ADDRESS"),
     oracle: pick("pub", "PUBLISHER_ORACLE_ADDRESS") || d.publisherOracle,
   };
+  const optional = { factory: env.AGENT_FACTORY_ADDRESS || d.agentFactory || null, usdc: env.USDC_ADDRESS || d.usdc || null };
   for (const [k, v] of Object.entries(a)) if (!/^0x[0-9a-fA-F]{40}$/.test(v || "")) throw fatal(`missing ${k} address (DEPLOYMENT file or env)`);
-  return { ...a, rpcUrl: env.RPC_URL || d.rpcUrl, chainId: num("CHAIN_ID", d.chainId ?? 5042002) };
+  return { ...a, ...optional, rpcUrl: env.RPC_URL || d.rpcUrl, chainId: num("CHAIN_ID", d.chainId ?? 5042002) };
 }
 
 const roleKey = (seed, role) => keccak256(toHex(`${seed}/${role}/0`));
@@ -107,13 +110,26 @@ const opts = {
   topUp: num("TOP_UP_USDC", 3),
   dryRun: env.DRY_RUN === "1" || env.DRY_RUN === "true",
 };
-const kraken = makeKraken(env.KRAKEN_URL || "https://api.kraken.com", num("STALE_FEED_MS", 60_000));
+// Prices: Kraken alone (tests, local chains) or, on Arc Testnet by default, the median of Kraken, Coinbase and
+// Bitstamp with a deviation guard, so no single venue's book can move the price (PRICE_SOURCES overrides).
+const sourceNames = (env.PRICE_SOURCES || (a.chainId === 5042002 ? "kraken,coinbase,bitstamp" : "kraken")).split(",").map((x) => x.trim().toLowerCase());
+const krakenOnly = makeKraken(env.KRAKEN_URL || "https://api.kraken.com", num("STALE_FEED_MS", 60_000));
+const extraSources = [
+  ...(sourceNames.includes("coinbase") ? [makeCoinbase(env.COINBASE_URL || undefined)] : []),
+  ...(sourceNames.includes("bitstamp") ? [makeBitstamp(env.BITSTAMP_URL || undefined)] : []),
+];
+const kraken = extraSources.length
+  ? makeMedianSource([{ name: "kraken", ...krakenOnly }, ...extraSources], {
+      maxDeviationBps: num("MAX_SOURCE_DEVIATION_BPS", 50),
+      onDisagree: (feed, mids) => log("price", `sources disagree on ${feed.key} (${mids.map((m) => m.toPrecision(8)).join(" vs ")}): not publishing it`),
+    })
+  : krakenOnly;
 const op = makeOperator({ pub, publisher, keeper, funder, chainId: a.chainId, addresses: a, kraken, opts, log });
 
 const actual = await pub.getChainId().catch((e) => { throw fatal(`no RPC reachable (${rpcUrls.join(", ")}): ${e?.shortMessage ?? e?.message ?? e}`); });
 if (actual !== a.chainId) throw fatal(`RPC is chain ${actual}, expected ${a.chainId}`);
 annotate("notice", `keeper started: publisher ${publisher.account.address}, keeper ${keeper.account.address}`);
-log("start", JSON.stringify({ multicall: hasMc3, rpcUrls, chainId: a.chainId, engine: a.engine, oracle: a.oracle, publisher: publisher.account.address, keeper: keeper.account.address, funder: funder?.account.address ?? null, opts }));
+log("start", JSON.stringify({ multicall: hasMc3, sources: sourceNames, gasSponsor: Boolean(sponsor), rpcUrls, chainId: a.chainId, engine: a.engine, oracle: a.oracle, publisher: publisher.account.address, keeper: keeper.account.address, funder: funder?.account.address ?? null, opts }));
 
 let last = { at: 0 };
 let stopping = false;
@@ -123,11 +139,34 @@ const tickMs = num("TICK_MS", 3000);
 
 if (env.PORT) {
   createServer((req, res) => {
-    const body = JSON.stringify({ ok: Date.now() - last.at < 60_000, last, stats: op.stats, kraken: op.krakenOk(), uptimeS: Math.round((Date.now() - started) / 1000) });
+    const body = JSON.stringify({ ok: Date.now() - last.at < 60_000, last, stats: op.stats, kraken: op.krakenOk(), sources: sourceNames, sponsor: sponsor?.stats ?? null, uptimeS: Math.round((Date.now() - started) / 1000) });
     res.writeHead(req.url === "/health" ? 200 : 404, { "content-type": "application/json" }).end(body);
   }).listen(Number(env.PORT));
 }
 for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => (stopping = true));
+
+// Gas for instant-trading session keys (Arc Testnet by default; SPONSOR_GAS=0 turns it off).
+const sponsorOn = !["0", "false"].includes(String(env.SPONSOR_GAS ?? (a.chainId === 5042002 ? "1" : "0"))) && funder && a.factory && a.usdc;
+const usdc18 = (x) => BigInt(Math.round(Number(x) * 1e6)) * 10n ** 12n;
+const sponsor = sponsorOn
+  ? makeGasSponsor({
+      pub,
+      funder,
+      factory: a.factory,
+      usdc: a.usdc,
+      log,
+      opts: {
+        floor: usdc18(env.SPONSOR_FLOOR_USDC ?? 0.05),
+        topUp: usdc18(env.SPONSOR_TOP_UP_USDC ?? 0.25),
+        perKeyDaily: usdc18(env.SPONSOR_PER_KEY_DAILY_USDC ?? 1),
+        globalDaily: usdc18(env.SPONSOR_DAILY_USDC ?? 25),
+        minCollateral: BigInt(Math.round(Number(env.SPONSOR_MIN_COLLATERAL ?? 10) * 1e6)),
+        lookbackBlocks: BigInt(env.SPONSOR_LOOKBACK_BLOCKS ?? 150_000),
+        chunk: BigInt(env.SPONSOR_LOG_CHUNK ?? 2_000),
+      },
+    })
+  : null;
+let lastSponsor = 0;
 
 let lastReport = 0;
 let failures = 0;
@@ -142,9 +181,13 @@ while (!stopping && (!runFor || Date.now() - started < runFor)) {
     if (failures <= 3 || failures % 20 === 0) annotate("warning", `tick failed (${failures}): ${String(e?.shortMessage ?? e?.message ?? e).split("\n").slice(0, 3).join(" ")}`);
     if (failures > 50) throw e;
   }
+  if (sponsor && Date.now() - lastSponsor > 30_000) {
+    lastSponsor = Date.now();
+    await sponsor.tick().catch((e) => log("sponsor", "failed:", String(e?.shortMessage ?? e?.message ?? e).split("\n")[0]));
+  }
   if (Date.now() - lastReport > 60_000) {
     lastReport = Date.now();
-    log("status", JSON.stringify({ ...last, ...op.stats }));
+    log("status", JSON.stringify({ ...last, ...op.stats, ...(sponsor ? { sponsor: sponsor.stats } : {}) }));
   }
   await new Promise((r) => setTimeout(r, Math.max(200, tickMs - (Date.now() - t0)) * (failures ? Math.min(8, failures) : 1)));
 }
