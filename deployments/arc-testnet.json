@@ -4,16 +4,17 @@
   "rpcUrl": "https://rpc.testnet.arc.io",
   "explorerUrl": "https://explorer.testnet.arc.io",
   "appUrl": "https://0xandersen.github.io/dry-powder/",
-  "deployedAt": "2026-10-14T07:10:26.040Z",
+  "deployedAt": "2026-10-18T02:09:49.975Z",
+  "version": "v3",
   "collateral": "test",
-  "engine": "0x9dAD1210142D345ddD441e3D900865Ba356C2C19",
-  "lens": "0x793bE8fB4dAe06c2456CaDE4675Ae4b3bFA0ef19",
-  "vault": "0x0bF5bA1E85b687214b1668bA2385f7397dE4a64D",
-  "token": "0x1E7C1b1FC34CcE5134D9BC9F7563f9e3a35Efb1C",
-  "usdc": "0x90006578420793A82ef1d4Bf2b9d30dF3FF28b81",
-  "pub": "0x849C5A4CADb85BC5B464046D9d7f5219132d3c7F",
-  "oracle": "0xcCe3b6d93f9960cF7aF12dA5004424554cd38686",
-  "agentFactory": "0x135f5427c2d4f7c9655d301bb0743bcc7fb46523",
+  "engine": "0x291b4203915616C0226c9Fc6DD0F6Bb10EEf4530",
+  "lens": "0x7e94669bda8199309DDf8D4AF276C52f145689b6",
+  "vault": "0x4f3eAcb3d85e469E7a72815fd9b1910B1301d48C",
+  "token": "0x60678D6F3A440Da57cAe8ec555fb685390B8c1D9",
+  "usdc": "0x75252Dd07596edfB1c1Bb42117420f697B897FD1",
+  "pub": "0x24171082eB3C4512474e5353539811378033A8b7",
+  "oracle": "0x6B74cFE34BfC185A25C7185f0253E27E754295A6",
+  "agentFactory": "0x49c31409e8ECE98e07d4dB203E4bDCbd496BEe0c",
   "publisher": "0xa2744b5Dfd87377900682Ff29bD24BDE9e841Cd2",
   "keeper": "0x15B96DDdC4Af8269bdc28868Df9bF5c742986897",
   "deployer": "0x732E77DBA1623FD77471BDFF9dFEB686Db67C8d7",
@@ -47,8 +48,8 @@
       "id": "0xf5464e72d206a044762e3837bb6c37fd1f1f7484e2d7fa45348b6ea240be558d"
     },
     {
-      "symbol": "BTC-USD-0531Z",
-      "id": "0x374e14897ba518f4dc507e736091f6c2940740623ad50d81f0dda990b7ce5eb2"
+      "symbol": "BTC-USD-261023",
+      "id": "0x75fcd9ed1c0022585fc469fc5430ffe14abf0938cc7fd7686959e4cdfedd7190"
     }
   ]
 }
