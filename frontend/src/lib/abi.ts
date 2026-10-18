@@ -34,6 +34,19 @@ export const perpEngineAbi = [
   },
   {
     "type": "function",
+    "name": "DIRECT_MAX_LEVERAGE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "LIQUIDATION_THRESHOLD_BPS",
     "inputs": [],
     "outputs": [
@@ -48,6 +61,19 @@ export const perpEngineAbi = [
   {
     "type": "function",
     "name": "LIQUIDATOR_FEE_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MARGIN_FEE_CAP_BPS",
     "inputs": [],
     "outputs": [
       {
@@ -1268,6 +1294,11 @@ export const perpEngineAbi = [
         "name": "isLong",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "margin",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -2138,6 +2169,11 @@ export const perpEngineAbi = [
   {
     "type": "error",
     "name": "ExpectedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "HighLeverageNeedsOrder",
     "inputs": []
   },
   {

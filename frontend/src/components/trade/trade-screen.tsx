@@ -69,11 +69,13 @@ export function TradeScreen() {
   const startedAt = useRef(Date.now() / 1000);
   const announced = useRef(new Set<string>());
   useEffect(() => {
-    const resting = orderTracker.get().filter((o) => o.status === "resting");
+    const tracked = orderTracker.get();
+    const resting = tracked.filter((o) => o.status === "resting");
+    const pending = tracked.filter((o) => o.status === "resting" || o.status === "gone");
     const recent = feed.events.slice(-300);
     for (const event of recent) {
       if (event.type === "orderExecuted" || event.type === "orderCancelled") {
-        const tracked = resting.find((o) => o.orderId === event.orderId);
+        const tracked = pending.find((o) => o.orderId === event.orderId);
         if (!tracked) continue;
         if (event.type === "orderExecuted") {
           orderTracker.resolve(event.orderId, "filled", event.price);
@@ -86,7 +88,7 @@ export function TradeScreen() {
       } else if (event.type === "liquidation" && event.time > startedAt.current - 5 && !announced.current.has(event.id)) {
         announced.current.add(event.id);
         const symbol = byId.get(event.marketId)?.symbol ?? "Position";
-        toast("error", `${symbol} position liquidated`, view.watching ? "The watched account lost the position's margin." : "Losses reached 90% of margin. The margin is lost; KEG was minted as a rebate.", 15_000);
+        toast("error", `${symbol} position liquidated`, view.watching ? "The watched account lost the position's margin." : "Losses reached 90% of margin. The margin is lost; DRY was minted as a rebate.", 15_000);
       } else if (event.type === "close" && event.orderId !== undefined && event.time > startedAt.current - 5 && !announced.current.has(event.id)) {
         // Take-profit and stop-loss fills were not placed in this session, so nothing is tracking them.
         announced.current.add(event.id);
@@ -96,11 +98,16 @@ export function TradeScreen() {
         }
       }
     }
-    // Fallback when the log reader is behind: the order is gone from the book.
+    // Fallback when the log reader is behind: the order has left the book. If the account already shows its
+    // result (a position for an open, none for a close) it filled; otherwise say only that it is gone.
     if (account.data) {
       const open = new Set(account.data.orders.map((o) => o.id));
-      for (const tracked of resting) {
-        if (!open.has(tracked.orderId) && Date.now() - tracked.placedAt > 8_000) orderTracker.resolve(tracked.orderId, "gone");
+      const held = new Set(account.data.positions.map((p) => p.position.priceId.toLowerCase()));
+      for (const t of resting) {
+        if (open.has(t.orderId) || Date.now() - t.placedAt < 3_000) continue;
+        const has = held.has(t.marketId.toLowerCase());
+        if (t.action === "close" ? !has : has) orderTracker.resolve(t.orderId, "filled");
+        else if (Date.now() - t.placedAt > 8_000) orderTracker.resolve(t.orderId, "gone");
       }
     }
   }, [feed.version, feed.events, account.data, byId, view.watching]);

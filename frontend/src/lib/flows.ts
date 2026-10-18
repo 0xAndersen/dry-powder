@@ -2,6 +2,7 @@ import type { PositionView } from "@/hooks/use-account-data";
 import { submitClose, submitOpen, type ActionContext, type OpenRequest } from "./actions";
 import type { Instrument } from "./instruments";
 import type { Quote } from "./oracle";
+import { needsKeeperOrders } from "./math";
 import { orderTracker } from "./order-tracker";
 
 /** User-level flows built from the primitive actions: they also register keeper orders for live tracking. */
@@ -42,6 +43,7 @@ export async function closeFlow(
       executionFee: pos.closeOrderId === 0n ? args.executionFee : 0n,
       // A wallet that cannot cover the keeper's fee closes directly against the on-chain price instead.
       direct: pos.closeOrderId === 0n && args.balance !== undefined && args.balance < args.executionFee,
+      highLeverage: needsKeeperOrders(pos.size, pos.margin),
     },
     settled ? `Settle and close ${instrument.symbol}` : `Close ${instrument.symbol}`,
   );

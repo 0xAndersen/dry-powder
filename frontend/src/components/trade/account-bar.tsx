@@ -11,8 +11,9 @@ import { useTx } from "@/hooks/use-tx";
 import type { AccountView } from "@/hooks/use-wallet";
 import { TEST_MINT_AMOUNT, submitClaim, submitTestMint } from "@/lib/actions";
 import { UserFacingError } from "@/lib/errors";
-import { TOKEN_DECIMALS, fmtCompact, fmtUsdc, shortAddress } from "@/lib/format";
+import { TOKEN_DECIMALS, fmtCompact, fmtPercent, fmtUsdc, shortAddress } from "@/lib/format";
 import { valuePosition } from "@/lib/position";
+import { RISK_COLOR, riskTone } from "@/lib/risk-tone";
 
 function Cell({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
@@ -23,10 +24,10 @@ function Cell({ label, children, hint }: { label: string; children: React.ReactN
   );
 }
 
-/** The account at a glance: collateral, margin in use, open PnL, anything claimable, KEG. */
+/** The account at a glance: collateral, margin at risk, open PnL, the nearest liquidation, anything claimable, DRY. */
 export function AccountBar({ view, account, loading }: { view: AccountView; account: AccountData | undefined; loading: boolean }) {
   const { config: cfg } = useApp();
-  const { prices, params } = useMarketData();
+  const { prices, params, byId } = useMarketData();
   const tx = useTx({ autoDismissMs: 6000 });
   const actionContext = useActionContext();
   const sym = cfg.collateralSymbol;
@@ -36,11 +37,15 @@ export function AccountBar({ view, account, loading }: { view: AccountView; acco
     let margin = 0n;
     let pnl = 0n;
     let priced = true;
+    let nearest: { symbol: string; distance: number } | null = null;
     for (const p of account.positions) {
       margin += p.position.margin;
-      const value = valuePosition(p, prices.get(p.position.priceId.toLowerCase())?.mark ?? null, params.maxProfitMultiple);
+      const id = p.position.priceId.toLowerCase();
+      const value = valuePosition(p, prices.get(id)?.mark ?? null, params.maxProfitMultiple);
       if (value.pnl === null) priced = false;
       else pnl += value.pnl;
+      const d = value.liquidatableNow ? 0 : value.liquidationDistance;
+      if (d !== null && (nearest === null || d < nearest.distance)) nearest = { symbol: byId.get(id)?.symbol ?? "Position", distance: Math.max(0, d) };
     }
     let escrow = 0n;
     for (const { order } of account.orders) {
@@ -49,8 +54,8 @@ export function AccountBar({ view, account, loading }: { view: AccountView; acco
       const brackets = (order.takeProfit !== 0n ? 1n : 0n) + (order.stopLoss !== 0n ? 1n : 0n);
       escrow += order.margin + order.feeBudget + brackets * order.executionFee;
     }
-    return { margin, pnl, priced, escrow, equity: account.balance + margin + escrow + pnl };
-  }, [account, prices, params]);
+    return { margin, pnl, priced, escrow, nearest, equity: account.balance + margin + escrow + pnl };
+  }, [account, prices, params, byId]);
 
   const run = (label: string, action: "mint" | "claim") => {
     void tx.run(async (api) => {
@@ -84,7 +89,7 @@ export function AccountBar({ view, account, loading }: { view: AccountView; acco
         </div>
         <dl className="order-3 grid w-full grid-cols-3 gap-x-5 gap-y-2 sm:grid-cols-6 lg:order-none lg:w-auto lg:flex-1">
           <Cell label={`${sym} balance`}>{account ? fmtUsdc(account.balance) : dash}</Cell>
-          <Cell label="Margin in use" hint="Collateral locked in open positions.">
+          <Cell label="Margin at risk" hint="Collateral locked in open positions: the most they can lose together, before fees. Nothing beyond it.">
             {totals ? fmtUsdc(totals.margin) : dash}
           </Cell>
           <Cell label="Unrealised PnL" hint="Across open positions at the current prices, after funding, before close fees.">
@@ -103,9 +108,9 @@ export function AccountBar({ view, account, loading }: { view: AccountView; acco
           <Cell label="Account value" hint="Wallet balance + margin + order escrow + unrealised PnL.">
             {totals ? fmtUsdc(totals.equity) : dash}
           </Cell>
-          <Cell label="KEG" hint="Loss-rebate tokens: in the wallet, plus staked. Stake them on the House page to earn a share of house profit.">
+          <Cell label="DRY" hint="Loss-rebate tokens: in the wallet, plus staked. Stake them on the House page to earn a share of house profit.">
             {account ? (
-              <AppLink route="house" className="hover:text-spark">
+              <AppLink route="house" className="hover:text-accent">
                 {fmtCompact(account.house, TOKEN_DECIMALS)}
                 {account.houseStaked > 0n ? <span className="text-faint"> + {fmtCompact(account.houseStaked, TOKEN_DECIMALS)} staked</span> : null}
               </AppLink>
@@ -133,7 +138,26 @@ export function AccountBar({ view, account, loading }: { view: AccountView; acco
           ) : null}
         </div>
       </div>
+      {totals?.nearest ? <NearestLiquidation {...totals.nearest} /> : null}
       {tx.state.phase !== "idle" ? <TxStatus state={tx.state} onDismiss={tx.reset} className="mt-2" /> : null}
     </section>
+  );
+}
+
+/** The one number that matters most with open positions: how far the closest one is from liquidation. */
+function NearestLiquidation({ symbol, distance }: { symbol: string; distance: number }) {
+  // Full bar at a 10% cushion or more; colour by the same bands as the order ticket's risk card.
+  const tone = RISK_COLOR[riskTone(distance) ?? "calm"];
+  const width = `${Math.max(2, Math.min(100, (distance / 0.1) * 100))}%`;
+  return (
+    <div className="mt-2 flex items-center gap-3 text-2xs text-muted" data-testid="nearest-liquidation">
+      <span className="shrink-0">Nearest liquidation</span>
+      <span className="risk-strip flex-1" aria-hidden="true">
+        <span style={{ width, background: tone }} />
+      </span>
+      <span className="num shrink-0 text-[0.75rem]" style={{ color: tone }}>
+        {symbol} {fmtPercent(distance, distance < 0.01 ? 2 : 1)} away
+      </span>
+    </div>
   );
 }

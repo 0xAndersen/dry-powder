@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { useBlockNumber } from "wagmi";
 import { getAddress, isAddress } from "viem";
 import { AppLink } from "@/components/app-link";
@@ -22,13 +23,13 @@ const NAV: readonly { route: Route; label: string }[] = [
 function Wordmark() {
   return (
     <AppLink route="trade" className="flex shrink-0 items-center gap-2 whitespace-nowrap" aria-label="Dry Powder, go to trading">
-      <svg width="22" height="24" viewBox="0 0 22 24" aria-hidden="true">
-        <path d="M4 7h12v15H4z" fill="none" stroke="var(--color-text)" strokeWidth="2" />
-        <path d="M4 12h12M4 17h12" stroke="var(--color-text)" strokeWidth="2" />
-        <path d="M10 7V4.5c0-1.5 1.2-2.5 3-2.5h3" fill="none" stroke="var(--color-text)" strokeWidth="1.6" />
-        <path d="M18.8 0v1.5M18.8 3.3v1.5M16.5 2.4h1.4M19.8 2.4h1.4" stroke="var(--color-spark)" strokeWidth="1.6" strokeLinecap="square" />
+      {/* The reserve: a vessel held part full. Capital kept back is what lets you take the next trade. */}
+      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="2.75" y="2.75" width="18.5" height="18.5" rx="5" fill="none" stroke="var(--color-text)" strokeWidth="1.75" />
+        <rect x="6.5" y="12.25" width="11" height="5.25" rx="1.5" fill="var(--color-accent)" />
+        <path d="M6.5 9.25h11" stroke="var(--color-text)" strokeWidth="1.25" strokeLinecap="round" strokeDasharray="1.5 2.25" opacity="0.55" />
       </svg>
-      <span className="wide glow hidden text-[1.25rem] leading-none lg:inline">Dry Powder</span>
+      <span className="wide hidden text-[1.0625rem] leading-none lg:inline">Dry Powder</span>
     </AppLink>
   );
 }
@@ -66,7 +67,39 @@ function NetworkStatus() {
         <StatusDot tone={feedTone} />
         <span>{feedText}</span>
       </span>
+      {config.chainId === 5042002 ? <KeeperStatus /> : null}
     </div>
+  );
+}
+
+/** The hosted keeper's health snapshot (pushed to the repository's status branch every 5 minutes). */
+const KEEPER_STATUS_URL = "https://raw.githubusercontent.com/0xAndersen/dry-powder/status/status/keeper.json";
+
+function KeeperStatus() {
+  const health = useQuery({
+    queryKey: ["keeper-status"],
+    refetchInterval: 60_000,
+    retry: 1,
+    queryFn: async () => {
+      const r = await fetch(`${KEEPER_STATUS_URL}?t=${Math.floor(Date.now() / 60_000)}`, { cache: "no-store" });
+      if (!r.ok) throw new Error(String(r.status));
+      return (await r.json()) as { ok?: boolean; last?: { at?: number }; stats?: { executed?: number; liquidated?: number } };
+    },
+  });
+  const at = health.data?.last?.at ?? 0;
+  const ageMin = at ? Math.max(0, Math.round((Date.now() - at) / 60_000)) : null;
+  // Snapshots arrive every 5 minutes; older than 12 means the keeper (or its status push) has stopped.
+  const fresh = ageMin !== null && ageMin <= 12;
+  const tone = health.isError ? "idle" : !health.data ? "idle" : health.data.ok && fresh ? "ok" : fresh ? "warn" : "bad";
+  const text = !health.data ? "Keeper" : health.data.ok && fresh ? "Keeper running" : fresh ? "Keeper degraded" : "Keeper not reporting";
+  const title = health.data
+    ? `Hosted keeper: ${ageMin === null ? "no report" : `last report ${ageMin} min ago`}${health.data.stats ? `, ${health.data.stats.executed ?? 0} orders filled, ${health.data.stats.liquidated ?? 0} liquidations this run` : ""}. Anyone can run a keeper: see keeper/ in the repository.`
+    : "Hosted keeper status unavailable";
+  return (
+    <span className="flex items-center gap-1.5" title={title} data-testid="keeper-status">
+      <StatusDot tone={tone} />
+      <span>{text}</span>
+    </span>
   );
 }
 
@@ -174,10 +207,10 @@ export function Header() {
                 key={item.route}
                 route={item.route}
                 aria-current={active ? "page" : undefined}
-                className={`relative flex items-center px-1 text-xs font-medium sm:px-3 sm:text-sm ${active ? "text-text" : "text-muted hover:text-text"}`}
+                className={`relative flex items-center px-[3px] text-xs font-medium tracking-[-0.01em] sm:px-3 sm:text-sm sm:tracking-normal ${active ? "text-text" : "text-muted hover:text-text"}`}
               >
                 {item.label}
-                {active ? <span aria-hidden="true" className="absolute inset-x-1 bottom-0 h-0.5 bg-spark sm:inset-x-3" /> : null}
+                {active ? <span aria-hidden="true" className="absolute inset-x-1 bottom-0 h-0.5 bg-accent sm:inset-x-3" /> : null}
               </AppLink>
             );
           })}

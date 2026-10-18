@@ -39,7 +39,9 @@ export const orderTracker = {
   resolve(orderId: bigint, status: TrackedOrder["status"], fillPrice?: bigint): void {
     let changed = false;
     orders = orders.map((o) => {
-      if (o.orderId !== orderId || o.status !== "resting") return o;
+      // "gone" is a guess made while the log reader is behind; a definite outcome seen later replaces it.
+      const open = o.status === "resting" || (o.status === "gone" && status !== "gone");
+      if (o.orderId !== orderId || !open) return o;
       changed = true;
       return { ...o, status, fillPrice, settledAt: Date.now() };
     });

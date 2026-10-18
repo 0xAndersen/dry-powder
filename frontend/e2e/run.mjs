@@ -214,7 +214,7 @@ if (want("trade")) {
     return `realised ${await t("history-realised").innerText()}`;
   });
 
-  await step("risk-based sizing + stop-loss fill mints KEG", async () => {
+  await step("risk-based sizing + stop-loss fill mints DRY", async () => {
     await selectMarket("SOL-USD");
     await page.getByRole("group", { name: "Quantity entered as" }).getByRole("button", { name: "Risk", exact: true }).click();
     await page.getByLabel("Amount to risk at the stop-loss").fill("10");
@@ -242,8 +242,8 @@ if (want("trade")) {
     }
     await waitPosition("SOL-USD", false, 10_000);
     const house = await read(addresses.token, "RewardToken", "balanceOf", [UI_TRADER.address]);
-    if (house === 0n) throw new Error("the stop-loss fill minted no KEG (did the position close at a profit?)");
-    return `${summary.replace(/\s+/g, " ")} | KEG ${Number(house / 10n ** 16n) / 100}`;
+    if (house === 0n) throw new Error("the stop-loss fill minted no DRY (did the position close at a profit?)");
+    return `${summary.replace(/\s+/g, " ")} | DRY ${Number(house / 10n ** 16n) / 100}`;
   });
 }
 
@@ -332,7 +332,8 @@ if (want("instruments")) {
     await waitFilled();
     await waitPosition("EUR-USD");
     await t("position-EUR-USD").getByTestId("close-position").click();
-    await waitPosition("EUR-USD", false);
+    // The keeper resumes a market it saw closed only once the tape moves again, so allow it longer here.
+    await waitPosition("EUR-USD", false, 75_000);
   });
 }
 
@@ -556,9 +557,9 @@ if (want("house")) {
     if (shares !== 0n) throw new Error(`shares left after max withdrawal: ${shares}`);
   });
 
-  await step("house: stake KEG", async () => {
+  await step("house: stake DRY", async () => {
     const house = await read(addresses.token, "RewardToken", "balanceOf", [UI_TRADER.address]);
-    if (house === 0n) throw new Error("the trader has no KEG (run the trade section first)");
+    if (house === 0n) throw new Error("the trader has no DRY (run the trade section first)");
     await t("stake-max").click();
     await t("stake-submit").click();
     await page.getByText(/^Staked /).waitFor({ timeout: 30_000 });
@@ -575,7 +576,7 @@ if (want("house")) {
     const status = page.getByText(/^Epoch settled/);
     await status.waitFor({ timeout: 30_000 });
     const text = await status.innerText();
-    streamed = /streams to KEG stakers/.test(text);
+    streamed = /streams to DRY stakers/.test(text);
     await t("epoch-countdown").waitFor({ timeout: 10_000 });
     return text;
   });

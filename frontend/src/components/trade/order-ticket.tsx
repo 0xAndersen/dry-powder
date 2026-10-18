@@ -19,7 +19,7 @@ import { UserFacingError } from "@/lib/errors";
 import { closeFlow, openFlow, waitFor } from "@/lib/flows";
 import { PRICE_DECIMALS, USDC_DECIMALS, fmtAge, fmtPercent, fmtPrice, fmtQty, fmtUsdc, numToPrice, parseAmount, toInputString } from "@/lib/format";
 import { isExpired, isSettled, type Instrument } from "@/lib/instruments";
-import { BPS, ONE, absDiff, baseFee, ceilDiv, liquidationPrice, maxOpenFee, notionalOf, pricePnl, profitCapPrice, ratio, unitsOf } from "@/lib/math";
+import { BPS, DIRECT_MAX_LEVERAGE, ONE, absDiff, baseFee, ceilDiv, liquidationPrice, maxOpenFee, needsKeeperOrders, notionalOf, pricePnl, profitCapPrice, ratio, unitsOf } from "@/lib/math";
 import { valuePosition } from "@/lib/position";
 import { MAX_SLIPPAGE_BPS, tradeSettings } from "@/lib/storage";
 
@@ -43,13 +43,27 @@ export type TicketHandle = {
 
 /** Kept back when "Max" is used, so later execution fees stay covered. */
 const SLIPPAGE_PRESETS = [10, 30, 100] as const;
-const LEVERAGE_PRESETS = [2, 5, 10, 25, 50, 100] as const;
+const LEVERAGE_PRESETS = [2, 5, 10, 25, 50, 100, 250, 500, 1000] as const;
+/** Slider steps; above 100x max leverage the slider is logarithmic so 1x-10x keeps its resolution. */
+const SLIDER_STEPS = 1000;
+const levToSlider = (lev: number, max: number) =>
+  max <= 100 ? lev : Math.round((Math.log(Math.max(1, lev)) / Math.log(max)) * SLIDER_STEPS);
+const sliderToLev = (pos: number, max: number) => (max <= 100 ? pos : Math.max(1, Math.round(Math.exp((pos / SLIDER_STEPS) * Math.log(max)))));
+
+/** How far price must move against the position to liquidate it, as a risk level. */
+function riskLevel(distance: number | null): { label: string; tone: "calm" | "moderate" | "high" | "extreme"; filled: number } | null {
+  if (distance === null) return null;
+  if (distance >= 0.1) return { label: "Low", tone: "calm", filled: 1 };
+  if (distance >= 0.03) return { label: "Moderate", tone: "moderate", filled: 2 };
+  if (distance >= 0.01) return { label: "High", tone: "high", filled: 3 };
+  return { label: "Extreme", tone: "extreme", filled: 4 };
+}
 /** In risk mode the stop must trigger well before liquidation: loss at the stop may use at most this share of the 90% threshold. */
 const STOP_SAFETY = 0.8;
 
 const QTY_MODES: { key: QtyMode; label: string; hint: string }[] = [
   { key: "notional", label: "Size", hint: "Position size in the collateral token (margin x leverage)" },
-  { key: "margin", label: "Margin", hint: "Collateral you put up; size follows from leverage" },
+  { key: "margin", label: "Margin", hint: "Collateral you put up: the most this position can lose, plus fees. Size follows from leverage" },
   { key: "contracts", label: "Contracts", hint: "Units of the underlying; fractions are fine" },
   { key: "risk", label: "Risk", hint: "Choose how much you are willing to lose at your stop; size and leverage are computed" },
 ];
@@ -71,7 +85,7 @@ function priceInput(value: bigint, dp: number): string {
 /** Visual strip placing liquidation, stop, entry and target on one axis. */
 function TradeMap({ isLong, entry, liq, stop, target, dp }: { isLong: boolean; entry: bigint; liq: bigint | null; stop: bigint | null; target: bigint | null; dp: number }) {
   const points = [
-    { key: "liq", label: "Liq", value: liq, cls: "bg-spark" },
+    { key: "liq", label: "Liq", value: liq, cls: "bg-accent" },
     { key: "sl", label: "Stop", value: stop, cls: "bg-short" },
     { key: "entry", label: "Entry", value: entry, cls: "bg-text" },
     { key: "tp", label: "Target", value: target, cls: "bg-long" },
@@ -142,7 +156,8 @@ export const OrderTicket = forwardRef<
 
   const [kind, setKind] = useState<OrderKind>("market");
   const [isLong, setIsLong] = useState(true);
-  const [qtyMode, setQtyMode] = useState<QtyMode>("notional");
+  // Risk first: you type the margin you are prepared to lose; leverage sets the exposure.
+  const [qtyMode, setQtyMode] = useState<QtyMode>("margin");
   const [qtyText, setQtyText] = useState("");
   const [riskText, setRiskText] = useState("");
   const [riskUnit, setRiskUnit] = useState<"usdc" | "pct">("usdc");
@@ -297,12 +312,13 @@ export const OrderTicket = forwardRef<
     address: cfg.perpEngine,
     chainId: cfg.chainId,
     functionName: "quoteOpenFee",
-    args: [instrument.id, size ?? 0n, isLong],
-    query: { enabled: size !== null && size > 0n, refetchInterval: 3_000, placeholderData: keepPreviousData },
+    args: [instrument.id, size ?? 0n, isLong, margin ?? 0n],
+    query: { enabled: size !== null && size > 0n && margin !== null && margin > 0n, refetchInterval: 3_000, placeholderData: keepPreviousData },
   });
-  const keeperOrder = kind === "limit" || publisher;
-  const feeCeiling = params && size !== null ? maxOpenFee(size, params.baseFeeBps, params.maxSkewFeeBps) : null;
-  const feeBase = params && size !== null ? baseFee(size, params.baseFeeBps) : null;
+  const highLeverage = size !== null && margin !== null && margin > 0n && needsKeeperOrders(size, margin);
+  const keeperOrder = kind === "limit" || publisher || highLeverage;
+  const feeCeiling = params && size !== null && margin !== null ? maxOpenFee(size, params.baseFeeBps, params.maxSkewFeeBps, margin) : null;
+  const feeBase = params && size !== null && margin !== null ? baseFee(size, params.baseFeeBps, margin) : null;
   const openFee = size !== null && size > 0n ? (feeQuote.data ?? null) : null;
   const skewFee = openFee !== null && feeBase !== null && openFee > feeBase ? openFee - feeBase : 0n;
   const executionCount = brackets + (keeperOrder ? 1 : 0);
@@ -320,6 +336,11 @@ export const OrderTicket = forwardRef<
   const tpCapped = tpPnl !== null && maxProfit !== null && tpPnl > maxProfit;
   const fundingPerHour = size !== null ? (size * instrument.fundingRate * 3_600n) / ONE : null;
   const fundingForSide = fundingPerHour === null ? null : isLong ? fundingPerHour : -fundingPerHour;
+  /** The most this trade can cost: the whole margin (liquidation) plus open, close and execution fees. */
+  const maxLoss = margin !== null && openFee !== null && executionFees !== null ? margin + openFee + executionFees + (closeFeeEst ?? 0n) : null;
+  const liqDistance = entry && liq !== null ? (liq === 0n ? (isLong ? null : 0) : ratio(absDiff(entry, liq), entry)) : null;
+  const level = riskLevel(liqDistance);
+  const capDistance = entry && capPrice ? ratio(absDiff(entry, capPrice), entry) : null;
 
   // ── Field validation ──
   const qtyError = (() => {
@@ -537,7 +558,7 @@ export const OrderTicket = forwardRef<
         60_000,
         "The close order has not been executed yet. It is still resting; open the opposite side once it fills.",
       );
-      const feeBudget = maxOpenFee(pos.size, params.baseFeeBps, params.maxSkewFeeBps);
+      const feeBudget = maxOpenFee(pos.size, params.baseFeeBps, params.maxSkewFeeBps, pos.margin);
       return openFlow(ctx, {
         instrument,
         isLong: !pos.isLong,
@@ -559,7 +580,8 @@ export const OrderTicket = forwardRef<
 
   const requestOpen = () => {
     if (blocking || tx.busy || !wallet.ready) return;
-    if (settings.oneClick) void runOpen();
+    // One-click never applies above 100x: the confirmation shows how small a move liquidates.
+    if (settings.oneClick && !highLeverage) void runOpen();
     else setConfirming("open");
   };
 
@@ -602,14 +624,15 @@ export const OrderTicket = forwardRef<
         { label: "Margin and leverage", value: margin !== null ? `${fmtUsdc(margin)} ${sym} at ${leverage.toFixed(1)}x` : "—" },
         { label: kind === "limit" ? "Limit price" : "Entry estimate", value: entry ? fmtPrice(entry, dp) : "—" },
         ...(kind === "market" && publisher && bracketRef ? [{ label: "Worst fill accepted", value: fmtPrice(bracketRef, dp) }] : []),
-        { label: "Liquidation price", value: liq === null ? "—" : liq === 0n ? "None" : fmtPrice(liq, dp) },
+        { label: "Liquidation price", value: liq === null ? "—" : liq === 0n ? "None" : `${fmtPrice(liq, dp)}${liqDistance !== null ? ` (${fmtPercent(liqDistance, liqDistance < 0.01 ? 2 : 1)} move)` : ""}` },
+        { label: "Most you can lose", value: maxLoss !== null ? `${fmtUsdc(maxLoss)} ${sym}` : "—" },
         ...(takeProfit ? [{ label: "Take-profit", value: fmtPrice(takeProfit, dp) }] : []),
         ...(stopLoss ? [{ label: "Stop-loss", value: fmtPrice(stopLoss, dp) }] : []),
         { label: "Taken from your wallet now", value: required !== null ? `${fmtUsdc(required)} ${sym}` : "—" },
       ];
     }
     return [];
-  }, [confirming, kind, publisher, sideWord, instrument.symbol, instrument.unitLabel, size, units, margin, leverage, entry, bracketRef, liq, takeProfit, stopLoss, required, sym, dp]);
+  }, [confirming, kind, publisher, sideWord, instrument.symbol, instrument.unitLabel, size, units, margin, leverage, entry, bracketRef, liq, liqDistance, maxLoss, takeProfit, stopLoss, required, sym, dp]);
 
   // ── Primary button ──
   let button: React.ReactNode;
@@ -771,11 +794,11 @@ export const OrderTicket = forwardRef<
           requestOpen();
         }}
       >
-        <div className="grid grid-cols-2 gap-1 rounded-none border border-line bg-bg p-1" role="group" aria-label="Direction">
-          <button type="button" aria-pressed={isLong} onClick={() => setIsLong(true)} className={`h-9 rounded-none text-sm font-semibold transition-colors ${isLong ? "bg-long text-[#06231a]" : "text-muted hover:text-text"}`}>
+        <div className="grid grid-cols-2 gap-1 rounded-md border border-line bg-bg p-1" role="group" aria-label="Direction">
+          <button type="button" aria-pressed={isLong} onClick={() => setIsLong(true)} className={`h-9 rounded text-sm font-semibold transition-colors ${isLong ? "bg-long text-[#04170e]" : "text-muted hover:text-text"}`}>
             Long
           </button>
-          <button type="button" aria-pressed={!isLong} onClick={() => setIsLong(false)} className={`h-9 rounded-none text-sm font-semibold transition-colors ${!isLong ? "bg-short text-[#2b060c]" : "text-muted hover:text-text"}`}>
+          <button type="button" aria-pressed={!isLong} onClick={() => setIsLong(false)} className={`h-9 rounded text-sm font-semibold transition-colors ${!isLong ? "bg-short text-[#2b060c]" : "text-muted hover:text-text"}`}>
             Short
           </button>
         </div>
@@ -911,12 +934,16 @@ export const OrderTicket = forwardRef<
             id={`${ids}-lev-range`}
             className="slider"
             type="range"
-            min={1}
-            max={maxLeverage}
+            min={maxLeverage <= 100 ? 1 : 0}
+            max={maxLeverage <= 100 ? maxLeverage : SLIDER_STEPS}
             step={1}
-            value={Math.round(levX10 / 10)}
-            style={{ "--fill": `${((levX10 / 10 - 1) / Math.max(1, maxLeverage - 1)) * 100}%` } as React.CSSProperties}
-            onChange={(event) => setLeverage(Number(event.target.value) * 10)}
+            value={levToSlider(levX10 / 10, maxLeverage)}
+            style={
+              {
+                "--fill": `${maxLeverage <= 100 ? ((levX10 / 10 - 1) / Math.max(1, maxLeverage - 1)) * 100 : (levToSlider(levX10 / 10, maxLeverage) / SLIDER_STEPS) * 100}%`,
+              } as React.CSSProperties
+            }
+            onChange={(event) => setLeverage(sliderToLev(Number(event.target.value), maxLeverage) * 10)}
             aria-valuetext={`${levX10 / 10}x`}
           />
           <div className="mt-0.5 flex flex-wrap gap-1">
@@ -927,6 +954,12 @@ export const OrderTicket = forwardRef<
             ))}
           </div>
           {levError ? <p className="mt-1 text-xs text-short">{levError}</p> : null}
+          {!levError && leverage > DIRECT_MAX_LEVERAGE ? (
+            <p className="mt-1.5 text-xs text-warn" data-testid="high-leverage-note">
+              {leverage.toFixed(0)}x: a {liqDistance !== null ? fmtPercent(liqDistance, 2) : `${(90 / leverage).toFixed(2)}%`} move against you liquidates the position. Above{" "}
+              {DIRECT_MAX_LEVERAGE}x, opens and closes go through the keeper at the next price, and each side&rsquo;s fee is capped at 10% of margin.
+            </p>
+          ) : null}
         </div>
 
         {!showBrackets ? (
@@ -995,7 +1028,44 @@ export const OrderTicket = forwardRef<
 
         {entry && size !== null && size > 0n ? <TradeMap isLong={isLong} entry={entry} liq={liq && liq > 0n ? liq : null} stop={stopLoss && !slError ? stopLoss : null} target={takeProfit && !tpError ? takeProfit : null} dp={dp} /> : null}
 
-        <dl className="grid gap-1.5 border-t border-line pt-3 text-[0.8125rem]">
+        <div className="risk-card" data-tone={level?.tone ?? "none"} data-testid="risk-summary">
+          <div className="flex items-center justify-between gap-2">
+            <span className="risk-card-title">Risk</span>
+            <span className="flex items-center gap-2">
+              <span className="risk-meter" aria-hidden="true">
+                {[1, 2, 3, 4].map((i) => (
+                  <span key={i} data-on={level !== null && i <= level.filled} />
+                ))}
+              </span>
+              <span className="risk-level">{level ? level.label : "—"}</span>
+            </span>
+          </div>
+          <dl className="mt-2 grid gap-1.5 text-[0.8125rem]">
+            <Row
+              label="Most you can lose"
+              strong
+              hint="If the position is liquidated you lose its margin, plus the fees you paid. Nothing beyond that: there is no negative balance."
+              value={maxLoss !== null ? `${fmtUsdc(maxLoss)} ${sym}` : "—"}
+            />
+            <Row
+              label="Liquidated after"
+              hint="The move against you, from entry, at which losses plus funding reach 90% of margin."
+              value={liq === null ? "—" : liq === 0n ? "Never (1x long)" : `${liqDistance !== null ? fmtPercent(liqDistance, liqDistance < 0.01 ? 2 : 1) : "—"} move · ${fmtPrice(liq, dp)}`}
+              tone={level && (level.tone === "high" || level.tone === "extreme") ? "short" : level?.tone === "moderate" ? "warn" : undefined}
+            />
+            {stopLoss && slPnl !== null && !slError ? (
+              <Row label="Loss at your stop" hint="Price loss if the stop fills at its trigger, before fees." value={`${fmtUsdc(slPnl, 2, { sign: true })} ${sym}`} tone="short" />
+            ) : null}
+            <Row
+              label="Most you can make"
+              hint={`Profit per position is capped at ${params?.maxProfitMultiple.toString() ?? "10"}x margin.`}
+              value={maxProfit !== null && margin ? `${fmtUsdc(maxProfit)} ${sym}${capDistance !== null ? ` after a ${fmtPercent(capDistance, capDistance < 0.01 ? 2 : 1)} move` : ""}` : "—"}
+              tone="long"
+            />
+          </dl>
+        </div>
+
+        <dl className="grid gap-1.5 text-[0.8125rem]">
           <Row
             label={kind === "limit" ? "Entry" : "Entry estimate"}
             hint={kind === "market" ? "Buys fill at the oracle ask, sells at the bid. The fill is the price a keeper executes against, at most your slippage tolerance away." : undefined}
@@ -1004,8 +1074,7 @@ export const OrderTicket = forwardRef<
           <Row
             label="Liquidation price"
             hint="The oracle mid price at which losses plus funding reach 90% of margin. Past it, anyone can liquidate the position and the margin is lost."
-            value={liq === null ? "—" : liq === 0n ? "None" : `${fmtPrice(liq, dp)}${entry ? ` (${fmtPercent(ratio(absDiff(entry, liq), entry), 1)} away)` : ""}`}
-            tone={liq !== null && liq > 0n ? "warn" : undefined}
+            value={liq === null ? "—" : liq === 0n ? "None" : fmtPrice(liq, dp)}
           />
           <Row
             label="Fees to open"
@@ -1086,13 +1155,15 @@ export const OrderTicket = forwardRef<
           title={`Confirm ${kind === "limit" ? "limit" : "market"} ${sideWord}`}
           lines={confirmLines}
           note={
-            kind === "market" && publisher
-              ? "A keeper fills this at the next oracle price, usually within 1-2 seconds. If the price runs past your worst fill, the order rests until it comes back or you cancel it."
-              : undefined
+            highLeverage
+              ? `${leverage.toFixed(0)}x leverage: a ${liqDistance !== null ? fmtPercent(liqDistance, 2) : "very small"} move against you liquidates this position and you lose the margin. A keeper fills it at the next oracle price; closing also goes through a keeper order.`
+              : kind === "market" && publisher
+                ? "A keeper fills this at the next oracle price, usually within 1-2 seconds. If the price runs past your worst fill, the order rests until it comes back or you cancel it."
+                : undefined
           }
           confirmLabel={kind === "limit" ? `Place limit ${sideWord}` : `${isLong ? "Buy / Long" : "Sell / Short"}`}
           tone={isLong ? "long" : "short"}
-          allowSkip
+          allowSkip={!highLeverage}
           onSkipChange={(skip) => setSettings((s) => ({ ...s, oneClick: skip }))}
           onCancel={() => setConfirming(null)}
           onConfirm={() => {

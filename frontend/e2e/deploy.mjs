@@ -45,14 +45,15 @@ export async function deploy({ lockSeconds, epochSeconds, streamSeconds, expiryS
   const cap = usd(2_000_000);
   const skew = usd(500_000);
   const markets = [
-    { symbol: "BTC-USD", marketId: FEEDS.BTC.id, feedId: FEEDS.BTC.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 100, expiry: 0 },
-    { symbol: "ETH-USD", marketId: FEEDS.ETH.id, feedId: FEEDS.ETH.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 100, expiry: 0 },
-    { symbol: "SOL-USD", marketId: FEEDS.SOL.id, feedId: FEEDS.SOL.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 50, expiry: 0 },
-    { symbol: "EUR-USD", marketId: FEEDS.EUR.id, feedId: FEEDS.EUR.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 50, expiry: 0 },
-    { symbol: "JPY-USD", marketId: FEEDS.JPY.id, feedId: FEEDS.JPY.id, quoteFeedId: zeroHash, invert: true, maxLeverage: 50, expiry: 0 },
-    { symbol: "XAU-USD", marketId: FEEDS.XAU.id, feedId: FEEDS.XAU.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 50, expiry: 0 },
-    { symbol: "ETH-BTC", marketId: id("ETH-BTC"), feedId: FEEDS.ETH.id, quoteFeedId: FEEDS.BTC.id, invert: false, maxLeverage: 50, expiry: 0 },
-    { symbol: datedSymbol, marketId: id(datedSymbol), feedId: FEEDS.BTC.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 50, expiry },
+    // Same leverage as contracts/script/Deploy.s.sol.
+    { symbol: "BTC-USD", marketId: FEEDS.BTC.id, feedId: FEEDS.BTC.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 1000, expiry: 0 },
+    { symbol: "ETH-USD", marketId: FEEDS.ETH.id, feedId: FEEDS.ETH.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 1000, expiry: 0 },
+    { symbol: "SOL-USD", marketId: FEEDS.SOL.id, feedId: FEEDS.SOL.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 500, expiry: 0 },
+    { symbol: "EUR-USD", marketId: FEEDS.EUR.id, feedId: FEEDS.EUR.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 250, expiry: 0 },
+    { symbol: "JPY-USD", marketId: FEEDS.JPY.id, feedId: FEEDS.JPY.id, quoteFeedId: zeroHash, invert: true, maxLeverage: 100, expiry: 0 },
+    { symbol: "XAU-USD", marketId: FEEDS.XAU.id, feedId: FEEDS.XAU.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 250, expiry: 0 },
+    { symbol: "ETH-BTC", marketId: id("ETH-BTC"), feedId: FEEDS.ETH.id, quoteFeedId: FEEDS.BTC.id, invert: false, maxLeverage: 100, expiry: 0 },
+    { symbol: datedSymbol, marketId: id(datedSymbol), feedId: FEEDS.BTC.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 250, expiry },
   ];
   for (const m of markets) {
     await send(engine, "PerpEngine", "addMarket", [

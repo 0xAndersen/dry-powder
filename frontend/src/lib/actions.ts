@@ -6,7 +6,7 @@ import { erc20Abi, pythAbi } from "./abis-extra";
 import type { RuntimeConfig } from "./config";
 import { UserFacingError } from "./errors";
 import { feedIdsOf, type Instrument } from "./instruments";
-import { withSlippageDown, withSlippageUp } from "./math";
+import { needsKeeperOrders, withSlippageDown, withSlippageUp } from "./math";
 import type { Quote } from "./oracle";
 import { fetchLatestUpdate, type HermesStore } from "./pyth";
 import type { TxApi } from "@/hooks/use-tx";
@@ -131,7 +131,8 @@ export async function submitOpen(ctx: ActionContext, req: OpenRequest, label: st
   await ensureAllowance(ctx, cfg.perpEngine, req.required);
   const { instrument, isLong, margin, size, takeProfit, stopLoss } = req;
 
-  if (req.type === "limit" || cfg.oracleMode === "publisher") {
+  // Above 100x the engine refuses direct opens (they would read a stored price); always use a keeper order.
+  if (req.type === "limit" || cfg.oracleMode === "publisher" || needsKeeperOrders(size, margin)) {
     let triggerPrice = req.limitPrice;
     if (req.type === "market") {
       if (!req.reference) throw new UserFacingError("No price is available to anchor the order to yet.");
@@ -184,6 +185,8 @@ export type CloseRequest = {
    * Used when the wallet cannot pay the execution fee, which would otherwise leave no way out of a position.
    */
   direct?: boolean;
+  /** Leverage above 100x: the engine accepts only keeper-executed closes. */
+  highLeverage?: boolean;
 };
 
 export type CloseResult = { receipt: TransactionReceipt; orderId: bigint | null; direct: boolean };
@@ -212,6 +215,12 @@ export async function submitClose(ctx: ActionContext, req: CloseRequest, label: 
       : withSlippageUp(req.reference.ask, BigInt(req.slippageBps))
     : 0n;
 
+  if (req.highLeverage && req.direct) {
+    throw new UserFacingError(
+      `Positions above 100x close only through a keeper order, which costs one execution fee. Add a little ${cfg.collateralSymbol} to your wallet and close again.`,
+    );
+  }
+
   if (cfg.oracleMode === "publisher" && req.direct) {
     // No update data: this only succeeds while the on-chain price is fresh (the publisher posts about once a second).
     const receipt = await api.send(label, async () => {
@@ -221,7 +230,7 @@ export async function submitClose(ctx: ActionContext, req: CloseRequest, label: 
     return { receipt, orderId: null, direct: true };
   }
 
-  if (cfg.oracleMode === "publisher") {
+  if (cfg.oracleMode === "publisher" || req.highLeverage) {
     await ensureAllowance(ctx, cfg.perpEngine, req.executionFee);
     const receipt = await api.send(label, async () => {
       const { request } = await simulateContract(wagmi, {

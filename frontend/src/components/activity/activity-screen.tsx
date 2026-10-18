@@ -130,7 +130,7 @@ function Figure({ label, children, tip }: { label: string; children: React.React
 
 function Trader({ address }: { address: string }) {
   return (
-    <AppLink route="trade" params={{ account: address }} className="num hover:text-spark hover:underline" title={`Watch ${address}`}>
+    <AppLink route="trade" params={{ account: address }} className="num hover:text-accent hover:underline" title={`Watch ${address}`}>
       {shortAddress(address)}
     </AppLink>
   );
@@ -332,7 +332,7 @@ export function ActivityScreen() {
                     } else if (e.type === "orderCancelled") {
                       label = <span className="text-muted">Order #{e.orderId.toString()} cancelled</span>;
                     } else if (e.type === "marketSettled") {
-                      label = <span className="text-spark">Market settled</span>;
+                      label = <span className="text-accent">Market settled</span>;
                       price = fmtPrice(e.price, dp);
                     }
                     return (

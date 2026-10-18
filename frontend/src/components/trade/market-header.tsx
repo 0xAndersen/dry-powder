@@ -21,7 +21,7 @@ function StatusChip({ instrument, price, chainNow }: { instrument: Instrument; p
   if (isSettled(instrument)) return <span className="tag" data-tone="muted">Settled</span>;
   if (isExpired(instrument, chainNow)) return <span className="tag" data-tone="warn">Expired</span>;
   if (!instrument.enabled) return <span className="tag" data-tone="warn">Closed</span>;
-  if (instrument.expiry !== 0) return <span className="tag" data-tone="spark">{fmtDuration(instrument.expiry - chainNow)}</span>;
+  if (instrument.expiry !== 0) return <span className="tag" data-tone="accent">{fmtDuration(instrument.expiry - chainNow)}</span>;
   if (price.status === "awaiting") return <span className="tag" data-tone="warn">Awaiting price</span>;
   return null;
 }
@@ -89,7 +89,7 @@ function MarketPicker({
         {groups.map((group) => (
           <section key={group.kind.key} aria-label={group.kind.label}>
             <h3 className="flex items-baseline justify-between px-3 pb-1 pt-3 text-xs">
-              <span className="wide font-semibold text-spark">{group.kind.label}</span>
+              <span className="wide font-semibold text-accent">{group.kind.label}</span>
               <span className="text-faint">{group.items.length}</span>
             </h3>
             <ul>
@@ -106,7 +106,7 @@ function MarketPicker({
                     >
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center gap-2">
-                          <span className={`wide text-[0.8125rem] font-semibold ${i.id === current.id ? "text-spark" : "text-text"}`}>{i.symbol}</span>
+                          <span className={`wide text-[0.8125rem] font-semibold ${i.id === current.id ? "text-accent" : "text-text"}`}>{i.symbol}</span>
                           {p ? <StatusChip instrument={i} price={p} chainNow={chainNow} /> : null}
                         </span>
                         <span className="block truncate text-xs text-faint">{i.name}</span>
@@ -217,7 +217,7 @@ export function MarketHeader({
               role="tab"
               aria-selected={selected}
               onClick={() => onSelect(i)}
-              className={`flex shrink-0 flex-col items-start border-b-2 px-3 py-1.5 text-left transition-colors ${selected ? "border-spark bg-raised/60" : "border-transparent hover:bg-raised/30"}`}
+              className={`flex shrink-0 flex-col items-start border-b-2 px-3 py-1.5 text-left transition-colors ${selected ? "border-accent bg-raised/60" : "border-transparent hover:bg-raised/30"}`}
             >
               <span className={`wide whitespace-nowrap text-xs font-semibold ${selected ? "text-text" : "text-muted"}`}>{i.symbol}</span>
               <span className={`num text-xs ${p?.status === "awaiting" ? "text-faint" : "text-text"}`}>
@@ -302,11 +302,11 @@ export function MarketHeader({
               }
             >
               {settled ? (
-                <span className="text-spark" data-testid="settlement-price">{fmtPrice(instrument.settlementPrice, dp)}</span>
+                <span className="text-accent" data-testid="settlement-price">{fmtPrice(instrument.settlementPrice, dp)}</span>
               ) : expired ? (
                 <span className="text-warn">awaiting settlement</span>
               ) : (
-                <span className="text-spark" data-testid="expiry-countdown">{fmtDuration(instrument.expiry - chainNow)}</span>
+                <span className="text-accent" data-testid="expiry-countdown">{fmtDuration(instrument.expiry - chainNow)}</span>
               )}
             </Stat>
           ) : null}

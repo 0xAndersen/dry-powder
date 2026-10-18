@@ -64,7 +64,7 @@ export function EpochCard({ stats }: { stats: HouseStats | undefined }) {
         return writeContract(wagmiConfig, request);
       });
       return toStakers > 0n
-        ? `Epoch settled: about ${fmtUsdc(toStakers)} ${sym} now streams to KEG stakers.`
+        ? `Epoch settled: about ${fmtUsdc(toStakers)} ${sym} now streams to DRY stakers.`
         : aboveMark > 0n
           ? "Epoch settled. Nobody is staking, so the house kept the gain and the high-water mark moved up."
           : "Epoch settled. The house is not above its high-water mark, so nothing went to stakers.";
@@ -78,13 +78,13 @@ export function EpochCard({ stats }: { stats: HouseStats | undefined }) {
           <h2 className="panel-title">Profit share, settled each epoch</h2>
           <p className="mt-1 max-w-[62ch] text-[0.8125rem] text-muted">
             Once per epoch anyone can settle. If the value of a vault share is above its previous high, {sharePct}% of that gain is set aside and
-            streamed to KEG stakers over {stats ? fmtDuration(Number(stats.streamPeriod)) : "the stream period"}. After a losing stretch the house must
+            streamed to DRY stakers over {stats ? fmtDuration(Number(stats.streamPeriod)) : "the stream period"}. After a losing stretch the house must
             first recover to the old high before stakers earn again.
           </p>
         </div>
         <dl className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-4">
           <Item label="Next settlement">
-            {stats ? due ? <span className="text-spark" data-testid="epoch-due">Due now</span> : <span data-testid="epoch-countdown">in {fmtDuration(remaining)}</span> : "…"}
+            {stats ? due ? <span className="text-accent" data-testid="epoch-due">Due now</span> : <span data-testid="epoch-countdown">in {fmtDuration(remaining)}</span> : "…"}
           </Item>
           <Item
             label="High-water mark"
@@ -109,7 +109,7 @@ export function EpochCard({ stats }: { stats: HouseStats | undefined }) {
               stats.totalStaked === 0n && aboveMark > 0n ? (
                 <span className="text-muted">0: nobody staked</span>
               ) : (
-                <span className={toStakers > 0n ? "text-spark" : ""}>
+                <span className={toStakers > 0n ? "text-accent" : ""}>
                   {fmtUsdc(toStakers)} {sym}
                 </span>
               )

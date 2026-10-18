@@ -10,7 +10,7 @@ wallet yet.
 | --- | --- |
 | `/trade` | Market strip and grouped selector (perpetuals, crosses, FX & metals, dated futures), chart, order ticket, account bar, positions / orders / history / alerts |
 | `/activity` | Venue-wide live feed from chain logs, totals, open interest per market, top traders, click-through to any trader |
-| `/house` | Vault NAV and share price, deposit / withdraw, epoch settlement, KEG staking and yield stream |
+| `/house` | Vault NAV and share price, deposit / withdraw, epoch settlement, DRY staking and yield stream |
 | Watch mode | `?account=0x…` shows any account read-only |
 
 ## The core flow: first trade
@@ -84,7 +84,7 @@ Connect -> "Get test funds" -> pick a market -> Long/Short -> size -> submit -> 
   epoch timer with a preview of what settling pays; yield stream rate and end time.
 - The entry/exit pricing is correct but novel: a depositor may get fewer shares than the headline share price
   implies when traders are losing. The preview shows the exact shares; add one sentence saying why.
-- While little KEG is staked, a tiny stake earns most of the stream. Show "your share of the stream" before
+- While little DRY is staked, a tiny stake earns most of the stream. Show "your share of the stream" before
   staking, and expect this to be gamed until rebates are redesigned (REPORT.md, finding 3).
 
 ## Issues seen in screenshots

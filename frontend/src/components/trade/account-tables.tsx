@@ -19,6 +19,7 @@ import { closeFlow } from "@/lib/flows";
 import { PRICE_DECIMALS, fmtAge, fmtDateTime, fmtNum, fmtPercent, fmtPrice, fmtQty, fmtUsdc, parseAmount, shortAddress, toInputString } from "@/lib/format";
 import { buildHistory, historyCsv } from "@/lib/history";
 import { isSettled, type Instrument } from "@/lib/instruments";
+import { RISK_TEXT, riskTone } from "@/lib/risk-tone";
 import { ratio, unitsOf } from "@/lib/math";
 import { valuePosition } from "@/lib/position";
 import { priceAlerts, tradeSettings, type PriceAlert } from "@/lib/storage";
@@ -213,7 +214,7 @@ function PositionRow({
   return (
     <tr data-testid={`position-${symbol}`}>
       <td>
-        <button type="button" className="text-left hover:text-spark" disabled={!instrument} onClick={() => instrument && onSelectMarket(instrument)}>
+        <button type="button" className="text-left hover:text-accent" disabled={!instrument} onClick={() => instrument && onSelectMarket(instrument)}>
           <span className="wide font-semibold">{symbol}</span>
         </button>
         <span className="block text-xs">
@@ -229,10 +230,10 @@ function PositionRow({
       <td className="r num">{fmtPrice(pos.entryPrice, dp)}</td>
       <td className="r num">
         {mark !== null ? fmtPrice(mark, dp) : "—"}
-        {price?.status === "awaiting" ? <span className="block text-xs text-warn">indicative</span> : price?.status === "settled" ? <span className="block text-xs text-spark">settled</span> : null}
+        {price?.status === "awaiting" ? <span className="block text-xs text-warn">indicative</span> : price?.status === "settled" ? <span className="block text-xs text-accent">settled</span> : null}
       </td>
       <td className="r">
-        <span className={`num ${liqNear ? "text-short" : "text-spark"}`}>
+        <span className={`num ${liqNear ? "text-short" : RISK_TEXT[riskTone(value.liquidationDistance) ?? "calm"]}`}>
           {value.liquidatableNow ? "Now" : value.liquidationPrice === null ? "None" : fmtPrice(value.liquidationPrice, dp)}
         </span>
         {value.liquidationDistance !== null ? (
@@ -292,7 +293,7 @@ function PositionRow({
             </button>
           ) : closing ? (
             <span className="flex items-center justify-end gap-1.5">
-              <span className="flex items-center gap-1 text-xs text-spark">
+              <span className="flex items-center gap-1 text-xs text-accent">
                 <span className="spinner" aria-hidden="true" /> Closing
               </span>
               <button type="button" className="btn btn-sm" disabled={tx.busy} onClick={cancelClose} title="Cancel the resting close order">
@@ -305,7 +306,7 @@ function PositionRow({
             </button>
           )
         ) : closing ? (
-          <span className="text-xs text-spark">Closing</span>
+          <span className="text-xs text-accent">Closing</span>
         ) : null}
       </td>
     </tr>
@@ -377,10 +378,10 @@ function OrdersTable({
               ? hasPosition
                 ? { text: "Blocked: a position is open in this market", tone: "text-warn" }
                 : marketable
-                  ? { text: "Marketable: waiting for a keeper", tone: "text-spark" }
+                  ? { text: "Marketable: waiting for a keeper", tone: "text-accent" }
                   : { text: now !== null ? `Resting, ${fmtPercent(Math.abs(ratio(o.triggerPrice - now, now)), 2)} from price` : "Resting", tone: "text-muted" }
               : o.orderType === 3
-                ? { text: "Closing: waiting for a keeper", tone: "text-spark" }
+                ? { text: "Closing: waiting for a keeper", tone: "text-accent" }
                 : { text: "Armed", tone: "text-muted" };
             return (
               <tr key={row.id.toString()} data-testid={`order-${row.id}`}>
@@ -389,7 +390,7 @@ function OrdersTable({
                   <span className="num block text-xs text-faint">{fmtAge(Math.max(0, chainNow - Number(o.createdAt)))} ago</span>
                 </td>
                 <td>
-                  <button type="button" className="wide font-semibold hover:text-spark" disabled={!instrument} onClick={() => instrument && onSelectMarket(instrument)}>
+                  <button type="button" className="wide font-semibold hover:text-accent" disabled={!instrument} onClick={() => instrument && onSelectMarket(instrument)}>
                     {instrument?.symbol ?? "Unknown"}
                   </button>
                 </td>

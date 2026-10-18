@@ -63,13 +63,33 @@ export function profitCapPrice(entry: bigint, margin: bigint, size: bigint, isLo
   return (entry * (size - cap)) / size;
 }
 
-/** Upper bound of the open fee, as escrowed for limit orders. */
-export function maxOpenFee(size: bigint, baseFeeBps: bigint, maxSkewFeeBps: bigint): bigint {
-  return ceilDiv(size * (baseFeeBps + maxSkewFeeBps), BPS);
+/** PerpEngine.MAX_LEVERAGE. */
+export const MAX_LEVERAGE = 1_000;
+/** PerpEngine.DIRECT_MAX_LEVERAGE: above it positions open and close only through keeper orders. */
+export const DIRECT_MAX_LEVERAGE = 100;
+/** PerpEngine.MARGIN_FEE_CAP_BPS: each side's fee is at most 10% of margin. */
+export const MARGIN_FEE_CAP_BPS = 1_000n;
+
+/** True when the engine requires keeper orders for this size and margin (leverage above 100x). */
+export function needsKeeperOrders(size: bigint, margin: bigint): boolean {
+  return size > margin * BigInt(DIRECT_MAX_LEVERAGE);
 }
 
-export function baseFee(size: bigint, baseFeeBps: bigint): bigint {
-  return ceilDiv(size * baseFeeBps, BPS);
+/** The engine's per-side fee cap for a position with this margin. */
+export function feeCap(margin: bigint): bigint {
+  return (margin * MARGIN_FEE_CAP_BPS) / BPS;
+}
+
+/** Upper bound of the open fee, as escrowed for limit orders (capped at 10% of margin). */
+export function maxOpenFee(size: bigint, baseFeeBps: bigint, maxSkewFeeBps: bigint, margin?: bigint): bigint {
+  const fee = ceilDiv(size * (baseFeeBps + maxSkewFeeBps), BPS);
+  return margin === undefined ? fee : fee < feeCap(margin) ? fee : feeCap(margin);
+}
+
+/** Base fee on `size` (the close fee), capped at 10% of margin when the margin is given. */
+export function baseFee(size: bigint, baseFeeBps: bigint, margin?: bigint): bigint {
+  const fee = ceilDiv(size * baseFeeBps, BPS);
+  return margin === undefined ? fee : fee < feeCap(margin) ? fee : feeCap(margin);
 }
 
 /** Worst acceptable fill for a buy (price may rise by `slippageBps`). */

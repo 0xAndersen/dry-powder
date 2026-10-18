@@ -71,7 +71,8 @@ export async function startTraders({ addresses, count, actionsPerSecond = 3, qui
     if (candidates.length === 0) return;
     const m = pick(candidates);
     const isLong = Math.random() < 0.52;
-    const maxLev = Number(m.market.maxLeverage);
+    // Direct opens stop at 100x; 1000x is exercised by the SDK smoke test and contracts/test/HighLeverage.t.sol.
+    const maxLev = Math.min(100, Number(m.market.maxLeverage));
     // Mostly sensible leverage, with a tail of gamblers who feed the liquidation feed.
     const leverage = Math.random() < 0.25 ? maxLev : Math.max(2, Math.round(Math.random() * Math.min(25, maxLev)));
     const margin = usd(20 + Math.random() * 380);

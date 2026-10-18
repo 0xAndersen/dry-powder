@@ -6,7 +6,7 @@ Next.js 15 (App Router), React 19, Tailwind 4, wagmi 2 / viem 2, lightweight-cha
 - `/trade` &mdash; markets discovered from the chain, chart with indicators, order ticket, positions / orders /
   history / alerts. `?market=BTC-USD` selects a market, `?account=0x…` watches any account read-only.
 - `/activity` &mdash; live venue feed from event logs, totals, open interest, top traders.
-- `/house` &mdash; vault NAV and share price, epoch settlement, deposit / withdraw, KEG staking.
+- `/house` &mdash; vault NAV and share price, epoch settlement, deposit / withdraw, DRY staking.
 
 Nothing about a deployment is compiled in. The same build serves any set of contracts.
 
@@ -76,7 +76,7 @@ Hosting notes:
 | `PERP_ENGINE_ADDRESS` | `perpEngineAddress` | `engine` | required | PerpEngine |
 | `ENGINE_LENS_ADDRESS` | `engineLensAddress` | `lens` | required | EngineLens (all aggregated reads) |
 | `HOUSE_VAULT_ADDRESS` | `houseVaultAddress` | `vault` | required | HouseVault |
-| `REWARD_TOKEN_ADDRESS` | `rewardTokenAddress` | `token` | required | RewardToken (KEG) |
+| `REWARD_TOKEN_ADDRESS` | `rewardTokenAddress` | `token` | required | RewardToken (DRY) |
 | `USDC_ADDRESS` | `usdcAddress` | `collateral` | `0x3600…0000` | collateral token (Arc USDC, or TestUSDC) |
 | `RPC_URL` | `rpcUrl` | `rpc` | `https://rpc.testnet.arc.io` | JSON-RPC endpoint (must allow browser origins) |
 | `CHAIN_ID` | `chainId` | `chain` | `5042002` | chain id |

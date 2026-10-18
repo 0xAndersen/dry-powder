@@ -11,7 +11,8 @@ mkdir -p "$LOGS"
 # Anvil's well-known development account #2, which the local deploy registers as the publisher. Local chain only.
 BOT_KEY=0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
 
-EXTERNAL_KEEPER=1 TRADERS=${TRADERS:-12} node e2e/stack.mjs > "$LOGS/stack.log" 2>&1 &
+# Half the default volatility: market orders use a 0.5% slippage bound, and a jump through it leaves the order resting.
+VOLATILITY=${VOLATILITY:-0.5} EXTERNAL_KEEPER=1 TRADERS=${TRADERS:-12} node e2e/stack.mjs > "$LOGS/stack.log" 2>&1 &
 STACK=$!
 cleanup() { kill "$KEEPER" "$STACK" 2>/dev/null || true; wait 2>/dev/null || true; }
 KEEPER=0
@@ -25,13 +26,15 @@ grep -q "ready:" "$LOGS/stack.log" || { cat "$LOGS/stack.log"; exit 1; }
 KEEPER=$!
 sleep 30
 status=0
-node e2e/run.mjs 2>&1 | tee "$LOGS/run.log" || status=$?
+node e2e/run.mjs ${E2E_ONLY:-} 2>&1 | tee "$LOGS/run.log" || status=$?
 if [ -n "${GITHUB_ACTIONS:-}" ]; then
   # Surface failures as annotations (readable from the API without the log archive).
   grep -E "FAIL|steps passed" "$LOGS/run.log" | cut -c1-900 | sed 's/^/::error::/' || true
   grep -E "\[error\]|failed" "$LOGS/keeper.log" | tail -5 | cut -c1-400 | sed 's/^/::warning::keeper /' || true
 fi
 [ "$status" -eq 0 ] || exit "$status"
+# The SDK: 1000x through keeper orders with a stop, then an agent account trading 500x.
+if [ -d ../sdk/node_modules ]; then (cd ../sdk && npm run build >/dev/null && node test/smoke.mjs 2>&1 | tail -60) || { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error::SDK smoke test failed"; exit 1; }; fi
 # The MCP server, driven through a real MCP client from an agent account on the same chain.
 if [ -d ../mcp/node_modules ]; then (cd ../mcp && node test/smoke.mjs 2>&1 | tail -40) || { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error::MCP smoke test failed"; exit 1; }; fi
 grep -q '"errors":{}' <(tail -1 "$LOGS/keeper.log") || echo "keeper reported errors: $(tail -1 "$LOGS/keeper.log")"

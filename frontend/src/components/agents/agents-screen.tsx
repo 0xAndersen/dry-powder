@@ -177,11 +177,11 @@ function FundsCard({ account, owner }: { account: Address; owner: Address }) {
   const withdrawKeg = () => {
     if (!keg) return;
     void tx.run(async (api) => {
-      await api.send("Withdraw KEG", async () => {
+      await api.send("Withdraw DRY", async () => {
         const { request } = await simulateContract(wagmiConfig, { address: account, abi: agentAccountAbi, functionName: "withdraw", args: [cfg.rewardToken, owner, keg], account: owner });
         return writeContract(wagmiConfig, request);
       });
-      return `Withdrew ${fmtToken(keg)} KEG to your wallet; stake it on the House page.`;
+      return `Withdrew ${fmtToken(keg)} DRY to your wallet; stake it on the House page.`;
     });
   };
 
@@ -208,7 +208,7 @@ function FundsCard({ account, owner }: { account: Address; owner: Address }) {
         <div>
           <dt className="text-xs text-muted">Loss rebates</dt>
           <dd className="num mt-0.5 flex items-center gap-2 text-lg font-semibold">
-            {keg !== undefined ? fmtToken(keg) : "—"} <span className="text-xs font-normal text-muted">KEG</span>
+            {keg !== undefined ? fmtToken(keg) : "—"} <span className="text-xs font-normal text-muted">DRY</span>
             {keg ? (
               <button type="button" className="btn btn-sm" disabled={tx.busy} onClick={withdrawKeg}>
                 Withdraw
