@@ -1,5 +1,9 @@
 import { encodeEventTopics, numberToHex, pad, parseEventLogs, type Address, type Hex, type PublicClient, type RpcLog } from "viem";
 import { perpEngineAbi } from "./abi";
+import { engineV31EventsAbi } from "./abis-extra";
+
+/** The generated engine ABI plus the v3.1 events (increase, partial close, margin top-up). */
+const ENGINE_EVENTS_ABI = [...perpEngineAbi, ...engineV31EventsAbi] as const;
 
 /** Engine event log reader: bounded-range `eth_getLogs` back-fill plus a live tail. */
 
@@ -69,6 +73,41 @@ export type OrderCancelledEvent = Common & { type: "orderCancelled"; orderId: bi
 export type OrderExecutedEvent = Common & { type: "orderExecuted"; orderId: bigint; trader: Address; keeper: Address; price: bigint };
 export type MarketSettledEvent = Common & { type: "marketSettled"; marketId: Hex; price: bigint };
 
+/** v3.1: size added to an open position. Carries the position's new margin, size and average entry. */
+export type IncreaseEvent = Common & {
+  type: "increase";
+  key: Hex;
+  trader: Address;
+  marketId: Hex;
+  isLong: boolean;
+  addedMargin: bigint;
+  addedSize: bigint;
+  price: bigint;
+  fee: bigint;
+  newMargin: bigint;
+  newSize: bigint;
+  newEntryPrice: bigint;
+  orderId?: bigint;
+};
+
+/** v3.1: part of a position closed, with its realised PnL (same meaning as a close's). */
+export type DecreaseEvent = Common & {
+  type: "decrease";
+  key: Hex;
+  trader: Address;
+  marketId: Hex;
+  price: bigint;
+  closedSize: bigint;
+  releasedMargin: bigint;
+  pnl: bigint;
+  fee: bigint;
+  payout: bigint;
+  orderId?: bigint;
+};
+
+/** v3.1: collateral added to an open position (no market in the event; the key identifies the position). */
+export type MarginAddedEvent = Common & { type: "marginAdded"; key: Hex; trader: Address; amount: bigint; newMargin: bigint };
+
 export type EngineEvent =
   | OpenEvent
   | CloseEvent
@@ -76,7 +115,10 @@ export type EngineEvent =
   | OrderCreatedEvent
   | OrderCancelledEvent
   | OrderExecutedEvent
-  | MarketSettledEvent;
+  | MarketSettledEvent
+  | IncreaseEvent
+  | DecreaseEvent
+  | MarginAddedEvent;
 
 const TRADER_EVENTS = [
   "PositionOpened",
@@ -85,11 +127,22 @@ const TRADER_EVENTS = [
   "OrderCreated",
   "OrderCancelled",
   "OrderExecuted",
+  "PositionIncreased",
+  "PositionDecreased",
+  "MarginAdded",
 ] as const;
 const ALL_EVENTS = [...TRADER_EVENTS, "MarketSettled"] as const;
 
 function topic0(eventName: (typeof ALL_EVENTS)[number]): Hex {
-  return encodeEventTopics({ abi: perpEngineAbi, eventName })[0]!;
+  return encodeEventTopics({ abi: ENGINE_EVENTS_ABI, eventName })[0]!;
+}
+
+/** The block timestamp some RPCs (Arc's among them) include on every log, saving a block lookup. */
+function logTimestamp(log: RpcLog): number | null {
+  const raw = (log as RpcLog & { blockTimestamp?: Hex | null }).blockTimestamp;
+  if (!raw) return null;
+  const n = Number(BigInt(raw));
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 /** Largest block span requested in one `eth_getLogs` call. */
@@ -153,6 +206,11 @@ export type LogFeedOptions = {
   maxEvents: number;
   /** Fetch the real timestamp of every block that holds an event (for account history). */
   exactTimes?: boolean;
+  /**
+   * Blocks per back-fill request (default MAX_BLOCK_RANGE). Larger spans suit trader-filtered feeds, which return few
+   * logs; a span the RPC refuses is retried in MAX_BLOCK_RANGE pieces.
+   */
+  blockRange?: number;
 };
 
 const INITIAL_STATUS: LogFeedStatus = {
@@ -254,8 +312,9 @@ export class LogFeed {
       this.setStatus({ phase: "live", pending: 0, loadedFrom: Math.min(this.status.loadedFrom, from) });
       return;
     }
+    const span = Math.max(1, Math.floor(this.opts.blockRange ?? MAX_BLOCK_RANGE));
     const ranges: [number, number][] = [];
-    for (let end = to; end >= from; end -= MAX_BLOCK_RANGE) ranges.push([Math.max(from, end - MAX_BLOCK_RANGE + 1), end]);
+    for (let end = to; end >= from; end -= span) ranges.push([Math.max(from, end - span + 1), end]);
     let next = 0;
     let remaining = ranges.length;
     let failed: string | null = null;
@@ -266,7 +325,16 @@ export class LogFeed {
         const [a, b] = ranges[next++]!;
         try {
           if (ranges.length > 1 || this.opts.exactTimes !== true) await this.anchor(a);
-          const events = await this.fetchRange(a, b);
+          let events: EngineEvent[];
+          try {
+            events = await this.fetchRange(a, b);
+          } catch (error) {
+            if (b - a + 1 <= MAX_BLOCK_RANGE) throw error;
+            // The RPC refused the wide span (range or result-size cap): read it in standard pieces instead.
+            events = [];
+            for (let end = b; end >= a && !this.stopped; end -= MAX_BLOCK_RANGE) events.push(...(await this.fetchRange(Math.max(a, end - MAX_BLOCK_RANGE + 1), end)));
+            events.sort((x, y) => x.block - y.block || x.logIndex - y.logIndex);
+          }
           this.insert(events);
           remaining -= 1;
           // Chunks finish out of order; coverage is only contiguous once every newer chunk is in.
@@ -332,12 +400,23 @@ export class LogFeed {
     })) as RpcLog[];
     if (raw.length === 0) return [];
 
+    // Logs that carry their block's timestamp are exact for free; the rest are fetched (exactTimes) or interpolated.
+    const stamped = new Map<number, number>();
+    for (const l of raw) {
+      const ts = logTimestamp(l);
+      if (ts === null) continue;
+      const b = Number(BigInt(l.blockNumber ?? "0x0"));
+      if (!stamped.has(b)) {
+        stamped.set(b, ts);
+        this.clock.add(b, ts);
+      }
+    }
     if (this.opts.exactTimes) {
-      const blocks = [...new Set(raw.map((l) => Number(BigInt(l.blockNumber ?? "0x0"))))].slice(0, 200);
+      const blocks = [...new Set(raw.map((l) => Number(BigInt(l.blockNumber ?? "0x0"))))].filter((b) => !stamped.has(b)).slice(0, 200);
       await Promise.all(blocks.map((b) => this.anchor(b)));
     }
 
-    const parsed = parseEventLogs({ abi: perpEngineAbi, logs: raw, eventName: [...ALL_EVENTS] });
+    const parsed = parseEventLogs({ abi: ENGINE_EVENTS_ABI, logs: raw, eventName: [...ALL_EVENTS] });
     const out: EngineEvent[] = [];
     for (const log of parsed) {
       const block = Number(BigInt(log.blockNumber ?? 0));
@@ -347,7 +426,7 @@ export class LogFeed {
         block,
         logIndex,
         tx: (log.transactionHash ?? "0x") as Hex,
-        time: this.clock.timeOf(block),
+        time: stamped.get(block) ?? this.clock.timeOf(block),
       };
       switch (log.eventName) {
         case "PositionOpened": {
@@ -379,6 +458,25 @@ export class LogFeed {
         case "MarketSettled":
           out.push({ ...common, type: "marketSettled", marketId: lower(log.args.priceId), price: log.args.settlementPrice });
           break;
+        case "PositionIncreased": {
+          const a = log.args;
+          out.push({
+            ...common, type: "increase", key: a.key, trader: a.trader, marketId: lower(a.priceId), isLong: a.isLong, addedMargin: a.addedMargin,
+            addedSize: a.addedSize, price: a.price, fee: a.fee, newMargin: a.newMargin, newSize: a.newSize, newEntryPrice: a.newEntryPrice,
+          });
+          break;
+        }
+        case "PositionDecreased": {
+          const a = log.args;
+          out.push({
+            ...common, type: "decrease", key: a.key, trader: a.trader, marketId: lower(a.priceId), price: a.exitPrice, closedSize: a.closedSize,
+            releasedMargin: a.releasedMargin, pnl: a.pnl, fee: a.fee, payout: a.payout,
+          });
+          break;
+        }
+        case "MarginAdded":
+          out.push({ ...common, type: "marginAdded", key: log.args.key, trader: log.args.trader, amount: log.args.amount, newMargin: log.args.newMargin });
+          break;
       }
     }
 
@@ -392,9 +490,9 @@ export class LogFeed {
     for (const list of byTx.values()) {
       for (const executed of list) {
         if (executed.type !== "orderExecuted") continue;
-        let best: OpenEvent | CloseEvent | undefined;
+        let best: OpenEvent | CloseEvent | IncreaseEvent | DecreaseEvent | undefined;
         for (const candidate of list) {
-          if ((candidate.type !== "open" && candidate.type !== "close") || candidate.orderId !== undefined) continue;
+          if ((candidate.type !== "open" && candidate.type !== "close" && candidate.type !== "increase" && candidate.type !== "decrease") || candidate.orderId !== undefined) continue;
           if (candidate.trader.toLowerCase() !== executed.trader.toLowerCase() || candidate.logIndex > executed.logIndex) continue;
           if (!best || candidate.logIndex > best.logIndex) best = candidate;
         }

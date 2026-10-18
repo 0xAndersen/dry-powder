@@ -21,6 +21,11 @@ export type RuntimeConfig = {
   krakenUrl: string;
   hermesUrl: string;
   pythApiKey: string;
+  /**
+   * Where the indexer's stats.json is published (absolute, or relative to the app). Null: the app's default for the
+   * chain, if any (see lib/stats-file.ts). Never taken from the page address.
+   */
+  statsUrl: string | null;
   /** Query parameters that replaced a configured value. Shown in the UI so a crafted link is visible. */
   overrides: string[];
 };
@@ -44,6 +49,7 @@ export const CONFIG_KEYS = [
   { env: "HERMES_URL", json: "hermesUrl", query: "hermes" },
   { env: "PYTH_API_KEY", json: "pythApiKey", query: null },
   { env: "EXPLORER_URL", json: "explorerUrl", query: "explorer" },
+  { env: "STATS_URL", json: "statsUrl", query: null },
 ] as const;
 
 export type ConfigEnvName = (typeof CONFIG_KEYS)[number]["env"];
@@ -164,6 +170,14 @@ export function readRuntimeConfig(raw: RawConfig, overrides: string[] = []): Run
   const collateralSymbol = (value("COLLATERAL_SYMBOL") || DEFAULTS.COLLATERAL_SYMBOL).slice(0, 12);
   const collateralIsTest = /^(1|true|yes|on)$/i.test(value("COLLATERAL_IS_TEST"));
 
+  // Absolute http(s), or a path relative to the app (a static host serving stats.json next to it).
+  const rawStats = value("STATS_URL");
+  let statsUrl: string | null = null;
+  if (rawStats) {
+    if (/^https?:\/\//i.test(rawStats) || /^(\.{1,2}\/|\/)[^\s]*$/.test(rawStats)) statsUrl = rawStats;
+    else problems.push(`STATS_URL must be an http(s) URL or a relative path (got "${rawStats}")`);
+  }
+
   if (problems.length > 0) return { ok: false, problems };
   return {
     ok: true,
@@ -183,6 +197,7 @@ export function readRuntimeConfig(raw: RawConfig, overrides: string[] = []): Run
       krakenUrl,
       hermesUrl,
       pythApiKey: value("PYTH_API_KEY"),
+      statsUrl,
       overrides,
     },
   };
