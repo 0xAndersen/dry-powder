@@ -10,8 +10,8 @@
   },
   "devDependencies": {
     "@gfx/zopfli": "^1.0.15",
-    "esbuild": "^0.24.0",
-    "playwright": "1.56.0",
-    "viem": "2.21.0"
+    "esbuild": "^0.28.2",
+    "playwright": "1.64.1",
+    "viem": "2.57.7"
   }
 }
