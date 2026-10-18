@@ -24,6 +24,7 @@ export function startStaticServer(addresses) {
     houseVaultAddress: addresses.vault,
     rewardTokenAddress: addresses.token,
     agentFactoryAddress: addresses.agentFactory,
+    ...(addresses.trailingStops ? { trailingStopsAddress: addresses.trailingStops } : {}),
     usdcAddress: addresses.usdc,
     rpcUrl: RPC_URL,
     chainId: 31337,

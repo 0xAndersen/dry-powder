@@ -8,7 +8,7 @@ import { erc20Abi } from "./abis-extra";
 import { TEST_MINT_AMOUNT } from "./actions";
 import type { RuntimeConfig } from "./config";
 import { UserFacingError } from "./errors";
-import { arcFees, forgetSession, saveSession, sessionClient, setTradeFrom, type Session } from "./session";
+import { arcFees, forgetSession, saveSession, sessionClient, sessionWrite, setTradeFrom, type Session } from "./session";
 
 /** Everything the instant-trading flows need. */
 export type SessionFlowContext = {
@@ -96,10 +96,7 @@ export async function enableInstantTrading(ctx: SessionFlowContext, policy: Sess
   } else {
     if (topUp > 0n) await api.send("Send gas to the trading key", () => sendTransaction(wagmi, { to: agent, value: topUp, chainId: cfg.chainId }));
     if (existing === zeroAddress) {
-      await api.send("Create your trading account", async () => {
-        const { request: create } = await client.simulateContract({ address: factory, abi: agentAccountFactoryAbi, functionName: "createAccount", args: [owner], account: client.account });
-        return client.writeContract({ ...(create as object), ...(await arcFees(client)) } as never);
-      });
+      await api.send("Create your trading account", () => sessionWrite(client, { address: factory, abi: agentAccountFactoryAbi, functionName: "createAccount", args: [owner] }));
     }
     await api.send("Approve the trading key", async () => {
       const { request: approve } = await simulateContract(wagmi, { address: account, abi: agentAccountAbi, functionName: "setAgent", args: policyArgs, account: owner, chainId: cfg.chainId });
@@ -217,8 +214,7 @@ export async function withdrawFromAccount(ctx: SessionFlowContext, session: Sess
 export async function mintIntoAccount(ctx: Pick<SessionFlowContext, "cfg" | "chain" | "rpcUrls" | "api">, session: Session): Promise<void> {
   const { cfg, chain, rpcUrls, api } = ctx;
   const client = sessionClient(chain, rpcUrls, session.key);
-  await api.send(`Add test ${cfg.collateralSymbol} to your trading account`, async () => {
-    const { request } = await client.simulateContract({ address: cfg.usdc, abi: testUSDCAbi, functionName: "mint", args: [session.account, TEST_MINT_AMOUNT], account: client.account });
-    return client.writeContract({ ...(request as object), ...(await arcFees(client)) } as never);
-  });
+  await api.send(`Add test ${cfg.collateralSymbol} to your trading account`, () =>
+    sessionWrite(client, { address: cfg.usdc, abi: testUSDCAbi, functionName: "mint", args: [session.account, TEST_MINT_AMOUNT] }),
+  );
 }

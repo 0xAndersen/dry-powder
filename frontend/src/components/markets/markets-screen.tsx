@@ -7,6 +7,8 @@ import { Sparkline } from "@/components/ui/sparkline";
 import { useDayStatsMany, type DayView } from "@/hooks/use-day-stats";
 import { useLocalStore } from "@/hooks/use-local-store";
 import { useChainNow, useMarketData, type MarketPrice } from "@/hooks/use-market-data";
+import { useVenueStats } from "@/hooks/use-venue-stats";
+import { recentBig } from "@/lib/aggregate";
 import { USDC_DECIMALS, fmtCompact, fmtDuration, fmtNum, fmtPercent, fmtUsdc } from "@/lib/format";
 import { INSTRUMENT_KINDS, groupInstruments, isExpired, isSettled, kindInfo, marketSlug, type Instrument, type InstrumentKindKey } from "@/lib/instruments";
 import { ratio } from "@/lib/math";
@@ -14,13 +16,14 @@ import { hrefFor, stickyQuery } from "@/lib/nav";
 import { toggleWatch, watchlist } from "@/lib/social";
 import { createLocalStore } from "@/lib/storage";
 
-type SortKey = "default" | "change" | "oi" | "funding" | "leverage" | "name";
+type SortKey = "default" | "change" | "volume" | "oi" | "funding" | "leverage" | "name";
 type Filter = "all" | "favourites" | InstrumentKindKey;
 type ViewState = { sort: SortKey; desc: boolean; filter: Filter };
 
 const SORTS: { key: SortKey; label: string }[] = [
   { key: "default", label: "Market type" },
   { key: "change", label: "24h change" },
+  { key: "volume", label: "24h volume" },
   { key: "oi", label: "Open interest" },
   { key: "funding", label: "Funding" },
   { key: "leverage", label: "Max leverage" },
@@ -139,6 +142,17 @@ export function MarketsScreen() {
   const ordered = useMemo(() => groupInstruments(instruments).flatMap((g) => g.items), [instruments]);
   const day = useDayStatsMany(ordered, (id) => prices.get(id)?.display ?? null);
   const kinds = useMemo(() => INSTRUMENT_KINDS.filter((k) => instruments.some((i) => i.kind === k.key)).sort((a, b) => a.order - b.order), [instruments]);
+  // Notional opened and closed in the last 24 hours, by market: the indexer's hourly buckets continued with live events.
+  const stats = useVenueStats();
+  const volumeHour = Math.floor(chainNow / 3_600);
+  const volume = useMemo(() => {
+    const out = new Map<string, bigint>();
+    if (!stats.state) return out;
+    for (const [id, m] of Object.entries(stats.state.markets)) out.set(id, recentBig(m.hours, "v", volumeHour * 3_600 + 3_599));
+    return out;
+  }, [stats.state, volumeHour]);
+  const volumeKnown = stats.state !== null;
+  const venueVolume = [...volume.values()].reduce((a, b) => a + b, 0n);
 
   const rows = useMemo(() => {
     let list = ordered;
@@ -150,6 +164,8 @@ export function MarketsScreen() {
       switch (view.sort) {
         case "change":
           return day.get(i.id)?.change ?? null;
+        case "volume":
+          return volumeKnown ? Number(volume.get(i.id) ?? 0n) : null;
         case "oi":
           return Number(i.longOi + i.shortOi);
         case "funding":
@@ -171,7 +187,7 @@ export function MarketsScreen() {
       const cmp = typeof va === "string" ? va.localeCompare(vb as string) : va - (vb as number);
       return view.desc ? -cmp : cmp;
     });
-  }, [ordered, view, favourites, q, day]);
+  }, [ordered, view, favourites, q, day, volume, volumeKnown]);
 
   const totalOi = params?.totalOpenInterest ?? 0n;
   const longOi = instruments.reduce((s, i) => s + i.longOi, 0n);
@@ -191,11 +207,21 @@ export function MarketsScreen() {
       </div>
 
       <section className="panel" aria-label="Venue totals">
-        <dl className="grid grid-cols-2 lg:grid-cols-4 lg:divide-x lg:divide-line">
+        <dl className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 lg:divide-x lg:divide-line">
           <div className="px-3 py-3">
             <dt className="text-xs text-muted">Open interest</dt>
             <dd className="num mt-0.5 text-xl font-semibold leading-tight">
               {params ? fmtCompact(totalOi, USDC_DECIMALS) : "—"}
+              <span className="ml-1 text-xs font-normal text-muted">USDC</span>
+            </dd>
+          </div>
+          <div className="px-3 py-3">
+            <dt className="flex items-center gap-1 text-xs text-muted">
+              Volume, 24h
+              <Tip label="About volume">Notional opened, added, closed and liquidated in the last 24 hours, from the venue&apos;s events.</Tip>
+            </dt>
+            <dd className="num mt-0.5 text-xl font-semibold leading-tight" data-testid="venue-volume">
+              {volumeKnown ? fmtCompact(venueVolume, USDC_DECIMALS) : stats.loading ? <span className="skeleton w-16" /> : "—"}
               <span className="ml-1 text-xs font-normal text-muted">USDC</span>
             </dd>
           </div>
@@ -298,6 +324,7 @@ export function MarketsScreen() {
                   <th className="hidden lg:table-cell">
                     <span className="sr-only">24-hour chart</span>
                   </th>
+                  <SortHeader k="volume" label="Volume 24h" view={view} setView={setView} className="r" />
                   <SortHeader
                     k="funding"
                     label="Funding / h"
@@ -315,7 +342,7 @@ export function MarketsScreen() {
               </thead>
               <tbody>
                 {rows.map((i) => (
-                  <TableRow key={i.id} href={hrefOf(i)} instrument={i} price={prices.get(i.id)} day={day.get(i.id)} starred={favourites.includes(i.symbol)} chainNow={chainNow} />
+                  <TableRow key={i.id} href={hrefOf(i)} instrument={i} price={prices.get(i.id)} day={day.get(i.id)} starred={favourites.includes(i.symbol)} chainNow={chainNow} volume={volumeKnown ? (volume.get(i.id) ?? 0n) : null} />
                 ))}
               </tbody>
             </table>
@@ -323,7 +350,7 @@ export function MarketsScreen() {
 
           <ul className="grid grid-cols-1 gap-1.5 md:hidden" aria-label="Markets">
             {rows.map((i) => (
-              <MarketCard key={i.id} href={hrefOf(i)} instrument={i} price={prices.get(i.id)} day={day.get(i.id)} starred={favourites.includes(i.symbol)} chainNow={chainNow} />
+              <MarketCard key={i.id} href={hrefOf(i)} instrument={i} price={prices.get(i.id)} day={day.get(i.id)} starred={favourites.includes(i.symbol)} chainNow={chainNow} volume={volumeKnown ? (volume.get(i.id) ?? 0n) : null} />
             ))}
           </ul>
         </>
@@ -337,9 +364,9 @@ export function MarketsScreen() {
   );
 }
 
-type RowProps = { href: string; instrument: Instrument; price: MarketPrice | undefined; day: DayView | undefined; starred: boolean; chainNow: number };
+type RowProps = { href: string; instrument: Instrument; price: MarketPrice | undefined; day: DayView | undefined; starred: boolean; chainNow: number; volume: bigint | null };
 
-function TableRow({ href, instrument: i, price, day, starred, chainNow }: RowProps) {
+function TableRow({ href, instrument: i, price, day, starred, chainNow, volume }: RowProps) {
   const change = day?.change ?? null;
   const total = i.longOi + i.shortOi;
   return (
@@ -370,6 +397,7 @@ function TableRow({ href, instrument: i, price, day, starred, chainNow }: RowPro
       <td className="hidden lg:table-cell">
         <Sparkline values={day?.closes ?? null} tone={change === null ? "flat" : change >= 0 ? "up" : "down"} label={change === null ? undefined : `${i.symbol} over 24 hours: ${fmtPercent(change, 2, true)}`} />
       </td>
+      <td className="r num" data-cell="volume">{volume === null ? <span className="text-faint">—</span> : fmtCompact(volume, USDC_DECIMALS)}</td>
       <td className="r num">
         <Funding instrument={i} />
       </td>
@@ -387,7 +415,7 @@ function TableRow({ href, instrument: i, price, day, starred, chainNow }: RowPro
   );
 }
 
-function MarketCard({ href, instrument: i, price, day, starred, chainNow }: RowProps) {
+function MarketCard({ href, instrument: i, price, day, starred, chainNow, volume }: RowProps) {
   const change = day?.change ?? null;
   const total = i.longOi + i.shortOi;
   return (
@@ -410,12 +438,16 @@ function MarketCard({ href, instrument: i, price, day, starred, chainNow }: RowP
           <span className="num block text-xs">{day?.loading ? <span className="skeleton w-10" /> : <Change value={change} />}</span>
         </div>
       </div>
-      <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)_auto] items-end gap-x-4 text-2xs text-muted">
+      <dl className="mt-2 grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-end gap-x-3 text-2xs text-muted">
         <div className="min-w-0">
           <dt>Funding / h</dt>
           <dd className="num text-xs">
             <Funding instrument={i} compact />
           </dd>
+        </div>
+        <div className="min-w-0">
+          <dt>Vol 24h</dt>
+          <dd className="num text-xs text-text">{volume === null ? "—" : fmtCompact(volume, USDC_DECIMALS)}</dd>
         </div>
         <div className="min-w-0">
           <dt>Open interest</dt>

@@ -14,6 +14,8 @@ export type RuntimeConfig = {
   rewardToken: Address;
   /** AgentAccountFactory; null when this deployment has none (the Agents page then explains). */
   agentFactory: Address | null;
+  /** TrailingStops add-on (v3.1); null when this deployment has none (no trailing stops offered). */
+  trailingStops: Address | null;
   usdc: Address;
   oracleMode: OracleMode;
   collateralSymbol: string;
@@ -42,6 +44,7 @@ export const CONFIG_KEYS = [
   { env: "REWARD_TOKEN_ADDRESS", json: "rewardTokenAddress", query: "token" },
   { env: "USDC_ADDRESS", json: "usdcAddress", query: "collateral" },
   { env: "AGENT_FACTORY_ADDRESS", json: "agentFactoryAddress", query: "agents" },
+  { env: "TRAILING_STOPS_ADDRESS", json: "trailingStopsAddress", query: "trails" },
   { env: "RPC_URL", json: "rpcUrl", query: "rpc" },
   { env: "CHAIN_ID", json: "chainId", query: "chain" },
   { env: "ORACLE_MODE", json: "oracleMode", query: "mode" },
@@ -153,6 +156,7 @@ export function readRuntimeConfig(raw: RawConfig, overrides: string[] = []): Run
   const houseVault = address("HOUSE_VAULT_ADDRESS");
   const rewardToken = address("REWARD_TOKEN_ADDRESS");
   const agentFactory = value("AGENT_FACTORY_ADDRESS") ? address("AGENT_FACTORY_ADDRESS") : null;
+  const trailingStops = value("TRAILING_STOPS_ADDRESS") ? address("TRAILING_STOPS_ADDRESS") : null;
   const usdc = address("USDC_ADDRESS", DEFAULTS.USDC_ADDRESS);
   const rpcUrl = url("RPC_URL");
   const hermesUrl = url("HERMES_URL");
@@ -201,6 +205,7 @@ export function readRuntimeConfig(raw: RawConfig, overrides: string[] = []): Run
       houseVault,
       rewardToken,
       agentFactory,
+      trailingStops,
       usdc,
       oracleMode: rawMode as OracleMode,
       collateralSymbol,

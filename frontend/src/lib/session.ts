@@ -3,6 +3,7 @@ import {
   fallback,
   http,
   publicActions,
+  type Abi,
   type Address,
   type Chain,
   type Hex,
@@ -106,6 +107,26 @@ export function sessionClient(chain: Chain, rpcUrls: readonly string[], key: Hex
 }
 
 const GWEI = 1_000_000_000n;
+
+/**
+ * Gas limit for a call estimated at `gas`. eth_estimateGas finds the least gas that works on the state it ran on;
+ * the transaction runs in a later block, where other transactions may have changed what it does (an addition
+ * becomes a new position, funding accrues), and a tight limit then runs out. A quarter more, plus room for a
+ * few fresh storage slots. Unused gas is not charged.
+ */
+export const withGasHeadroom = (gas: bigint): bigint => (gas * 5n) / 4n + 50_000n;
+
+/** Simulates a call from the session key (a revert surfaces with its reason), then sends it with gas headroom. */
+export async function sessionWrite(
+  client: SessionClient,
+  call: { address: Address; abi: Abi; functionName: string; args?: readonly unknown[]; value?: bigint },
+): Promise<Hex> {
+  const params = { ...call, account: client.account } as never;
+  const { request } = await client.simulateContract(params);
+  // By address: with a local account viem estimates twice and caps the second estimate at the first.
+  const gas = await client.estimateContractGas({ ...call, account: client.account.address } as never);
+  return client.writeContract({ ...(request as object), gas: withGasHeadroom(gas), ...(await arcFees(client)) } as never);
+}
 
 /** Arc charges at least 20 gwei: pay twice the base fee plus a 1 gwei tip, never less than 25 gwei. */
 export async function arcFees(client: PublicActions<Transport, Chain>): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {

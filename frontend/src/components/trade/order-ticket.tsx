@@ -19,9 +19,10 @@ import { UserFacingError } from "@/lib/errors";
 import { closeFlow, openFlow, waitFor } from "@/lib/flows";
 import { PRICE_DECIMALS, USDC_DECIMALS, fmtAge, fmtPercent, fmtPrice, fmtQty, fmtUsdc, numToPrice, parseAmount, toInputString } from "@/lib/format";
 import { isExpired, isSettled, type Instrument } from "@/lib/instruments";
-import { BPS, DIRECT_MAX_LEVERAGE, ONE, absDiff, baseFee, ceilDiv, liquidationPrice, maxOpenFee, mergedPosition, needsKeeperOrders, notionalOf, pricePnl, profitCapPrice, ratio, unitsOf } from "@/lib/math";
+import { BPS, DIRECT_MAX_LEVERAGE, ONE, absDiff, baseFee, ceilDiv, ladderFill, ladderPrices, liquidationPrice, maxOpenFee, mergedPosition, needsKeeperOrders, notionalOf, pricePnl, profitCapPrice, ratio, unitsOf } from "@/lib/math";
 import { valuePosition } from "@/lib/position";
 import { prefs } from "@/lib/prefs";
+import { MAX_SCALE_ORDERS, scaleFlow, splitLadder } from "@/lib/scale";
 import { MAX_SLIPPAGE_BPS, tradeSettings } from "@/lib/storage";
 
 type OrderKind = "market" | "limit" | "stop";
@@ -184,6 +185,10 @@ export const OrderTicket = forwardRef<
   const [levX10, setLevX10] = useState(50);
   const [levText, setLevText] = useState("5");
   const [limitText, setLimitText] = useState("");
+  // Scale: a ladder of equal limit orders from the limit price to `scaleToText`.
+  const [scaleOn, setScaleOn] = useState(false);
+  const [scaleToText, setScaleToText] = useState("");
+  const [scaleCountText, setScaleCountText] = useState("5");
   const [tpText, setTpText] = useState("");
   const [tpUnit, setTpUnit] = useState<TpUnit>("price");
   const [slText, setSlText] = useState("");
@@ -241,7 +246,21 @@ export const OrderTicket = forwardRef<
   // A stop entry fills once a long's ask is at or above the trigger (a short's bid at or below it).
   const stopFillsNow = kind === "stop" && limitPrice && marketEntry ? (isLong ? marketEntry >= limitPrice : marketEntry <= limitPrice) : false;
   const fillsNow = limitFillsNow || stopFillsNow;
-  const entry: bigint | null = kind === "market" ? marketEntry : limitPrice && limitPrice > 0n ? (fillsNow && marketEntry ? marketEntry : limitPrice) : null;
+
+  // ── Scale (a ladder of limits) ──
+  const scaling = kind === "limit" && scaleOn;
+  const scaleTo = scaling ? parseAmount(scaleToText, PRICE_DECIMALS) : null;
+  const scaleCount = Number(scaleCountText);
+  const scaleCountError = scaling && !(Number.isInteger(scaleCount) && scaleCount >= 2 && scaleCount <= MAX_SCALE_ORDERS) ? `Between 2 and ${MAX_SCALE_ORDERS} orders` : null;
+  const ladder = scaling && !scaleCountError && limitPrice && limitPrice > 0n && scaleTo && scaleTo > 0n ? ladderPrices(limitPrice, scaleTo, scaleCount) : null;
+  // Equal notional per order: the entry they add up to if all fill (the engine's blend, rounded against the trader).
+  const ladderEntry = ladder ? (ladderFill(ladder.map((p) => ({ price: p, size: 10n ** 12n, margin: 10n ** 11n })), isLong)?.entryPrice ?? null) : null;
+  const ladderNow = ladder && marketEntry ? ladder.filter((p) => (isLong ? marketEntry <= p : marketEntry >= p)).length : 0;
+  const ladderHigh = ladder ? ladder.reduce((a, b) => (b > a ? b : a)) : null;
+  const ladderLow = ladder ? ladder.reduce((a, b) => (b < a ? b : a)) : null;
+
+  const entry: bigint | null =
+    ladderEntry ?? (kind === "market" ? marketEntry : limitPrice && limitPrice > 0n ? (fillsNow && marketEntry ? marketEntry : limitPrice) : null);
   /** Price the engine validates brackets against when the order is created. */
   const bracketRef: bigint | null =
     kind !== "market" ? (limitPrice && limitPrice > 0n ? limitPrice : null) : reference ? (publisher ? marketableTrigger(reference, isLong, settings.slippageBps) : marketEntry) : null;
@@ -322,6 +341,7 @@ export const OrderTicket = forwardRef<
   }
   const leverage = effLevX10 / 10;
   const units = size !== null && entry ? unitsOf(size, entry) : null;
+  const scalePlan = ladder && size !== null && margin !== null ? splitLadder(ladder, margin, size) : null;
 
   // ── Brackets ──
   const stopLoss: bigint | null =
@@ -378,10 +398,16 @@ export const OrderTicket = forwardRef<
   const feeBase = params && size !== null && margin !== null ? baseFee(size, params.baseFeeBps, margin) : null;
   const openFee = size !== null && size > 0n ? (feeQuote.data ?? legacyFeeQuote.data ?? null) : null;
   const skewFee = openFee !== null && feeBase !== null && openFee > feeBase ? openFee - feeBase : 0n;
-  const executionCount = brackets + (keeperOrder ? 1 : 0);
+  // A ladder escrows every order's fees; fills after the first move the brackets and refund theirs.
+  const executionCount = (brackets + (keeperOrder ? 1 : 0)) * (scalePlan ? scalePlan.length : 1);
   const executionFees = params ? params.executionFee * BigInt(executionCount) : null;
   /** What the engine pulls now. Keeper orders escrow the fee ceiling and refund the difference on fill. */
-  const required = margin !== null && feeCeiling !== null && executionFees !== null ? margin + feeCeiling + executionFees : null;
+  const required =
+    scalePlan && params && executionFees !== null
+      ? scalePlan.reduce((sum, o) => sum + o.margin + maxOpenFee(o.size, params.baseFeeBps, params.maxSkewFeeBps, o.margin), 0n) + executionFees
+      : margin !== null && feeCeiling !== null && executionFees !== null
+        ? margin + feeCeiling + executionFees
+        : null;
   const expectedCost = margin !== null && openFee !== null && executionFees !== null ? margin + openFee + executionFees : null;
 
   const liq = entry && margin !== null && size !== null && size > 0n ? liquidationPrice(entry, margin, size, isLong) : null;
@@ -428,8 +454,13 @@ export const OrderTicket = forwardRef<
         : null;
   const limitError = kind === "market" || limitText.trim() === "" ? null : !limitPrice ? "Enter a price greater than zero" : null;
 
+  // The engine checks each order's brackets against its own price: with a ladder, against every rung.
+  const tpRef = ladder ? (isLong ? ladderHigh : ladderLow) : bracketRef;
+  const slRef = ladder ? (isLong ? ladderLow : ladderHigh) : bracketRef;
   const refLabel =
-    kind === "limit"
+    ladder
+      ? "every price of the ladder"
+      : kind === "limit"
       ? "your limit price"
       : kind === "stop"
         ? "your stop price"
@@ -445,7 +476,7 @@ export const OrderTicket = forwardRef<
           ? "An R-multiple needs a stop-loss: 1R is the distance to your stop"
           : takeProfit === null || takeProfit === 0n
             ? "That target is out of range"
-            : bracketRef && (isLong ? takeProfit <= bracketRef : takeProfit >= bracketRef)
+            : tpRef && (isLong ? takeProfit <= tpRef : takeProfit >= tpRef)
               ? `Take-profit must be ${isLong ? "above" : "below"} ${refLabel}`
               : null;
   const slError =
@@ -455,8 +486,8 @@ export const OrderTicket = forwardRef<
         ? "Enter a positive number"
         : stopLoss === null || stopLoss === 0n
           ? "That stop is out of range"
-          : bracketRef && (isLong ? stopLoss >= bracketRef : stopLoss <= bracketRef)
-            ? `Stop-loss must be ${isLong ? "below" : "above"} ${kind === "limit" ? "your limit price" : kind === "stop" ? "your stop price" : `the ${isLong ? "ask" : "bid"}`}`
+          : slRef && (isLong ? stopLoss >= slRef : stopLoss <= slRef)
+            ? `Stop-loss must be ${isLong ? "below" : "above"} ${ladder ? "every price of the ladder" : kind === "limit" ? "your limit price" : kind === "stop" ? "your stop price" : `the ${isLong ? "ask" : "bid"}`}`
             : entry && (isLong ? stopLoss >= entry : stopLoss <= entry)
               ? `Stop-loss must be ${isLong ? "below" : "above"} the entry price`
               : null;
@@ -503,6 +534,9 @@ export const OrderTicket = forwardRef<
     if (kind === "limit" && limitText.trim() === "") return "Enter a limit price";
     if (kind === "stop" && limitText.trim() === "") return "Enter a stop price";
     if (limitError) return limitError;
+    if (scaling && scaleCountError) return scaleCountError;
+    if (scaling && scaleToText.trim() === "") return "Enter the last price of the ladder";
+    if (scaling && !ladder) return "Enter a last price greater than zero";
     if (qtyError) return qtyError;
     if (size === null || margin === null) return qtyMode === "risk" ? "Enter a stop-loss to size by risk" : "Enter a size";
     if (levError) return levError;
@@ -511,6 +545,9 @@ export const OrderTicket = forwardRef<
     if (slError) return slError;
     if (oppositeSide && kind === "market") return `You hold a ${position!.position.isLong ? "long" : "short"}: close it or reverse`;
     if (capProblem) return capProblem;
+    if (scalePlan && params && scalePlan.some((o) => o.margin < params.minMargin)) {
+      return `Each order needs ${fmtUsdc(params.minMargin)} ${sym} margin: fewer orders or more margin`;
+    }
     if (balance !== undefined && required !== null && required > balance) return `Not enough ${sym}: ${fmtUsdc(required)} needed`;
     if (view.canTrade && balance === undefined) return "Loading balance";
     return null;
@@ -597,15 +634,18 @@ export const OrderTicket = forwardRef<
   const runOpen = async () => {
     const req = buildRequest();
     if (!req) return;
+    const plan = scalePlan;
     const ok = await tx.run(async (api) => {
       const ctx = actionContext(api);
       if (!ctx) throw new UserFacingError("Connect your wallet first.");
+      if (plan) return scaleFlow(ctx, { instrument, isLong, orders: plan, takeProfit: req.takeProfit, stopLoss: req.stopLoss, required: req.required });
       return openFlow(ctx, req);
     });
     if (ok) {
       setTpText("");
       setSlText("");
       if (kind !== "market") setLimitText("");
+      if (plan) setScaleToText("");
       onSubmitted?.();
     }
   };
@@ -697,11 +737,19 @@ export const OrderTicket = forwardRef<
   const confirmLines: ConfirmLine[] = useMemo(() => {
     if (confirming === "open") {
       return [
-        { label: "Order", value: `${kind === "market" ? (publisher ? "Market (keeper-filled)" : "Market") : kind === "stop" ? "Stop entry" : "Limit"} ${sideWord} ${instrument.symbol}` },
+        { label: "Order", value: `${kind === "market" ? (publisher ? "Market (keeper-filled)" : "Market") : kind === "stop" ? "Stop entry" : scalePlan ? `${scalePlan.length} limits,` : "Limit"} ${sideWord} ${instrument.symbol}` },
+        ...(scalePlan
+          ? [
+              {
+                label: "Ladder",
+                value: `${fmtPrice(scalePlan[0]!.price, dp)} to ${fmtPrice(scalePlan[scalePlan.length - 1]!.price, dp)}, ${fmtUsdc(scalePlan[0]!.margin)} ${sym} margin each${view.instant ? ", one transaction" : `, ${scalePlan.length} wallet confirmations`}`,
+              },
+            ]
+          : []),
         ...(merged ? [{ label: "Adds to your position", value: `${fmtUsdc(position!.position.size)} → ${fmtUsdc(merged.size)} ${sym}, average entry ${fmtPrice(merged.entryPrice, dp)}` }] : []),
         { label: "Size", value: size !== null ? `${fmtUsdc(size)} ${sym}${units !== null ? ` (${fmtQty(units)} ${instrument.unitLabel})` : ""}` : "—" },
         { label: "Margin and leverage", value: margin !== null ? `${fmtUsdc(margin)} ${sym} at ${leverage.toFixed(1)}x` : "—" },
-        { label: kind === "limit" ? "Limit price" : kind === "stop" ? "Stop price" : "Entry estimate", value: entry ? fmtPrice(entry, dp) : "—" },
+        { label: scalePlan ? "Average entry if all fill" : kind === "limit" ? "Limit price" : kind === "stop" ? "Stop price" : "Entry estimate", value: entry ? fmtPrice(entry, dp) : "—" },
         ...(kind === "market" && publisher && bracketRef ? [{ label: "Worst fill accepted", value: fmtPrice(bracketRef, dp) }] : []),
         merged
           ? { label: "Liquidation price after", value: mergedLiq === null ? "—" : mergedLiq === 0n ? "None" : `${fmtPrice(mergedLiq, dp)}${mergedLiqDistance !== null ? ` (${fmtPercent(mergedLiqDistance, mergedLiqDistance < 0.01 ? 2 : 1)} from the mark)` : ""}` }
@@ -713,7 +761,7 @@ export const OrderTicket = forwardRef<
       ];
     }
     return [];
-  }, [confirming, kind, publisher, sideWord, instrument.symbol, instrument.unitLabel, size, units, margin, leverage, entry, bracketRef, liq, liqDistance, maxLoss, takeProfit, stopLoss, required, sym, dp, view.instant, merged, mergedLiq, mergedLiqDistance, position]);
+  }, [confirming, kind, publisher, sideWord, instrument.symbol, instrument.unitLabel, size, units, margin, leverage, entry, bracketRef, liq, liqDistance, maxLoss, takeProfit, stopLoss, required, sym, dp, view.instant, merged, mergedLiq, mergedLiqDistance, position, scalePlan]);
 
   // ── Primary button ──
   let button: React.ReactNode;
@@ -739,7 +787,9 @@ export const OrderTicket = forwardRef<
   } else {
     const action =
       kind === "limit"
-        ? `Place limit ${sideWord}`
+        ? scalePlan
+          ? `Place ${scalePlan.length} limit ${sideWord}s`
+          : `Place limit ${sideWord}`
         : kind === "stop"
           ? `Place stop ${sideWord}`
           : sameSide
@@ -921,11 +971,68 @@ export const OrderTicket = forwardRef<
               <span className="field-unit">{instrument.quote}</span>
             </div>
             {limitError ? <p className="mt-1 text-xs text-short">{limitError}</p> : null}
-            {fillsNow ? (
+            {fillsNow && !scaling ? (
               <p className="mt-1 text-xs text-warn">
                 The market is already {kind === "stop" ? (isLong ? "at or above" : "at or below") : isLong ? "at or below" : "at or above"} this price, so a keeper fills it right away at about{" "}
                 {marketEntry ? fmtPrice(marketEntry, dp) : "market"}.
               </p>
+            ) : null}
+            {kind === "limit" ? (
+              <div className="mt-2">
+                <label className="flex items-center gap-2 text-xs text-muted">
+                  <input type="checkbox" className="check" checked={scaleOn} onChange={(event) => setScaleOn(event.target.checked)} data-testid="scale-toggle" />
+                  Scale in: split into equal orders between two prices
+                </label>
+                {scaleOn ? (
+                  <div className="mt-2 grid grid-cols-[minmax(0,1fr)_5.5rem] gap-2">
+                    <div className="min-w-0">
+                      <label className="field-label" htmlFor={`${ids}-scale-to`}>
+                        Last price
+                      </label>
+                      <div className="field">
+                        <input
+                          id={`${ids}-scale-to`}
+                          inputMode="decimal"
+                          autoComplete="off"
+                          placeholder="0.00"
+                          value={scaleToText}
+                          onChange={(event) => setScaleToText(event.target.value)}
+                          data-testid="scale-to"
+                        />
+                        <span className="field-unit">{instrument.quote}</span>
+                      </div>
+                    </div>
+                    <div className="min-w-0">
+                      <label className="field-label" htmlFor={`${ids}-scale-n`}>
+                        Orders
+                      </label>
+                      <div className="field" data-invalid={scaleCountError !== null}>
+                        <input
+                          id={`${ids}-scale-n`}
+                          inputMode="numeric"
+                          autoComplete="off"
+                          value={scaleCountText}
+                          onChange={(event) => setScaleCountText(event.target.value.replace(/[^0-9]/g, "").slice(0, 2))}
+                          aria-invalid={scaleCountError !== null}
+                          data-testid="scale-count"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+                {scalePlan && entry ? (
+                  <p className="num mt-1 text-xs text-muted" data-testid="scale-summary">
+                    {scalePlan.length} orders from {fmtPrice(scalePlan[0]!.price, dp)} to {fmtPrice(scalePlan[scalePlan.length - 1]!.price, dp)}, {fmtUsdc(scalePlan[0]!.margin)} {sym} margin each;
+                    average entry {fmtPrice(entry, dp)} if all fill.{" "}
+                    {view.instant ? "One transaction." : `${scalePlan.length} wallet confirmations (one with instant trading).`}
+                  </p>
+                ) : null}
+                {ladder && ladderNow > 0 ? (
+                  <p className="mt-1 text-xs text-warn">
+                    {ladderNow} of the {ladder.length} prices {ladderNow === 1 ? "is" : "are"} already {isLong ? "at or above the ask" : "at or below the bid"}, so {ladderNow === 1 ? "that order fills" : "those fill"} right away.
+                  </p>
+                ) : null}
+              </div>
             ) : null}
           </div>
         ) : null}
@@ -1158,7 +1265,7 @@ export const OrderTicket = forwardRef<
 
         <dl className="grid gap-1.5 text-[0.8125rem]">
           <Row
-            label={kind !== "market" ? "Entry" : "Entry estimate"}
+            label={scalePlan ? "Average entry if all fill" : kind !== "market" ? "Entry" : "Entry estimate"}
             hint={kind === "market" ? "Buys fill at the oracle ask, sells at the bid. The fill is the price a keeper executes against, at most your slippage tolerance away." : undefined}
             value={entry ? fmtPrice(entry, dp) : "—"}
           />

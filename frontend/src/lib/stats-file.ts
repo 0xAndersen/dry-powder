@@ -97,7 +97,11 @@ export function parseStatsFile(json: unknown, cfg: Pick<RuntimeConfig, "chainId"
     open: {},
   };
   if (!Number.isFinite(state.cursorBlock)) return { status: "error", error: "no cursor block" };
-  for (const [id, m] of Object.entries((j.markets as Raw) ?? {})) state.markets[id.toLowerCase()] = shaped(marketTotals(), m);
+  for (const [id, m] of Object.entries((j.markets as Raw) ?? {})) {
+    const market = shaped(marketTotals(), m);
+    market.hours = buckets((m as Raw | null)?.hours);
+    state.markets[id.toLowerCase()] = market;
+  }
   for (const [id, t] of Object.entries((j.traders as Raw) ?? {})) {
     if (!/^0x[0-9a-fA-F]{40}$/.test(id) || !t || typeof t !== "object") continue;
     const raw = t as Raw;

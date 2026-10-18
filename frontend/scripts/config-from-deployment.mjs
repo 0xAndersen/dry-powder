@@ -12,6 +12,7 @@ const config = {
   rewardTokenAddress: d.token,
   usdcAddress: d.usdc,
   ...(d.agentFactory ? { agentFactoryAddress: d.agentFactory } : {}),
+  ...(d.trailingStops ? { trailingStopsAddress: d.trailingStops } : {}),
   rpcUrl: d.rpcUrl,
   chainId: d.chainId,
   oracleMode: "publisher",

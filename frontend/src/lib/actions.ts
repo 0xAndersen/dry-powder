@@ -1,5 +1,5 @@
 import type { Config } from "wagmi";
-import { readContract, simulateContract, writeContract } from "wagmi/actions";
+import { getPublicClient, readContract, simulateContract, writeContract } from "wagmi/actions";
 import { encodeFunctionData, maxUint256, parseEventLogs, type Address, type Hex, type TransactionReceipt } from "viem";
 import { agentAccountAbi, perpEngineAbi, testUSDCAbi } from "./abi";
 import { erc20Abi, pythAbi } from "./abis-extra";
@@ -9,7 +9,7 @@ import { feedIdsOf, type Instrument } from "./instruments";
 import { needsKeeperOrders, withSlippageDown, withSlippageUp } from "./math";
 import type { Quote } from "./oracle";
 import { fetchLatestUpdate, type HermesStore } from "./pyth";
-import { arcFees, type SessionClient } from "./session";
+import { sessionWrite, withGasHeadroom, type SessionClient } from "./session";
 import type { TxApi } from "@/hooks/use-tx";
 
 /** Everything an on-chain action needs. Built once per flow by the calling component. */
@@ -43,31 +43,26 @@ type EngineFn = "openPosition" | "createLimitOrder" | "closePosition" | "setTrig
 async function sendEngine(ctx: ActionContext, label: string, functionName: EngineFn, args: readonly unknown[], value?: bigint): Promise<TransactionReceipt> {
   const { wagmi, cfg, api, account, session } = ctx;
   if (session) {
-    return api.send(label, async () => {
-      const { client } = session;
-      const { request } = await client.simulateContract({
-        address: session.account,
-        abi: ACCOUNT_CALL_ABI,
-        functionName,
-        args,
-        value,
-        account: client.account,
-      } as never);
-      return client.writeContract({ ...(request as object), ...(await arcFees(client)) } as never);
-    });
+    return api.send(label, () => sessionWrite(session.client, { address: session.account, abi: ACCOUNT_CALL_ABI, functionName, args, value }));
   }
   return api.send(label, async () => {
-    const { request } = await simulateContract(wagmi, {
-      abi: perpEngineAbi,
-      address: cfg.perpEngine,
-      functionName,
-      args,
-      value,
-      account,
-      chainId: cfg.chainId,
-    } as never);
-    return writeContract(wagmi, request as never);
+    const params = { abi: perpEngineAbi, address: cfg.perpEngine, functionName, args, value, account, chainId: cfg.chainId } as never;
+    const { request } = await simulateContract(wagmi, params);
+    return writeContract(wagmi, { ...(request as object), gas: await walletGas(wagmi, cfg.chainId, params) } as never);
   });
+}
+
+/**
+ * Gas limit with headroom for a wallet transaction (see `withGasHeadroom`); wallets that re-estimate may still
+ * override it. Undefined when the estimate fails, leaving the wallet to estimate.
+ */
+async function walletGas(wagmi: Config, chainId: number, params: never): Promise<bigint | undefined> {
+  try {
+    const client = getPublicClient(wagmi, { chainId });
+    return client ? withGasHeadroom(await client.estimateContractGas(params)) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export const ORDER_TYPE = { LimitOpen: 0, TakeProfit: 1, StopLoss: 2, Close: 3, StopOpen: 4 } as const;
@@ -304,11 +299,7 @@ export async function submitBatch(ctx: ActionContext, label: string, calls: read
   const { api, session } = ctx;
   if (session && calls.length > 1) {
     const data = calls.map((c) => encodeFunctionData({ abi: agentAccountAbi, functionName: c.functionName, args: c.args } as never));
-    const receipt = await api.send(label, async () => {
-      const { client } = session;
-      const { request } = await client.simulateContract({ address: session.account, abi: ACCOUNT_CALL_ABI, functionName: "multicall", args: [data], account: client.account } as never);
-      return client.writeContract({ ...(request as object), ...(await arcFees(client)) } as never);
-    });
+    const receipt = await api.send(label, () => sessionWrite(session.client, { address: session.account, abi: ACCOUNT_CALL_ABI, functionName: "multicall", args: [data] }));
     return [receipt];
   }
   const out: TransactionReceipt[] = [];
@@ -325,11 +316,7 @@ export async function submitSettleMarket(ctx: ActionContext, marketId: Hex, labe
   const { wagmi, cfg, api, account, session } = ctx;
   if (session) {
     // Anyone may settle: the session key pays the gas itself.
-    return api.send(label, async () => {
-      const { client } = session;
-      const { request } = await client.simulateContract({ abi: perpEngineAbi, address: cfg.perpEngine, functionName: "settleMarket", args: [marketId, []], account: client.account });
-      return client.writeContract({ ...(request as object), ...(await arcFees(client)) } as never);
-    });
+    return api.send(label, () => sessionWrite(session.client, { abi: perpEngineAbi, address: cfg.perpEngine, functionName: "settleMarket", args: [marketId, []] }));
   }
   return api.send(label, async () => {
     const { request } = await simulateContract(wagmi, {
@@ -355,11 +342,7 @@ export async function submitTestMint(ctx: ActionContext, label: string): Promise
   const { wagmi, cfg, api, account, session } = ctx;
   if (session) {
     // Test collateral is free to mint for anyone: the session key mints straight into the trading account.
-    return api.send(label, async () => {
-      const { client } = session;
-      const { request } = await client.simulateContract({ abi: testUSDCAbi, address: cfg.usdc, functionName: "mint", args: [session.account, TEST_MINT_AMOUNT], account: client.account });
-      return client.writeContract({ ...(request as object), ...(await arcFees(client)) } as never);
-    });
+    return api.send(label, () => sessionWrite(session.client, { abi: testUSDCAbi, address: cfg.usdc, functionName: "mint", args: [session.account, TEST_MINT_AMOUNT] }));
   }
   return api.send(label, async () => {
     const { request } = await simulateContract(wagmi, {

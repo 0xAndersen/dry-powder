@@ -24,6 +24,25 @@ export const HOUR = 3_600;
 export const DAYS_KEPT = 60;
 export const HOURS_KEPT = 48;
 
+/** Sum of a bucket field over the `seconds` (default 24 hours) up to `now`, by the hour. */
+export function recentBig(buckets: readonly Bucket[] | undefined, field: "r" | "f" | "v" | "m", now: number, seconds = DAY): bigint {
+  if (!buckets) return 0n;
+  const from = Math.floor((now - seconds) / HOUR) + 1;
+  const to = Math.floor(now / HOUR);
+  let total = 0n;
+  for (const b of buckets) if (b.i >= from && b.i <= to) total += b[field];
+  return total;
+}
+
+export function recentCount(buckets: readonly Bucket[] | undefined, field: "t" | "w" | "l" | "x", now: number, seconds = DAY): number {
+  if (!buckets) return 0;
+  const from = Math.floor((now - seconds) / HOUR) + 1;
+  const to = Math.floor(now / HOUR);
+  let total = 0;
+  for (const b of buckets) if (b.i >= from && b.i <= to) total += b[field];
+  return total;
+}
+
 export type Totals = {
   opens: number;
   trades: number;
@@ -44,7 +63,7 @@ export type Totals = {
 export type SideTotals = { trades: number; wins: number; losses: number; net: bigint; volume: bigint };
 /** i: day or hour number; r realised, f fees, v volume, m margin released; t trades, w wins, l losses, x liquidations. */
 export type Bucket = { i: number; r: bigint; f: bigint; v: bigint; m: bigint; t: number; w: number; l: number; x: number };
-export type MarketTotals = Totals & { symbol: string; longVolume: bigint; shortVolume: bigint; settlementPrice: bigint };
+export type MarketTotals = Totals & { symbol: string; longVolume: bigint; shortVolume: bigint; settlementPrice: bigint; hours: Bucket[] };
 export type TraderRecord = Totals & {
   grossWin: bigint;
   grossLoss: bigint;
@@ -157,7 +176,7 @@ export const totals = (): Totals => ({
 });
 export const sideTotals = (): SideTotals => ({ trades: 0, wins: 0, losses: 0, net: 0n, volume: 0n });
 export const bucket = (i: number): Bucket => ({ i, r: 0n, f: 0n, v: 0n, m: 0n, t: 0, w: 0, l: 0, x: 0 });
-export const marketTotals = (): MarketTotals => ({ symbol: "", ...totals(), longVolume: 0n, shortVolume: 0n, settlementPrice: 0n });
+export const marketTotals = (): MarketTotals => ({ symbol: "", ...totals(), longVolume: 0n, shortVolume: 0n, settlementPrice: 0n, hours: [] });
 export const traderRecord = (): TraderRecord => ({
   ...totals(),
   grossWin: 0n,
@@ -250,7 +269,11 @@ export function applyEvent(state: StatsState, e: EngineEvent, onTrade?: (trade: 
     for (const t of all) t[field] += n;
   };
   const addB = (field: "r" | "f" | "v" | "m" | "t" | "w" | "l" | "x", n: bigint | number) => {
-    buckets ??= [bucketAt(trader.days, Math.floor(time / DAY)), bucketAt(trader.hours, Math.floor(time / HOUR)), bucketAt(state.days, Math.floor(time / DAY))];
+    if (!buckets) {
+      buckets = [bucketAt(trader.days, Math.floor(time / DAY)), bucketAt(trader.hours, Math.floor(time / HOUR)), bucketAt(state.days, Math.floor(time / DAY))];
+      // Per market by the hour (as keeper/src/indexer.mjs): rolling 24 h volume, fees and trades.
+      if (market) buckets.push(bucketAt((market.hours ??= []), Math.floor(time / HOUR)));
+    }
     for (const b of buckets) {
       if (field === "r" || field === "f" || field === "v" || field === "m") b[field] += n as bigint;
       else b[field] += n as number;

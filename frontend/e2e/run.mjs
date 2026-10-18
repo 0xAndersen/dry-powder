@@ -321,6 +321,37 @@ if (want("positions")) {
     await waitPosition("XAU-USD", false, 45_000);
     return "added, topped up, stop entry placed and cancelled, closed";
   });
+
+  await step("scale in: a ladder of three limit orders between two prices, each resting, then cancelled", async () => {
+    await ensureWallet();
+    await selectMarket("ETH-USD");
+    await t("kind-limit").click();
+    const mark = num(await t("market-price").innerText());
+    await page.getByLabel("Limit price").fill((mark * 0.97).toFixed(2));
+    await t("scale-toggle").check();
+    await t("scale-to").fill((mark * 0.95).toFixed(2));
+    await t("scale-count").fill("3");
+    await setQty("Margin", 90);
+    await t("scale-summary").waitFor({ timeout: 5_000 });
+    const summary = (await t("scale-summary").innerText()).replace(/\s+/g, " ");
+    if (!summary.startsWith("3 orders from")) throw new Error(`summary: ${summary}`);
+    await shot(page, "07d-scale");
+    await submitTicket();
+    await t("tab-orders").click();
+    const rows = page.locator('[data-testid^="order-"]').filter({ hasText: "ETH-USD" }).filter({ hasText: "Limit" });
+    for (let i = 0; i < 40 && (await rows.count()) < 3; i += 1) await sleep(500);
+    const placed = await rows.count();
+    if (placed !== 3) throw new Error(`${placed} ladder orders resting, expected 3`);
+    for (let i = 0; i < 3; i += 1) {
+      const before = await rows.count();
+      await rows.first().getByTestId("cancel-order").click();
+      for (let j = 0; j < 40 && (await rows.count()) >= before; j += 1) await sleep(500);
+    }
+    if ((await rows.count()) !== 0) throw new Error("ladder orders left after cancelling");
+    await t("scale-toggle").uncheck();
+    await t("kind-market").click();
+    return summary.slice(0, 120);
+  });
 }
 
 // ─────────────────────────────── instruments ───────────────────────────────
@@ -595,6 +626,9 @@ if (want("activity")) {
     await page.locator('[data-testid^="market-row-"]').first().waitFor({ timeout: 20_000 });
     const rows = await page.locator('[data-testid^="market-row-"]').count();
     if (rows !== addresses.markets.length) throw new Error(`expected ${addresses.markets.length} rows, saw ${rows}`);
+    // 24h volume from the venue's events (the scripted traders trade all the time).
+    await page.waitForFunction(() => /[1-9]/.test(document.querySelector('[data-testid="venue-volume"]')?.textContent ?? ""), null, { timeout: 30_000 });
+    const volume = (await t("venue-volume").innerText()).replace(/\s+/g, " ");
     await t("markets-search").fill("gold");
     await page.waitForFunction(() => document.querySelectorAll('[data-testid^="market-row-"]').length === 1, null, { timeout: 5_000 });
     await t("markets-search").fill("");
@@ -606,7 +640,7 @@ if (want("activity")) {
     await shot(page, "18b-markets");
     await t("market-row-ETH-USD").locator("td").nth(2).click();
     await page.waitForURL(/\/trade\/?\?.*market=ETH-USD/, { timeout: 10_000 });
-    return `${rows} markets`;
+    return `${rows} markets, 24h volume ${volume}`;
   });
 
   await step("leaderboard: season, rankings by metric, following filter", async () => {
