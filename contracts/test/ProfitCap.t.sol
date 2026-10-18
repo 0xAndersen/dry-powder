@@ -70,7 +70,7 @@ contract ProfitCapTest is Base {
         engine.openPosition(p, _noBytes());
         _open(bob, BTC, true, 100e6, 10_000e6);
         vm.prank(bob);
-        uint256 closeId = engine.setTriggerOrder(BTC, OrderType.Close, 0);
+        uint256 closeId = engine.setTriggerOrder(BTC, OrderType.Close, 0, 0);
         bytes32 carolKey = _open(carol, FUT, true, 100e6, 10_000e6);
         uint256 aliceBefore = usdc.balanceOf(alice);
         uint256 bobBefore = usdc.balanceOf(bob);

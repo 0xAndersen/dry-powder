@@ -314,12 +314,12 @@ contract PublisherOracleTest is Test {
         skip(1);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(PublisherOracle.NotPublisher.selector, mallory));
-        s.engine.closePosition(BTC, 0, forged);
+        s.engine.closePosition(BTC, 0, 0, forged);
 
         // Close with the next signed price: +1,000 on the mid, sold at the bid.
         update = _update(BTC, 101_010e8, 0, uint64(T0 + 1));
         vm.prank(alice);
-        s.engine.closePosition(BTC, 0, update);
+        s.engine.closePosition(BTC, 0, 0, update);
         // 10,000 * (101,010 - 100,010) / 100,010 = 99.990000..., rounded down; minus 5 + 5 of fees
         assertEq(s.usdc.balanceOf(alice), 10_000e6 - 5e6 + 99_990_000 - 5e6);
 
@@ -331,8 +331,10 @@ contract PublisherOracleTest is Test {
         skip(10);
         update = _update(BTC, 99_000e8, 0, uint64(T0 + 21));
         address keeper = makeAddr("keeper");
+        bytes32[] memory keys = new bytes32[](1);
+        keys[0] = s.engine.positionKey(alice, BTC);
         vm.prank(keeper);
-        assertEq(s.engine.liquidate(alice, update), 1);
+        assertEq(s.engine.liquidateBatch(keys, update), 1);
         assertEq(s.usdc.balanceOf(keeper), 2e6);
         assertEq(s.usdc.balanceOf(address(s.engine)), 0);
     }
@@ -357,7 +359,7 @@ contract PublisherOracleTest is Test {
         data[0] = _signed(publisherKey, pub, ETH, 4_200e8, 0, -8, uint64(T0 + 1));
         data[1] = _signed(publisherKey, pub, BTC, 100_000e8, 0, -8, uint64(T0 + 1));
         vm.prank(alice);
-        s.engine.closePosition(id, 0, data);
+        s.engine.closePosition(id, 0, 0, data);
         assertEq(s.usdc.balanceOf(alice), 10_000e6 - 5e6 + 500e6 - 5e6);
     }
 }

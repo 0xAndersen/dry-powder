@@ -63,11 +63,11 @@ contract HighLeverageTest is Base {
 
         vm.prank(alice);
         vm.expectRevert(PerpEngine.HighLeverageNeedsOrder.selector);
-        engine.closePosition(BTC, 0, _noBytes());
+        engine.closePosition(BTC, 0, 0, _noBytes());
 
         uint256 before = usdc.balanceOf(alice);
         vm.prank(alice);
-        uint256 closeId = engine.setTriggerOrder(BTC, OrderType.Close, 0);
+        uint256 closeId = engine.setTriggerOrder(BTC, OrderType.Close, 0, 0);
         _setBtc(100_050);
         vm.prank(keeper);
         engine.executeOrder(closeId, _noBytes());
@@ -100,7 +100,7 @@ contract HighLeverageTest is Base {
         // Liquidation at 90% of margin lost: $9 on $10,000 is a 0.09% move.
         _setBtc(99_900); // -0.1%
         vm.prank(keeper);
-        engine.liquidate(alice);
+        _liquidate(alice);
         assertEq(engine.getPosition(alice, BTC).trader, address(0));
     }
 
@@ -109,7 +109,7 @@ contract HighLeverageTest is Base {
         _setBtc(102_000); // +2% on 1000x would be 20x margin; capped at 10x
         uint256 before = usdc.balanceOf(alice);
         vm.prank(alice);
-        uint256 closeId = engine.setTriggerOrder(BTC, OrderType.Close, 0);
+        uint256 closeId = engine.setTriggerOrder(BTC, OrderType.Close, 0, 0);
         _setBtc(102_000);
         vm.prank(keeper);
         engine.executeOrder(closeId, _noBytes());
@@ -121,8 +121,8 @@ contract HighLeverageTest is Base {
     function test_1000x_takeProfitAndStopLossFill() public {
         _open1000x(alice);
         vm.startPrank(alice);
-        engine.setTriggerOrder(BTC, OrderType.TakeProfit, 100_060e18);
-        uint256 sl = engine.setTriggerOrder(BTC, OrderType.StopLoss, 99_950e18);
+        engine.setTriggerOrder(BTC, OrderType.TakeProfit, 100_060e18, 0);
+        uint256 sl = engine.setTriggerOrder(BTC, OrderType.StopLoss, 99_950e18, 0);
         vm.stopPrank();
         _setBtc(99_940);
         vm.prank(keeper);
@@ -141,7 +141,7 @@ contract HighLeverageTest is Base {
         _setBtc(100_020);
         engine.settleMarket(FUT, _noBytes());
         vm.prank(alice);
-        engine.closePosition(FUT, 0, _noBytes()); // fixed settlement price: no stale-price option left
+        engine.closePosition(FUT, 0, 0, _noBytes()); // fixed settlement price: no stale-price option left
         assertEq(engine.getPosition(alice, FUT).trader, address(0));
     }
 
@@ -163,6 +163,6 @@ contract HighLeverageTest is Base {
 
         vm.prank(agent);
         vm.expectRevert(PerpEngine.HighLeverageNeedsOrder.selector);
-        acct.closePosition(BTC, 0, _noBytes());
+        acct.closePosition(BTC, 0, 0, _noBytes());
     }
 }

@@ -172,11 +172,11 @@ contract CrossMarketTest is Base {
         // BTC outruns ETH by a little under 0.9%: still healthy.
         _setBtcEth(100_890, 4_000);
         vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
-        engine.liquidate(alice);
+        _liquidate(alice);
         // BTC +1%, ETH flat: the cross falls 0.99%.
         _setBtcEth(101_000, 4_000);
         vm.prank(keeper);
-        assertEq(engine.liquidate(alice), 1);
+        assertEq(_liquidate(alice), 1);
         assertEq(usdc.balanceOf(keeper), 2e6);
         _assertEngineSolvent();
     }
@@ -432,8 +432,8 @@ contract DatedFutureTest is Base {
         _settle(104_000);
         vm.startPrank(alice);
         vm.expectRevert(PerpEngine.SlippageExceeded.selector);
-        engine.closePosition(FUT, 104_000e18 + 1, _noBytes());
-        engine.closePosition(FUT, 104_000e18, _noBytes());
+        engine.closePosition(FUT, 0, 104_000e18 + 1, _noBytes());
+        engine.closePosition(FUT, 0, 104_000e18, _noBytes());
         vm.stopPrank();
     }
 
@@ -504,7 +504,7 @@ contract DatedFutureTest is Base {
         p.stopLoss = 95_000e18;
         vm.startPrank(alice);
         bytes32 key = engine.openPosition(p, _noBytes());
-        engine.setTriggerOrder(FUT, OrderType.Close, 150_000e18); // a bound that will never be met
+        engine.setTriggerOrder(FUT, OrderType.Close, 150_000e18, 0); // a bound that will never be met
         vm.stopPrank();
         uint256 before = usdc.balanceOf(alice);
         assertEq(engine.orderCount(), 3);
@@ -551,12 +551,12 @@ contract DatedFutureTest is Base {
 
         // bob asks a keeper to close: bounded above the settlement price it cannot fill, unbounded it does.
         vm.prank(bob);
-        uint256 closeId = engine.setTriggerOrder(FUT, OrderType.Close, 104_000e18 + 1);
+        uint256 closeId = engine.setTriggerOrder(FUT, OrderType.Close, 104_000e18 + 1, 0);
         vm.prank(keeper);
         vm.expectRevert(PerpEngine.TriggerNotMet.selector);
         engine.executeOrder(closeId, _noBytes());
         vm.prank(bob);
-        engine.setTriggerOrder(FUT, OrderType.Close, 104_000e18);
+        engine.setTriggerOrder(FUT, OrderType.Close, 104_000e18, 0);
         _exec(closeId);
         // margin - fee + profit, his unfilled take-profit's escrow back, the Close order's fee spent
         assertEq(usdc.balanceOf(bob), bobBefore + 1_395e6 + EXEC_FEE - EXEC_FEE);
@@ -575,14 +575,14 @@ contract DatedFutureTest is Base {
         // She cannot walk away through a close ...
         vm.prank(alice);
         vm.expectRevert(PerpEngine.PositionLiquidatable.selector);
-        engine.closePosition(FUT, 0, _noBytes());
+        engine.closePosition(FUT, 0, 0, _noBytes());
         (,,, bool liquidatable) = lens.getPositionState(key, 99_000e18);
         assertTrue(liquidatable);
 
         // ... and the plain liquidation entry points work off the settlement price, with nothing fresh
         // on-chain. Her perpetual is skipped because its price is stale.
         vm.prank(keeper);
-        assertEq(engine.liquidate(alice), 1);
+        assertEq(_liquidate(alice), 1);
         assertEq(usdc.balanceOf(keeper), 2e6);
         assertEq(engine.getPosition(alice, FUT).trader, address(0));
         assertEq(engine.getPosition(alice, BTC).trader, alice);

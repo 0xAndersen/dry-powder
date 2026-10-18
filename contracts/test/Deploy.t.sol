@@ -271,7 +271,7 @@ contract DeployTest is Test {
         skip(1);
         update = _signedBtc(d, publisherKey, 101_000e8, uint64(T0 + 1));
         vm.prank(trader);
-        d.engine.closePosition(future, 0, update);
+        d.engine.closePosition(future, 0, 0, update);
         // +1% on 1,000 = 10; open fee 0.50 + skew surcharge 0.004 (1,000 of skew over the 250k scale); close 0.50
         assertEq(token.balanceOf(trader), 1_000e6 + 10e6 - 0.504e6 - 0.5e6);
         vm.warp(T0);

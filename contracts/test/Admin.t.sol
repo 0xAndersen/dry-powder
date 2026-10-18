@@ -132,7 +132,7 @@ contract AdminTest is Base {
         for (uint256 i = engine.getMarketIds().length; i < 64; ++i) {
             engine.addMarket(bytes32(i + 1000), _sol(false, 50, 1e12, 1e12));
         }
-        assertEq(engine.getMarketIds().length, engine.MAX_MARKETS());
+        assertEq(engine.getMarketIds().length, 64); // MAX_MARKETS
         vm.expectRevert(PerpEngine.InvalidParam.selector);
         engine.addMarket(SOL, _sol(false, 50, 1e12, 1e12));
         vm.stopPrank();
@@ -166,11 +166,15 @@ contract AdminTest is Base {
         vm.prank(bob);
         engine.openPosition(_params(BTC, true, 5e6, 500e6), _noBytes());
         uint256 open = gasBefore - gasleft();
-        // liquidate(address) walks every market for the trader; here nothing qualifies and it reverts at the end.
+        // A keeper's batch over all 64 of the trader's positions; nothing qualifies, so it reverts at the end.
+        bytes32[] memory keys = new bytes32[](64);
+        for (uint256 i; i < 64; ++i) {
+            keys[i] = engine.positionKey(alice, ids[i]);
+        }
         gasBefore = gasleft();
-        try engine.liquidate(alice) {} catch {}
+        try engine.liquidateBatch(keys, _noBytes()) {} catch {}
         uint256 liquidate = gasBefore - gasleft();
-        emit log_named_uint("liquidate(trader) gas, 64 positions", liquidate);
+        emit log_named_uint("liquidateBatch gas, 64 positions", liquidate);
         assertLt(liquidate, 10_000_000);
         emit log_named_uint("unrealizedTraderPnl gas, 64 markets with OI", valuation);
         emit log_named_uint("reservedLiquidity gas", reserve);

@@ -34,9 +34,30 @@ library PositionMath {
         return profit ? magnitude.toInt256() : -magnitude.toInt256();
     }
 
+    /// @dev Price PnL minus funding owed: what closing the position at `price` would realise before the close
+    ///      fee and the profit cap.
+    function pnl(Position memory pos, uint256 price, int256 fundingIndex) internal pure returns (int256) {
+        return pricePnl(pos, price) - fundingOwed(pos, fundingIndex);
+    }
+
     function isLiquidatable(Position memory pos, uint256 price, int256 fundingIndex) internal pure returns (bool) {
-        int256 pnl = pricePnl(pos, price) - fundingOwed(pos, fundingIndex);
-        return pnl <= -((pos.margin * LIQUIDATION_THRESHOLD_BPS) / BPS).toInt256();
+        return pnl(pos, price, fundingIndex) <= -((pos.margin * LIQUIDATION_THRESHOLD_BPS) / BPS).toInt256();
+    }
+
+    /// @dev Entry funding index of a position of `size` at `index` after `added` more is opened at
+    ///      `currentIndex`: the size-weighted average, so the funding owed at `currentIndex` is unchanged. Rounded
+    ///      against the trader (down for a long, which owes more the lower its entry index; up for a short), so
+    ///      the funding owed can only grow, by less than one unit.
+    function blendIndex(int256 index, uint256 size, int256 currentIndex, uint256 added, bool isLong)
+        internal
+        pure
+        returns (int256)
+    {
+        // Measured from the lower of the two, so the weighted sum is non-negative and rounding is a plain choice.
+        int256 low = index < currentIndex ? index : currentIndex;
+        uint256 sum = size * (index - low).toUint256() + added * (currentIndex - low).toUint256();
+        uint256 total = size + added;
+        return low + (isLong ? sum / total : Math.ceilDiv(sum, total)).toInt256();
     }
 
     /// @dev Mid price at which the position becomes liquidatable: a long is liquidatable at or below it, a

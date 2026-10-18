@@ -40,13 +40,14 @@ import {
 /// @dev Conventions
 ///  - USDC amounts (margin, size, fees) use 6 decimals; prices use 18.
 ///  - One position per trader per market, keyed by `positionKey(trader, marketId)`. The market id is called
-///    `priceId` in structs and events; for a plain perpetual it is the Pyth feed id.
+///    `priceId` in structs and events; for a plain perpetual it is the Pyth feed id. An open on the side the
+///    trader already holds adds to that position; an open on the other side reverts with {PositionExists}.
 ///  - Trades that favour the trader execute on the adverse side of Pyth's confidence band (buys at price+conf,
 ///    sells at price-conf). Liquidations and trigger conditions are evaluated at the mid price.
 ///  - A position can only be closed (by its trader or by an order) against a price published after the second
-///    it was opened in; liquidation has no such restriction.
+///    it was opened or last increased in; liquidation has no such restriction.
 ///  - A position is liquidatable once price loss plus funding owed reaches 90% of its margin.
-///  - Profit on a position is capped at `maxProfitMultiple` times its margin.
+///  - Profit is capped at `maxProfitMultiple` times margin, for a whole position and for each part closed.
 ///  - Engine USDC holdings always equal open position margins plus open order escrows plus deferred payments.
 ///  - Payments to traders never block: if USDC refuses the transfer (a blocklisted recipient) the amount is
 ///    parked in `claimable` for that same address and the position is still removed.
@@ -74,20 +75,22 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
     uint256 public constant MARGIN_FEE_CAP_BPS = 1_000;
     /// @notice A position is liquidated once its loss (price move plus funding) reaches this share of margin.
     uint256 public constant LIQUIDATION_THRESHOLD_BPS = PositionMath.LIQUIDATION_THRESHOLD_BPS;
-    /// @notice Share of the liquidated margin paid to the liquidator; the remainder goes to the vault.
-    uint256 public constant LIQUIDATOR_FEE_BPS = 200;
+    // Bounds on what the owner can set. Internal (no getters) to keep the engine under the EIP-170 size limit;
+    // they are fixed in this source and documented in SECURITY.md.
 
-    uint256 public constant MAX_BASE_FEE_BPS = 50;
-    uint256 public constant MAX_SKEW_FEE_BPS = 100;
-    /// @notice Ceiling for the full-skew funding rate: 1000% of notional per year.
-    uint256 public constant MAX_FUNDING_RATE_PER_SECOND = 317_097_919_837;
-    uint256 public constant MAX_EXECUTION_FEE = 10e6;
-    uint256 public constant MAX_PRICE_AGE = 60;
-    uint256 public constant MAX_CONF_BPS = 500;
-    /// @notice Bounds for `maxOiToNavBps` (0.5x to 10x of NAV).
-    uint256 public constant MIN_OI_TO_NAV_BPS = 5_000;
-    uint256 public constant MAX_OI_TO_NAV_BPS = 100_000;
-    uint256 public constant MAX_MARKETS = 64;
+    /// @dev Share of the liquidated margin paid to the liquidator; the remainder goes to the vault.
+    uint256 internal constant LIQUIDATOR_FEE_BPS = 200;
+    uint256 internal constant MAX_BASE_FEE_BPS = 50;
+    uint256 internal constant MAX_SKEW_FEE_BPS = 100;
+    /// @dev Ceiling for the full-skew funding rate: 1000% of notional per year.
+    uint256 internal constant MAX_FUNDING_RATE_PER_SECOND = 317_097_919_837;
+    uint256 internal constant MAX_EXECUTION_FEE = 10e6;
+    uint256 internal constant MAX_PRICE_AGE = 60;
+    uint256 internal constant MAX_CONF_BPS = 500;
+    /// @dev Bounds for `maxOiToNavBps` (0.5x to 10x of NAV).
+    uint256 internal constant MIN_OI_TO_NAV_BPS = 5_000;
+    uint256 internal constant MAX_OI_TO_NAV_BPS = 100_000;
+    uint256 internal constant MAX_MARKETS = 64;
 
     // ───────────────────────────── Immutables ─────────────────────────────
 
@@ -161,6 +164,20 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 entryPrice,
         uint256 fee
     );
+    /// @notice An open added to an existing position (`price` is the fill price of the addition).
+    event PositionIncreased(
+        bytes32 indexed key,
+        address indexed trader,
+        bytes32 indexed priceId,
+        bool isLong,
+        uint256 addedMargin,
+        uint256 addedSize,
+        uint256 price,
+        uint256 fee,
+        uint256 newMargin,
+        uint256 newSize,
+        uint256 newEntryPrice
+    );
     event PositionClosed(
         bytes32 indexed key,
         address indexed trader,
@@ -170,6 +187,19 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 fee,
         uint256 payout
     );
+    /// @notice Part of a position was closed; the rest stays open. `payout` is what the closed part paid out.
+    event PositionDecreased(
+        bytes32 indexed key,
+        address indexed trader,
+        bytes32 indexed priceId,
+        uint256 exitPrice,
+        uint256 closedSize,
+        uint256 releasedMargin,
+        int256 pnl,
+        uint256 fee,
+        uint256 payout
+    );
+    event MarginAdded(bytes32 indexed key, address indexed trader, uint256 amount, uint256 newMargin);
     event PositionLiquidated(
         bytes32 indexed key,
         address indexed trader,
@@ -213,6 +243,10 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
     error PositionExists();
     error PositionNotFound();
     error PositionLiquidatable();
+    /// @notice {addMargin} on a position whose PnL (after funding) is above zero.
+    error PositionInProfit();
+    /// @notice An increase of a position whose PnL (after funding) is already beyond its profit cap.
+    error ProfitCapReached();
     error MarketOiCapExceeded();
     error VaultOiCapExceeded();
     error SlippageExceeded();
@@ -337,7 +371,8 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         emit MaxProfitMultipleSet(maxProfitMultiple_);
     }
 
-    /// @notice Blocks new positions and new/filled limit orders. Closes, triggers and liquidations keep working.
+    /// @notice Blocks new positions, increases and new/filled open orders. Closes, triggers, margin top-ups and
+    ///         liquidations keep working.
     function pause() external onlyOwner {
         _pause();
     }
@@ -348,11 +383,14 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
 
     // ───────────────────────────── Trading ─────────────────────────────
 
-    /// @notice Opens a position at the current Pyth price, optionally with take-profit / stop-loss brackets.
+    /// @notice Opens a position at the current Pyth price, or adds to the caller's position on the same side,
+    ///         optionally with take-profit / stop-loss brackets.
     /// @dev The caller pays `margin + open fee + executionFee per bracket` in USDC (approve first), plus the Pyth
-    ///      update fee in native value. Callers that cannot land a transaction within `maxPriceAge` of fetching
-    ///      a price (people using wallets) should place a marketable limit order with {createLimitOrder} instead.
-    /// @param p See {OpenParams}.
+    ///      update fee in native value. When the position already has an order of a bracket's type, that order is
+    ///      moved to the new trigger and the bracket's execution fee is refunded. Callers that cannot land a
+    ///      transaction within `maxPriceAge` of fetching a price (people using wallets) should place a marketable
+    ///      limit order with {createLimitOrder} instead.
+    /// @param p See {OpenParams}. Margin and size are those of this trade; leverage limits apply to it alone.
     /// @param priceUpdate Pyth update data from Hermes. May be empty if a fresh enough price is already on-chain.
     function openPosition(OpenParams calldata p, bytes[] calldata priceUpdate)
         external
@@ -379,13 +417,15 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         usdc.safeTransferFrom(msg.sender, address(this), p.margin + fee + brackets * execFee);
 
         key = _open(msg.sender, p.priceId, m, p.isLong, p.margin, p.size, price, fee);
-        _attachBrackets(key, p.takeProfit, p.stopLoss, execFee);
+        _pay(msg.sender, _attachBrackets(key, p.takeProfit, p.stopLoss, execFee));
     }
 
-    /// @notice Closes the caller's position in `marketId` at the current price (or at the settlement price of a
-    ///         settled dated market).
+    /// @notice Closes `size` of the caller's position in `marketId` at the current price (or at the settlement
+    ///         price of a settled dated market); `size` 0, or at least the position's size, closes all of it.
+    /// @dev A partial close releases margin in proportion and leaves the rest of the position with its entry price,
+    ///      funding index, open time and orders. If the rest would hold less than `minMargin`, everything closes.
     /// @param acceptablePrice Worst execution price accepted (minimum for longs, maximum for shorts); 0 disables.
-    function closePosition(bytes32 marketId, uint256 acceptablePrice, bytes[] calldata priceUpdate)
+    function closePosition(bytes32 marketId, uint256 size, uint256 acceptablePrice, bytes[] calldata priceUpdate)
         external
         payable
         nonReentrant
@@ -398,16 +438,35 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         // A settled dated market closes at its fixed settlement price, so no stale-price option remains there.
         if (m.settlementPrice == 0 && pos.size > pos.margin * DIRECT_MAX_LEVERAGE) revert HighLeverageNeedsOrder();
 
-        OraclePrice memory px = _readPrice(m);
-        if (px.publishTime <= pos.openedAt) revert PriceNotAfterOpen();
-        _accrueFunding(m);
-        if (PositionMath.isLiquidatable(pos, px.mid, m.fundingIndex)) revert PositionLiquidatable();
-
-        uint256 price = pos.isLong ? px.bid : px.ask;
+        uint256 price = _exitPrice(pos, m, _readPrice(m));
         if (acceptablePrice != 0 && (pos.isLong ? price < acceptablePrice : price > acceptablePrice)) {
             revert SlippageExceeded();
         }
-        _close(key, pos, m, price);
+        _close(key, pos, m, price, size);
+    }
+
+    /// @notice Adds `amount` USDC (approve first) to the margin of the caller's position in `marketId`, lowering
+    ///         its leverage and moving its liquidation price away. Works while paused.
+    /// @dev Refused with {PositionInProfit} while the position's PnL after funding is above zero at the last price
+    ///      on-chain, however old (with no usable price at all it is allowed): margin added to a winner would lift
+    ///      its profit cap. Leverage can be brought down to 1x, not below ({LeverageOutOfRange}). Restarts
+    ///      `openedAt` like an increase: margin can bring a keeper-only position under `DIRECT_MAX_LEVERAGE`, and
+    ///      the direct close that then becomes possible must not use a price from before the top-up.
+    function addMargin(bytes32 marketId, uint256 amount) external nonReentrant {
+        bytes32 key = positionKey(msg.sender, marketId);
+        Position storage pos = _positions[key];
+        if (pos.trader == address(0)) revert PositionNotFound();
+        Market storage m = _markets[marketId];
+        _accrueFunding(m);
+        (PriceStatus status, OraclePrice memory px) = _peekPrice(m, type(uint256).max);
+        if (status == PriceStatus.Ok && PositionMath.pnl(pos, px.mid, m.fundingIndex) > 0) revert PositionInProfit();
+        if (amount == 0) revert InvalidParam();
+        uint256 margin = pos.margin + amount;
+        if (margin > pos.size) revert LeverageOutOfRange();
+        pos.margin = margin;
+        pos.openedAt = uint64(block.timestamp);
+        emit MarginAdded(key, msg.sender, amount, margin);
+        usdc.safeTransferFrom(msg.sender, address(this), amount);
     }
 
     /// @notice Collects USDC that could not be delivered to the caller earlier.
@@ -422,8 +481,11 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
 
     // ───────────────────────────── Orders ─────────────────────────────
 
-    /// @notice Places an order to open a position when price reaches `triggerPrice`. With a trigger at or beyond
-    ///         the current price it is a market order executed by a keeper against the next price.
+    /// @notice Places an order to open a position (or add to the caller's position on the same side) once the
+    ///         market reaches `triggerPrice`. A limit order fills at the trigger or better; with a trigger at or
+    ///         beyond the current price it is a market order executed by a keeper against the next price. With
+    ///         `stopEntry` it is a stop-entry (breakout) order, which fills once the market trades through the
+    ///         trigger: a long once the ask is at or above it, a short once the bid is at or below it.
     /// @dev Escrows margin, the maximum possible open fee and one execution fee for the order plus one per
     ///      bracket. Unused fee budget is refunded on fill; everything is refunded on cancel.
     function createLimitOrder(LimitParams calldata p) external nonReentrant whenNotPaused returns (uint256 orderId) {
@@ -438,11 +500,12 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 brackets = (p.takeProfit != 0 ? 1 : 0) + (p.stopLoss != 0 ? 1 : 0);
         usdc.safeTransferFrom(msg.sender, address(this), p.margin + feeBudget + (1 + brackets) * execFee);
 
+        OrderType orderType = p.stopEntry ? OrderType.StopOpen : OrderType.LimitOpen;
         orderId = nextOrderId++;
         _orders[orderId] = Order({
             trader: msg.sender,
             priceId: p.priceId,
-            orderType: OrderType.LimitOpen,
+            orderType: orderType,
             isLong: p.isLong,
             createdAt: uint64(block.timestamp),
             margin: p.margin,
@@ -454,23 +517,23 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
             executionFee: execFee
         });
         _orderIds.add(orderId);
-        emit OrderCreated(
-            orderId, msg.sender, p.priceId, OrderType.LimitOpen, p.isLong, p.triggerPrice, p.margin, p.size
-        );
+        emit OrderCreated(orderId, msg.sender, p.priceId, orderType, p.isLong, p.triggerPrice, p.margin, p.size);
     }
 
-    /// @notice Sets (or moves) an order attached to the caller's open position in `marketId`.
-    /// @dev A position has at most one order of each type; creating one escrows `executionFee`, moving it is free.
+    /// @notice Sets (or moves) an order attached to the caller's open position in `marketId` that closes `size`
+    ///         of it when it executes (0: all of it; it never closes more than is open).
+    /// @dev A position has at most one order of each type; creating one escrows `executionFee`, moving it (a new
+    ///      trigger and size) is free.
     ///      - TakeProfit fires when the mid price is at or beyond `triggerPrice` in the position's favour.
     ///      - StopLoss fires when it is at or beyond `triggerPrice` against it.
     ///      - Close is a market close executed by a keeper against the next price; `triggerPrice` is the worst
     ///        acceptable execution price (0 for none).
-    function setTriggerOrder(bytes32 marketId, OrderType orderType, uint256 triggerPrice)
+    function setTriggerOrder(bytes32 marketId, OrderType orderType, uint256 triggerPrice, uint256 size)
         external
         nonReentrant
         returns (uint256 orderId)
     {
-        if (orderType == OrderType.LimitOpen) revert NotTriggerOrderType();
+        if (_isOpenOrder(orderType)) revert NotTriggerOrderType();
         if (triggerPrice == 0 && orderType != OrderType.Close) revert InvalidTrigger();
         bytes32 key = positionKey(msg.sender, marketId);
         Position storage pos = _positions[key];
@@ -478,14 +541,12 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
 
         orderId = _link(pos, orderType);
         if (orderId != 0) {
-            Order storage o = _orders[orderId];
-            o.triggerPrice = triggerPrice;
-            o.createdAt = uint64(block.timestamp);
-            emit OrderUpdated(orderId, triggerPrice);
+            _orders[orderId].size = size;
+            _moveOrder(orderId, triggerPrice);
         } else {
             uint256 execFee = executionFee;
             usdc.safeTransferFrom(msg.sender, address(this), execFee);
-            orderId = _createTrigger(key, orderType, triggerPrice, execFee);
+            orderId = _createTrigger(key, orderType, triggerPrice, size, execFee);
         }
     }
 
@@ -496,7 +557,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         if (o.trader != msg.sender) revert NotOrderOwner();
 
         uint256 refund;
-        if (o.orderType == OrderType.LimitOpen) {
+        if (_isOpenOrder(o.orderType)) {
             uint256 brackets = (o.takeProfit != 0 ? 1 : 0) + (o.stopLoss != 0 ? 1 : 0);
             refund = o.margin + o.feeBudget + (1 + brackets) * o.executionFee;
         } else {
@@ -520,36 +581,15 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         OraclePrice memory px = _readPrice(m);
         if (px.publishTime < o.createdAt) revert PriceBeforeOrder();
 
-        uint256 price;
-        if (o.orderType == OrderType.LimitOpen) {
-            price = _fillLimit(orderId, o, m, px);
-        } else {
-            price = _fillTrigger(orderId, o, m, px);
-        }
+        uint256 price = _isOpenOrder(o.orderType) ? _fillOpen(orderId, o, m, px) : _fillTrigger(orderId, o, m, px);
         emit OrderExecuted(orderId, o.trader, msg.sender, price);
         if (o.executionFee != 0) usdc.safeTransfer(msg.sender, o.executionFee);
     }
 
     // ───────────────────────────── Liquidations and settlement ─────────────────────────────
 
-    /// @notice Liquidates every liquidatable position of `trader` using prices already on-chain.
-    /// @dev Reverts with {NothingToLiquidate} if none qualifies (including when prices are stale).
-    function liquidate(address trader) external nonReentrant returns (uint256 liquidated) {
-        liquidated = _liquidateTrader(trader);
-    }
-
-    /// @notice Same as {liquidate(address)} after pushing fresh Pyth prices. This is what keepers call.
-    function liquidate(address trader, bytes[] calldata priceUpdate)
-        external
-        payable
-        nonReentrant
-        returns (uint256 liquidated)
-    {
-        _updateOracle(priceUpdate);
-        liquidated = _liquidateTrader(trader);
-    }
-
-    /// @notice Liquidates each position in `keys` that qualifies and skips the rest.
+    /// @notice Liquidates each position in `keys` that qualifies and skips the rest, after pushing `priceUpdate`
+    ///         (may be empty to use the prices already on-chain).
     /// @dev Reverts with {NothingToLiquidate} if none qualifies, so a keeper's simulation fails cheaply.
     function liquidateBatch(bytes32[] calldata keys, bytes[] calldata priceUpdate)
         external
@@ -590,7 +630,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
             Market storage m = _markets[pos.priceId];
             uint256 price = m.settlementPrice;
             if (price == 0) continue;
-            if (!_tryLiquidate(key)) _close(key, pos, m, price);
+            if (!_tryLiquidate(key)) _close(key, pos, m, price, 0);
             ++settled;
         }
     }
@@ -703,6 +743,11 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
 
     // ───────────────────────────── Internal: trading ─────────────────────────────
 
+    /// @dev Opens a position of `size` at `price`, or adds that to the trader's position on the same side (the
+    ///      other side reverts). An increase takes its entry price from units, so the market's unit counter (the
+    ///      vault's mark-to-market) stays the exact sum over its positions; blends the entry funding index so the
+    ///      funding owed is unchanged; and restarts `openedAt`, so no close can use a price from before it. Open
+    ///      interest, units and the caps apply to the added size as for a new position.
     function _open(
         address trader,
         bytes32 marketId,
@@ -714,69 +759,135 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 fee
     ) private returns (bytes32 key) {
         key = positionKey(trader, marketId);
-        if (_positions[key].trader != address(0)) revert PositionExists();
-
+        // All zero when there is none; linked order ids carry over on an increase.
+        Position memory pos = _positions[key];
         _accrueFunding(m);
+        bool increase = pos.trader != address(0);
+        uint256 unitsBefore;
+        if (increase) {
+            if (pos.isLong != isLong) revert PositionExists();
+            // Profit beyond the cap is forfeit when the position closes; margin added now must not revive it.
+            if (PositionMath.pnl(pos, price, m.fundingIndex) > (pos.margin * maxProfitMultiple).toInt256()) {
+                revert ProfitCapReached();
+            }
+            unitsBefore = PositionMath.units(pos.size, pos.entryPrice);
+            // Rounded against the trader: up for a long, down for a short.
+            pos.entryPrice = Math.mulDiv(
+                pos.size + size,
+                PositionMath.UNIT_PRECISION,
+                unitsBefore + PositionMath.units(size, price),
+                isLong ? Math.Rounding.Ceil : Math.Rounding.Floor
+            );
+            pos.entryFundingIndex =
+                PositionMath.blendIndex(pos.entryFundingIndex, pos.size, m.fundingIndex, size, isLong);
+        } else {
+            pos.entryPrice = price;
+            pos.entryFundingIndex = m.fundingIndex;
+            pos.isLong = isLong;
+            pos.priceId = marketId;
+            pos.trader = trader;
+        }
+        pos.size += size;
+        pos.margin += margin;
+        pos.openedAt = uint64(block.timestamp);
+
+        uint256 unitsAfter = PositionMath.units(pos.size, pos.entryPrice);
         uint256 sideOi;
         if (isLong) {
             sideOi = (m.longOi += size);
-            m.longUnits += PositionMath.units(size, price);
+            m.longUnits = m.longUnits + unitsAfter - unitsBefore;
         } else {
             sideOi = (m.shortOi += size);
-            m.shortUnits += PositionMath.units(size, price);
+            m.shortUnits = m.shortUnits + unitsAfter - unitsBefore;
         }
         if (sideOi > m.maxOiPerSide) revert MarketOiCapExceeded();
         uint256 totalOi = (totalOpenInterest += size);
         if (totalOi * BPS > vault.totalAssets() * maxOiToNavBps) revert VaultOiCapExceeded();
 
-        _positions[key] = Position({
-            margin: margin,
-            size: size,
-            entryPrice: price,
-            isLong: isLong,
-            priceId: marketId,
-            trader: trader,
-            openedAt: uint64(block.timestamp),
-            tpOrderId: 0,
-            slOrderId: 0,
-            closeOrderId: 0,
-            entryFundingIndex: m.fundingIndex
-        });
-        _positionKeys.add(key);
-        emit PositionOpened(key, trader, marketId, isLong, margin, size, price, fee);
+        _positions[key] = pos;
+        if (increase) {
+            emit PositionIncreased(
+                key, trader, marketId, isLong, margin, size, price, fee, pos.margin, pos.size, pos.entryPrice
+            );
+        } else {
+            _positionKeys.add(key);
+            emit PositionOpened(key, trader, marketId, isLong, margin, size, price, fee);
+        }
 
         if (fee != 0) vault.receiveFees(fee);
     }
 
-    /// @dev Settles and removes position `key` (a copy of which is `pos`) at `price`. Funding must already be
-    ///      accrued for `m`.
-    function _close(bytes32 key, Position memory pos, Market storage m, uint256 price) private {
-        int256 pnl = PositionMath.pricePnl(pos, price) - PositionMath.fundingOwed(pos, m.fundingIndex);
-        int256 cap = (pos.margin * maxProfitMultiple).toInt256();
-        if (pnl > cap) pnl = cap;
-        uint256 refund = _removePosition(key, pos, m);
-        uint256 fee = Math.min(Math.mulDiv(pos.size, baseFeeBps, BPS, Math.Rounding.Ceil), _feeCap(pos.margin));
+    /// @dev Settles `closeSize` of position `key` (a copy of which is `pos`) at `price`: the whole position when
+    ///      `closeSize` is zero or at least its size, or when the rest would hold less than `minMargin`. A part
+    ///      is settled like a position of its own: margin released in proportion (rounded down, so the rest
+    ///      keeps any remainder), price PnL and funding on its size, and its own profit and fee caps. The rest
+    ///      keeps its entry price, funding index, open time and linked orders. Funding must already be accrued
+    ///      for `m`.
+    function _close(bytes32 key, Position memory pos, Market storage m, uint256 price, uint256 closeSize) private {
+        uint256 size = pos.size;
+        uint256 marginOut = closeSize != 0 && closeSize < size ? Math.mulDiv(pos.margin, closeSize, size) : pos.margin;
+        uint256 refund;
+        // Partial unless nothing would be left (a full close) or too little to keep open.
+        bool partial_ = pos.margin - marginOut >= minMargin;
+        if (partial_) {
+            Position storage rest = _positions[key];
+            rest.size = size - closeSize;
+            rest.margin = pos.margin - marginOut;
+            _release(m, pos.isLong, pos.entryPrice, size, size - closeSize);
+            // From here on `pos` describes the part being closed.
+            pos.size = closeSize;
+            pos.margin = marginOut;
+        } else {
+            refund = _removePosition(key, pos, m);
+        }
+        (int256 pnl, uint256 fee, uint256 payout) = _settle(pos, price, m.fundingIndex);
+        if (partial_) {
+            emit PositionDecreased(key, pos.trader, pos.priceId, price, pos.size, pos.margin, pnl, fee, payout);
+        } else {
+            emit PositionClosed(key, pos.trader, pos.priceId, price, pnl, fee, payout);
+        }
+        _pay(pos.trader, payout + refund);
+    }
 
-        uint256 payout; // margin returned plus profit received from the vault
+    /// @dev Realises `pos` (a whole position or the part of one being closed) at `price` with the vault: profit up
+    ///      to the cap is paid by the vault, a loss of up to the margin goes to it (with the DRY rebate), and the
+    ///      close fee comes out of what is left. Returns the PnL after the cap, the fee and what the trader gets.
+    function _settle(Position memory pos, uint256 price, int256 fundingIndex)
+        private
+        returns (int256 pnl, uint256 fee, uint256 payout)
+    {
+        uint256 margin = pos.margin;
+        pnl = PositionMath.pnl(pos, price, fundingIndex);
+        int256 cap = (margin * maxProfitMultiple).toInt256();
+        if (pnl > cap) pnl = cap;
+        fee = Math.min(Math.mulDiv(pos.size, baseFeeBps, BPS, Math.Rounding.Ceil), _feeCap(margin));
         if (pnl >= 0) {
-            fee = Math.min(fee, pos.margin);
-            payout = pos.margin - fee;
+            fee = Math.min(fee, margin);
+            payout = margin - fee;
             if (fee != 0) vault.receiveFees(fee);
             if (pnl != 0) payout += vault.payoutTraderProfit(pos.trader, pnl.toUint256());
         } else {
-            uint256 loss = Math.min((-pnl).toUint256(), pos.margin);
-            uint256 remaining = pos.margin - loss;
+            uint256 loss = Math.min((-pnl).toUint256(), margin);
+            uint256 remaining = margin - loss;
             fee = Math.min(fee, remaining);
             payout = remaining - fee;
             vault.receiveTraderLoss(pos.trader, loss);
             rewardToken.mintLossRebate(pos.trader, loss);
             if (fee != 0) vault.receiveFees(fee);
         }
-        emit PositionClosed(key, pos.trader, pos.priceId, price, pnl, fee, payout);
-        _pay(pos.trader, payout + refund);
     }
 
-    function _fillLimit(uint256 orderId, Order memory o, Market storage m, OraclePrice memory px)
+    /// @dev Checks shared by every close a trader or an order makes, and its execution price: the price must be
+    ///      newer than the position's last open or increase, and past the liquidation threshold the position
+    ///      belongs to liquidators. Accrues funding for `m`.
+    function _exitPrice(Position memory pos, Market storage m, OraclePrice memory px) private returns (uint256) {
+        if (px.publishTime <= pos.openedAt) revert PriceNotAfterOpen();
+        _accrueFunding(m);
+        if (PositionMath.isLiquidatable(pos, px.mid, m.fundingIndex)) revert PositionLiquidatable();
+        return pos.isLong ? px.bid : px.ask;
+    }
+
+    function _fillOpen(uint256 orderId, Order memory o, Market storage m, OraclePrice memory px)
         private
         whenNotPaused
         returns (uint256 price)
@@ -784,15 +895,18 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         // Limits may have changed since the order was placed; it must still be a valid trade now.
         _validateTrade(m, o.margin, o.size);
         price = o.isLong ? px.ask : px.bid;
-        if (o.isLong ? price > o.triggerPrice : price < o.triggerPrice) revert TriggerNotMet();
-        // On a gap through the stop the fill would be stopped out at once; leave the order resting instead.
-        _validateBrackets(o.isLong, price, 0, o.stopLoss);
+        // A limit fills at its trigger or better; a stop-entry once the market is at or through its trigger.
+        if (price != o.triggerPrice && (price > o.triggerPrice) == (o.isLong == (o.orderType == OrderType.LimitOpen)))
+        {
+            revert TriggerNotMet();
+        }
+        // On a gap through a bracket the fill would be closed out at once; leave the order resting instead.
+        _validateBrackets(o.isLong, price, o.takeProfit, o.stopLoss);
 
         _removeOrder(orderId, address(0));
         uint256 fee = Math.min(_openFee(m, o.size, o.isLong, o.margin), o.feeBudget);
         bytes32 key = _open(o.trader, o.priceId, m, o.isLong, o.margin, o.size, price, fee);
-        _attachBrackets(key, o.takeProfit, o.stopLoss, o.executionFee);
-        _pay(o.trader, o.feeBudget - fee);
+        _pay(o.trader, o.feeBudget - fee + _attachBrackets(key, o.takeProfit, o.stopLoss, o.executionFee));
     }
 
     function _fillTrigger(uint256 orderId, Order memory o, Market storage m, OraclePrice memory px)
@@ -800,13 +914,13 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         returns (uint256 price)
     {
         bytes32 key = positionKey(o.trader, o.priceId);
-        Position memory pos = _positions[key];
-        if (px.publishTime <= pos.openedAt) revert PriceNotAfterOpen();
-        _accrueFunding(m);
-        // Past the liquidation threshold the position belongs to liquidators, not to its orders.
-        if (PositionMath.isLiquidatable(pos, px.mid, m.fundingIndex)) revert PositionLiquidatable();
-
-        price = pos.isLong ? px.bid : px.ask;
+        Position storage linked = _positions[key];
+        // Unlinked before the position is read: its fee goes to the keeper, not back to the trader, and a partial
+        // close leaves the rest of the position without it.
+        _setLink(linked, o.orderType, 0);
+        _removeOrder(orderId, address(0));
+        Position memory pos = linked;
+        price = _exitPrice(pos, m, px);
         bool met;
         if (o.orderType == OrderType.Close) {
             met = o.triggerPrice == 0 || (pos.isLong ? price >= o.triggerPrice : price <= o.triggerPrice);
@@ -816,21 +930,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
             met = wantsHigher ? px.mid >= o.triggerPrice : px.mid <= o.triggerPrice;
         }
         if (!met) revert TriggerNotMet();
-
-        // Unlink it from the copy `_close` works on, so its fee goes to the keeper, not back to the trader.
-        if (o.orderType == OrderType.TakeProfit) pos.tpOrderId = 0;
-        else if (o.orderType == OrderType.StopLoss) pos.slOrderId = 0;
-        else pos.closeOrderId = 0;
-        _removeOrder(orderId, address(0));
-        _close(key, pos, m, price);
-    }
-
-    function _liquidateTrader(address trader) private returns (uint256 liquidated) {
-        uint256 n = _marketIds.length;
-        for (uint256 i; i < n; ++i) {
-            if (_tryLiquidate(positionKey(trader, _marketIds[i]))) ++liquidated;
-        }
-        if (liquidated == 0) revert NothingToLiquidate();
+        _close(key, pos, m, price, o.size);
     }
 
     /// @dev Liquidates `key` if it exists, has a usable price and is past the threshold. Never reverts on a
@@ -860,20 +960,28 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
     /// @dev Deletes the position, releases its open interest and cancels its linked orders.
     /// @return escrow Execution fees that were escrowed for the cancelled orders.
     function _removePosition(bytes32 key, Position memory pos, Market storage m) private returns (uint256 escrow) {
-        uint256 units = PositionMath.units(pos.size, pos.entryPrice);
-        if (pos.isLong) {
-            m.longOi -= pos.size;
-            m.longUnits -= units;
-        } else {
-            m.shortOi -= pos.size;
-            m.shortUnits -= units;
-        }
-        totalOpenInterest -= pos.size;
-
+        _release(m, pos.isLong, pos.entryPrice, pos.size, 0);
         escrow = _cancelLinked(pos.tpOrderId, pos.trader) + _cancelLinked(pos.slOrderId, pos.trader)
             + _cancelLinked(pos.closeOrderId, pos.trader);
         delete _positions[key];
         _positionKeys.remove(key);
+    }
+
+    /// @dev Takes `size - sizeLeft` of a position at `entry` out of the open-interest and unit counters. The
+    ///      units removed are the position's units before less its units after, so the counter stays the exact
+    ///      sum over open positions; the subtraction saturates all the same, so rounding can never make a close
+    ///      or a liquidation revert.
+    function _release(Market storage m, bool isLong, uint256 entry, uint256 size, uint256 sizeLeft) private {
+        uint256 out = size - sizeLeft;
+        uint256 unitsOut = PositionMath.units(size, entry) - PositionMath.units(sizeLeft, entry);
+        if (isLong) {
+            m.longOi -= out;
+            m.longUnits = _subFloor(m.longUnits, unitsOut);
+        } else {
+            m.shortOi -= out;
+            m.shortUnits = _subFloor(m.shortUnits, unitsOut);
+        }
+        totalOpenInterest -= out;
     }
 
     function _cancelLinked(uint64 orderId, address trader) private returns (uint256 escrow) {
@@ -882,13 +990,33 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         _removeOrder(orderId, trader);
     }
 
-    function _attachBrackets(bytes32 key, uint256 takeProfit, uint256 stopLoss, uint256 execFee) private {
-        if (takeProfit != 0) _createTrigger(key, OrderType.TakeProfit, takeProfit, execFee);
-        if (stopLoss != 0) _createTrigger(key, OrderType.StopLoss, stopLoss, execFee);
+    /// @dev Attaches an open's brackets to position `key`. Where the position already has an order of a bracket's
+    ///      type (an increase), that order is moved instead and the bracket's execution fee is returned for the
+    ///      caller to refund: one order per type, and no escrow left without an order.
+    function _attachBrackets(bytes32 key, uint256 takeProfit, uint256 stopLoss, uint256 execFee)
+        private
+        returns (uint256 refund)
+    {
+        if (takeProfit != 0) refund = _bracket(key, OrderType.TakeProfit, takeProfit, execFee);
+        if (stopLoss != 0) refund += _bracket(key, OrderType.StopLoss, stopLoss, execFee);
     }
 
-    /// @dev Creates an order linked to position `key`. The execution fee must already be held.
-    function _createTrigger(bytes32 key, OrderType orderType, uint256 triggerPrice, uint256 execFee)
+    function _bracket(bytes32 key, OrderType orderType, uint256 triggerPrice, uint256 execFee)
+        private
+        returns (uint256 refund)
+    {
+        uint64 orderId = _link(_positions[key], orderType);
+        if (orderId == 0) {
+            _createTrigger(key, orderType, triggerPrice, 0, execFee);
+        } else {
+            _moveOrder(orderId, triggerPrice);
+            refund = execFee;
+        }
+    }
+
+    /// @dev Creates an order linked to position `key` that closes `size` of it. The execution fee must already be
+    ///      held.
+    function _createTrigger(bytes32 key, OrderType orderType, uint256 triggerPrice, uint256 size, uint256 execFee)
         private
         returns (uint64 orderId)
     {
@@ -901,7 +1029,7 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
             isLong: pos.isLong,
             createdAt: uint64(block.timestamp),
             margin: 0,
-            size: 0,
+            size: size,
             triggerPrice: triggerPrice,
             takeProfit: 0,
             stopLoss: 0,
@@ -910,7 +1038,15 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
         });
         _orderIds.add(orderId);
         _setLink(pos, orderType, orderId);
-        emit OrderCreated(orderId, pos.trader, pos.priceId, orderType, pos.isLong, triggerPrice, 0, 0);
+        emit OrderCreated(orderId, pos.trader, pos.priceId, orderType, pos.isLong, triggerPrice, 0, size);
+    }
+
+    /// @dev Moving re-arms {PriceBeforeOrder}: the order cannot execute against a price older than the move.
+    function _moveOrder(uint256 orderId, uint256 triggerPrice) private {
+        Order storage o = _orders[orderId];
+        o.triggerPrice = triggerPrice;
+        o.createdAt = uint64(block.timestamp);
+        emit OrderUpdated(orderId, triggerPrice);
     }
 
     function _link(Position storage pos, OrderType orderType) private view returns (uint64) {
@@ -952,6 +1088,11 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
 
     function _checkMarketParams(uint16 maxLeverage, uint256 skewScale) private pure {
         if (maxLeverage == 0 || maxLeverage > MAX_LEVERAGE || skewScale == 0) revert InvalidParam();
+    }
+
+    /// @dev LimitOpen and StopOpen escrow margin and open (or add to) a position; the rest close one.
+    function _isOpenOrder(OrderType orderType) private pure returns (bool) {
+        return orderType == OrderType.LimitOpen || orderType == OrderType.StopOpen;
     }
 
     function _validateTrade(Market storage m, uint256 margin, uint256 size) private view {
@@ -1020,6 +1161,10 @@ contract PerpEngine is IPerpEngine, Ownable2Step, Pausable, ReentrancyGuard {
 
     function _absDiff(uint256 a, uint256 b) private pure returns (uint256) {
         return a > b ? a - b : b - a;
+    }
+
+    function _subFloor(uint256 a, uint256 b) private pure returns (uint256) {
+        return a > b ? a - b : 0;
     }
 
     // ───────────────────────────── Internal: oracle ─────────────────────────────

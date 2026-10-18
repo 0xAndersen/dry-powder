@@ -137,8 +137,8 @@ contract EngineLensTest is Base {
         engine.createLimitOrder(_limit(ETH, false, 1_000e6, 10_000e6, 4_100e18));
         _open(alice, ETH, true, 1_000e6, 10_000e6);
         vm.startPrank(alice);
-        engine.setTriggerOrder(ETH, OrderType.Close, 0);
-        engine.setTriggerOrder(ETH, OrderType.StopLoss, 3_900e18);
+        engine.setTriggerOrder(ETH, OrderType.Close, 0, 0);
+        engine.setTriggerOrder(ETH, OrderType.StopLoss, 3_900e18, 0);
         vm.stopPrank();
 
         (uint256[] memory ids, Order[] memory orders) = lens.getOrders(0, 10);
@@ -237,7 +237,7 @@ contract EngineLensTest is Base {
         if (liquidatable) {
             vm.prank(alice);
             vm.expectRevert(PerpEngine.PositionLiquidatable.selector);
-            engine.closePosition(BTC, 0, _noBytes());
+            engine.closePosition(BTC, 0, 0, _noBytes());
             vm.prank(keeper);
             assertEq(engine.liquidateBatch(_keys(key), _noBytes()), 1);
         } else {

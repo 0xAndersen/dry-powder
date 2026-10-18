@@ -26,7 +26,7 @@ contract KnownIssuesTest is Base {
         _setBtc(103_000); // 3% gap between two consecutive usable prices
 
         vm.prank(alice);
-        engine.liquidate(bob); // self-liquidate the loser, pocket the 2% keeper fee
+        _liquidate(bob); // self-liquidate the loser, pocket the 2% keeper fee
         _close(alice, BTC);
 
         uint256 attackerAfter = _bal(alice) + _bal(bob);
@@ -43,7 +43,7 @@ contract KnownIssuesTest is Base {
         _open(bob, BTC, false, 1_000e6, 100_000e6);
         _setBtc(130_000);
         vm.prank(alice);
-        engine.liquidate(bob);
+        _liquidate(bob);
         _close(alice, BTC);
         uint256 profit = _bal(alice) + _bal(bob) - attackerBefore;
         console2.log("straddle profit on a 30% gap", profit / 1e6);
@@ -76,7 +76,7 @@ contract KnownIssuesTest is Base {
         uint256 before = _bal(alice);
         _open(alice, BTC, true, 10_000e6, 1_000_000e6);
         vm.prank(bob);
-        assertEq(engine.liquidate(alice), 1); // same block, price unchanged
+        assertEq(_liquidate(alice), 1); // same block, price unchanged
         assertGt(before - _bal(alice), 10_000e6, "entire margin plus open fee lost at an unchanged price");
     }
 
@@ -168,7 +168,7 @@ contract KnownIssuesTest is Base {
 
         // ... then the book is cleaned up, and carol alone carries the loss.
         vm.prank(keeper);
-        engine.liquidate(bob);
+        _liquidate(bob);
         _close(alice, BTC);
         uint256 carolValue = vault.convertToAssets(vault.balanceOf(carol));
         console2.log("leaver took    ", lpOut / 1e6);

@@ -413,7 +413,7 @@ contract OrdersTest is Base {
         engine.executeOrder(1, _noBytes());
 
         vm.prank(keeper);
-        engine.liquidate(alice);
+        _liquidate(alice);
         // 2% of margin to the keeper, 98% to the vault as loss, the stop's execution fee to the vault as fee.
         assertEq(usdc.balanceOf(keeper), 2e6);
         assertEq(vault.totalTraderLosses(), 98e6);
@@ -430,16 +430,16 @@ contract OrdersTest is Base {
         vm.startPrank(alice);
         vm.expectEmit(address(engine));
         emit PerpEngine.OrderCreated(1, alice, BTC, OrderType.TakeProfit, true, 103_000e18, 0, 0);
-        assertEq(engine.setTriggerOrder(BTC, OrderType.TakeProfit, 103_000e18), 1);
-        assertEq(engine.setTriggerOrder(BTC, OrderType.StopLoss, 97_000e18), 2);
+        assertEq(engine.setTriggerOrder(BTC, OrderType.TakeProfit, 103_000e18, 0), 1);
+        assertEq(engine.setTriggerOrder(BTC, OrderType.StopLoss, 97_000e18, 0), 2);
         assertEq(before - usdc.balanceOf(alice), 2 * EXEC_FEE);
 
         // Moving an existing trigger reuses the order and its escrow.
         skip(1);
         vm.expectEmit(address(engine));
         emit PerpEngine.OrderUpdated(2, 100_500e18);
-        assertEq(engine.setTriggerOrder(BTC, OrderType.StopLoss, 100_500e18), 2);
-        assertEq(engine.setTriggerOrder(BTC, OrderType.TakeProfit, 104_000e18), 1);
+        assertEq(engine.setTriggerOrder(BTC, OrderType.StopLoss, 100_500e18, 0), 2);
+        assertEq(engine.setTriggerOrder(BTC, OrderType.TakeProfit, 104_000e18, 0), 1);
         vm.stopPrank();
 
         assertEq(before - usdc.balanceOf(alice), 2 * EXEC_FEE);
@@ -458,10 +458,10 @@ contract OrdersTest is Base {
     function test_setTriggerOrder_movedTriggerNeedsAPriceNewerThanTheMove() public {
         _open(alice, BTC, true, 1_000e6, 10_000e6);
         vm.prank(alice);
-        engine.setTriggerOrder(BTC, OrderType.StopLoss, 97_000e18);
+        engine.setTriggerOrder(BTC, OrderType.StopLoss, 97_000e18, 0);
         skip(2);
         vm.prank(alice);
-        engine.setTriggerOrder(BTC, OrderType.StopLoss, 100_000e18);
+        engine.setTriggerOrder(BTC, OrderType.StopLoss, 100_000e18, 0);
         // The stored price (100,000, two seconds old) would satisfy the moved stop, but it predates the move.
         vm.prank(keeper);
         vm.expectRevert(PerpEngine.PriceBeforeOrder.selector);
@@ -471,11 +471,11 @@ contract OrdersTest is Base {
     function test_setTriggerOrder_validations() public {
         vm.startPrank(alice);
         vm.expectRevert(PerpEngine.NotTriggerOrderType.selector);
-        engine.setTriggerOrder(BTC, OrderType.LimitOpen, 1e18);
+        engine.setTriggerOrder(BTC, OrderType.LimitOpen, 1e18, 0);
         vm.expectRevert(PerpEngine.InvalidTrigger.selector);
-        engine.setTriggerOrder(BTC, OrderType.TakeProfit, 0);
+        engine.setTriggerOrder(BTC, OrderType.TakeProfit, 0, 0);
         vm.expectRevert(PerpEngine.PositionNotFound.selector);
-        engine.setTriggerOrder(BTC, OrderType.TakeProfit, 1e18);
+        engine.setTriggerOrder(BTC, OrderType.TakeProfit, 1e18, 0);
         vm.stopPrank();
     }
 
@@ -514,7 +514,7 @@ contract OrdersTest is Base {
         usdc.setBlocklisted(alice, true);
         _setBtc(99_000);
         vm.prank(keeper);
-        assertEq(engine.liquidate(alice), 1);
+        assertEq(_liquidate(alice), 1);
         assertEq(engine.positionCount(), 0);
         assertEq(engine.orderCount(), 0);
         // two open fees, one close fee, and the two orphaned bracket escrows of the liquidated position
@@ -564,7 +564,7 @@ contract OrdersTest is Base {
         vm.startPrank(alice);
         engine.openPosition{value: PYTH_FEE}(p, older);
         vm.expectRevert(PerpEngine.PriceNotAfterOpen.selector);
-        engine.closePosition{value: PYTH_FEE}(BTC, 0, newer);
+        engine.closePosition{value: PYTH_FEE}(BTC, 0, 0, newer);
         vm.stopPrank();
         // The same holds for closing through a trigger order.
         vm.prank(keeper);

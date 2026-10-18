@@ -36,12 +36,12 @@ contract OracleTest is Base {
         _expectOpenRevert(ETH, PerpEngine.OraclePriceStale.selector);
         vm.prank(alice);
         vm.expectRevert(PerpEngine.OraclePriceStale.selector);
-        engine.closePosition(BTC, 0, _noBytes());
+        engine.closePosition(BTC, 0, 0, _noBytes());
 
         // A fresh update in the same transaction fixes it.
         bytes[] memory update = _fresh(BTC, 100_000e8, 0, -8);
         vm.prank(alice);
-        engine.closePosition{value: PYTH_FEE}(BTC, 0, update);
+        engine.closePosition{value: PYTH_FEE}(BTC, 0, 0, update);
         assertEq(engine.positionCount(), 0);
     }
 
@@ -135,7 +135,7 @@ contract OracleTest is Base {
         bytes[] memory update = _updateData(BTC, 99_000e8, 0, -8, uint64(vm.getBlockTimestamp() - 5));
         vm.prank(keeper);
         vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
-        engine.liquidate{value: PYTH_FEE}(alice, update);
+        engine.liquidateBatch{value: PYTH_FEE}(_traderKeys(alice), update);
         assertEq(engine.getPosition(alice, BTC).margin, 1_000e6);
         assertEq(usdc.balanceOf(keeper), 0);
     }
