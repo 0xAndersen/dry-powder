@@ -3,22 +3,22 @@
   "chunkChars": [
     24000,
     24000,
-    22062
+    23026
   ],
   "bootChars": 820,
-  "totalChars": 70882,
-  "jsBytes": 78011,
-  "bytecodeBytes": 52964,
-  "deflatedBytes": 52407,
-  "checksum": 2765624259,
-  "bytecodeSha256": "565203f45a1e091cc1c84194f3166b0ee7f74727ebbb40e9bdbcf233985b5277",
+  "totalChars": 71846,
+  "jsBytes": 78183,
+  "bytecodeBytes": 53775,
+  "deflatedBytes": 53128,
+  "checksum": 3528623972,
+  "bytecodeSha256": "670d33078ab02e2867a89f126ddc5e6f32ae1a355cd98f47f4bbbeefd6934503",
   "contracts": {
     "TestUSDC": 2540,
     "PublisherOracle": 2759,
     "PythOracle": 1613,
     "HouseVault": 9001,
     "RewardToken": 5363,
-    "PerpEngine": 24553,
-    "EngineLens": 7135
+    "PerpEngine": 25359,
+    "EngineLens": 7140
   }
 }

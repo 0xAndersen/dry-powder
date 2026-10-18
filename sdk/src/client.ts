@@ -9,6 +9,7 @@ import {
   createPublicClient,
   createWalletClient,
   defineChain,
+  encodeFunctionData,
   fallback,
   http,
   parseEventLogs,
@@ -16,7 +17,7 @@ import {
 } from "viem";
 import { agentAccountAbi, agentAccountFactoryAbi, engineLensAbi, perpEngineAbi, testUSDCAbi } from "./abi.js";
 import { ARC_TESTNET_RPCS, type Deployment, loadDeployment } from "./deployment.js";
-import { BPS, type Risk, assessRisk, feeCap, marginFor, needsKeeperOrders } from "./risk.js";
+import { BPS, type Risk, assessRisk, feeCap, ladderPrices, marginFor, mergedPosition, needsKeeperOrders } from "./risk.js";
 
 const ZERO32 = `0x${"0".repeat(64)}` as Hex;
 const GWEI = 10n ** 9n;
@@ -61,7 +62,7 @@ export interface Position {
 export interface Order {
   id: bigint;
   marketId: Hex;
-  /** 0 limit open, 1 take-profit, 2 stop-loss, 3 close. */
+  /** 0 limit open, 1 take-profit, 2 stop-loss, 3 close, 4 stop-entry open. */
   orderType: number;
   isLong: boolean;
   size: bigint;
@@ -82,6 +83,9 @@ export interface TradeIntent {
   slippageBps?: number;
   /** Limit order instead of a market order. */
   limitPrice?: bigint;
+  /** Stop-entry (breakout) order instead: fills once a long's ask is at or above this price (a short's bid at or
+   *  below it). */
+  stopEntryPrice?: bigint;
   /** Market orders: the bid/ask to apply slippage to (e.g. from your own feed). Default: the on-chain price. */
   referencePrice?: { bid: bigint; ask: bigint };
   takeProfit?: bigint;
@@ -101,7 +105,10 @@ export interface Quote {
   executionFees: bigint;
   /** What leaves the wallet or account when the order is placed. */
   required: bigint;
+  /** Risk of this trade on its own. */
   risk: Risk;
+  /** When the trader already holds this side, the position the fill would leave (the order adds to it). */
+  afterFill: { size: bigint; margin: bigint; entry: bigint; leverage: number; liquidationPrice: bigint | null } | null;
 }
 
 export interface TxResult {
@@ -246,14 +253,19 @@ export class DryPowder {
     if (!m.enabled) throw new Error(`${m.symbol} is not taking new positions`);
     if (!(t.leverage >= 1 && t.leverage <= m.maxLeverage)) throw new Error(`${m.symbol} allows 1x to ${m.maxLeverage}x`);
     const ref = t.referencePrice ?? m.price ?? m.lastPrice;
-    if (!ref && t.limitPrice === undefined) throw new Error(`${m.symbol} has no price yet; pass referencePrice or limitPrice`);
     const isLong = t.side === "long";
     const margin = t.margin;
     const size = (margin * BigInt(Math.round(t.leverage * 100))) / 100n;
     if (marginFor(size, t.leverage) > margin + 1n) throw new Error("size rounding exceeded the leverage");
-    const entry = t.limitPrice ?? (isLong ? ref!.ask : ref!.bid);
+    if (t.limitPrice !== undefined && t.stopEntryPrice !== undefined) throw new Error("pass limitPrice or stopEntryPrice, not both");
+    const fixed = t.limitPrice ?? t.stopEntryPrice;
+    if (!ref && fixed === undefined) throw new Error(`${m.symbol} has no price yet; pass referencePrice, limitPrice or stopEntryPrice`);
+    const entry = fixed ?? (isLong ? ref!.ask : ref!.bid);
     const bps = BigInt(t.slippageBps ?? 50);
-    const triggerPrice = t.limitPrice ?? (isLong ? (entry * (BPS + bps)) / BPS : (entry * (BPS - bps)) / BPS);
+    const triggerPrice = fixed ?? (isLong ? (entry * (BPS + bps)) / BPS : (entry * (BPS - bps)) / BPS);
+    // One position per market: an order on the side held adds to it; the other side is refused at fill.
+    const held = (await this.positions()).find((p) => p.marketId.toLowerCase() === m.id.toLowerCase());
+    if (held && held.isLong !== isLong) throw new Error(`you hold a ${held.isLong ? "long" : "short"} on ${m.symbol}: close it (or part of it) instead`);
     const [openFee, execFee, minMargin, maxProfitMultiple, baseFeeBps, maxSkewFeeBps] = await Promise.all([
       this.engineRead<bigint>("quoteOpenFee", [m.id, size, isLong, margin]),
       this.engineRead<bigint>("executionFee"),
@@ -270,21 +282,32 @@ export class DryPowder {
     const ceil = (size * (baseFeeBps + maxSkewFeeBps) + BPS - 1n) / BPS;
     const feeEscrow = ceil < feeCap(margin) ? ceil : feeCap(margin);
     const risk = assessRisk({ entry, size, margin, isLong, openFee, executionFees: executionFees + execFee, stopLoss: t.stopLoss, maxProfitMultiple });
-    return { market: m, isLong, size, margin, entry, triggerPrice, openFee, executionFees, required: margin + feeEscrow + executionFees, risk };
+    const afterFill = held ? mergedPosition({ position: { size: held.size, margin: held.margin, entry: held.entryPrice, isLong }, add: { size, margin, price: entry } }) : null;
+    return { market: m, isLong, size, margin, entry, triggerPrice, openFee, executionFees, required: margin + feeEscrow + executionFees, risk, afterFill };
   }
 
   // ── Trading ──
 
   /**
-   * Opens a position with a keeper-filled order (a marketable limit for market orders): it always fills at a
+   * Opens a position, or adds to the one held on the same side, with a keeper-filled order (a marketable limit
+   * for market orders, a resting limit with `limitPrice`, a breakout with `stopEntryPrice`): it always fills at a
    * price published after the order, and it is the only way to open above 100x. Returns once the order is placed;
-   * use `waitForFill` to wait for the keeper.
+   * use `waitForFill` to wait for the keeper. Brackets on an addition move the position's existing ones.
    */
   async open(t: TradeIntent): Promise<TxResult & { orderId: bigint; quote: Quote }> {
     const q = await this.quote(t);
     if (q.risk.stopPastLiquidation) throw new Error("the stop-loss is past the liquidation price: liquidation would come first");
     await this.ensureAllowance(q.required);
-    const params = { priceId: q.market.id, isLong: q.isLong, margin: q.margin, size: q.size, triggerPrice: q.triggerPrice, takeProfit: t.takeProfit ?? 0n, stopLoss: t.stopLoss ?? 0n };
+    const params = {
+      priceId: q.market.id,
+      isLong: q.isLong,
+      margin: q.margin,
+      size: q.size,
+      triggerPrice: q.triggerPrice,
+      takeProfit: t.takeProfit ?? 0n,
+      stopLoss: t.stopLoss ?? 0n,
+      stopEntry: t.stopEntryPrice !== undefined,
+    };
     const tx = await this.send("createLimitOrder", [params]);
     const logs = parseEventLogs({ abi: perpEngineAbi, logs: tx.receipt.logs, eventName: "OrderCreated" });
     const orderId = logs.length ? (logs[logs.length - 1]!.args as { orderId: bigint }).orderId : 0n;
@@ -292,32 +315,120 @@ export class DryPowder {
   }
 
   /**
-   * Closes a position. Above 100x (and whenever `viaKeeper` is set) this places a keeper-filled Close order;
-   * otherwise it closes directly at the on-chain price, accepting at most `slippageBps` from it.
+   * Closes a position, or part of it: `size` (USDC notional) or `fraction` (0..1); neither closes everything.
+   * If what would remain holds less than the minimum margin, everything closes. Above 100x (and whenever
+   * `viaKeeper` is set) this places a keeper-filled Close order; otherwise it closes directly at the on-chain
+   * price, accepting at most `slippageBps` from it.
    */
-  async close(market: string, opts: { viaKeeper?: boolean; slippageBps?: number } = {}): Promise<TxResult & { orderId?: bigint }> {
+  async close(market: string, opts: { size?: bigint; fraction?: number; viaKeeper?: boolean; slippageBps?: number } = {}): Promise<TxResult & { orderId?: bigint }> {
     const m = await this.market(market);
     const pos = (await this.positions()).find((p) => p.marketId.toLowerCase() === m.id.toLowerCase());
     if (!pos) throw new Error(`no ${m.symbol} position`);
+    const size = closeSizeOf(pos.size, opts);
     const bps = BigInt(opts.slippageBps ?? 50);
     const px = m.price ?? m.lastPrice;
     const mark = px ? (pos.isLong ? px.bid : px.ask) : 0n;
     const bound = mark ? (pos.isLong ? (mark * (BPS - bps)) / BPS : (mark * (BPS + bps)) / BPS) : 0n;
     if (opts.viaKeeper || (!m.settled && needsKeeperOrders(pos.size, pos.margin))) {
-      const tx = await this.send("setTriggerOrder", [m.id, 3, bound]);
+      const tx = await this.send("setTriggerOrder", [m.id, 3, bound, size]);
       const logs = parseEventLogs({ abi: perpEngineAbi, logs: tx.receipt.logs, eventName: "OrderCreated" });
       return { hash: tx.hash, url: tx.url, orderId: logs.length ? (logs[logs.length - 1]!.args as { orderId: bigint }).orderId : undefined };
     }
-    const tx = await this.send("closePosition", [m.id, bound, []]);
+    const tx = await this.send("closePosition", [m.id, size, bound, []]);
     return { hash: tx.hash, url: tx.url };
   }
 
-  /** Attaches (or moves) a take-profit and/or stop-loss on an open position. */
-  async setStops(market: string, stops: { takeProfit?: bigint; stopLoss?: bigint }): Promise<TxResult[]> {
+  /**
+   * Attaches (or moves) a take-profit and/or stop-loss on an open position; with `size` they close only that
+   * much notional when they fire (0 or omitted: the whole position).
+   */
+  async setStops(market: string, stops: { takeProfit?: bigint; stopLoss?: bigint; size?: bigint }): Promise<TxResult[]> {
     const m = await this.market(market);
     const out: TxResult[] = [];
-    if (stops.takeProfit) out.push(await this.send("setTriggerOrder", [m.id, 1, stops.takeProfit]));
-    if (stops.stopLoss) out.push(await this.send("setTriggerOrder", [m.id, 2, stops.stopLoss]));
+    const size = stops.size ?? 0n;
+    if (stops.takeProfit) out.push(await this.send("setTriggerOrder", [m.id, 1, stops.takeProfit, size]));
+    if (stops.stopLoss) out.push(await this.send("setTriggerOrder", [m.id, 2, stops.stopLoss, size]));
+    return out;
+  }
+
+  /**
+   * Adds margin to a position: lower leverage, liquidation further away. Refused while the position is in
+   * profit (it would lift the profit cap) or below 1x.
+   */
+  async addMargin(market: string, amount: bigint): Promise<TxResult> {
+    const m = await this.market(market);
+    await this.ensureAllowance(amount);
+    const tx = await this.send("addMargin", [m.id, amount]);
+    return { hash: tx.hash, url: tx.url };
+  }
+
+  /**
+   * A ladder of `count` limit orders from `from` to `to`, splitting `totalMargin` evenly at one leverage. Through
+   * an agent account the whole ladder is one atomic transaction (multicall); from a wallet, one order each.
+   */
+  async scale(s: { market: string; side: "long" | "short"; totalMargin: bigint; leverage: number; from: bigint; to: bigint; count: number; takeProfit?: bigint; stopLoss?: bigint }): Promise<TxResult[]> {
+    const m = await this.market(s.market);
+    const prices = ladderPrices(s.from, s.to, s.count);
+    const margin = s.totalMargin / BigInt(s.count);
+    const quotes = await Promise.all(prices.map((limitPrice) => this.quote({ market: m.id, side: s.side, margin, leverage: s.leverage, limitPrice, takeProfit: s.takeProfit, stopLoss: s.stopLoss })));
+    const orders = quotes.map((q) => ({ priceId: m.id, isLong: q.isLong, margin: q.margin, size: q.size, triggerPrice: q.triggerPrice, takeProfit: s.takeProfit ?? 0n, stopLoss: s.stopLoss ?? 0n, stopEntry: false }));
+    await this.ensureAllowance(quotes.reduce((sum, q) => sum + q.required, 0n));
+    if (this.agentAccount) {
+      const calls = orders.map((o) => encodeFunctionData({ abi: agentAccountAbi, functionName: "createLimitOrder", args: [o] }));
+      const tx = await this.send("multicall", [calls]);
+      return [{ hash: tx.hash, url: tx.url }];
+    }
+    const out: TxResult[] = [];
+    for (const o of orders) {
+      const tx = await this.send("createLimitOrder", [o]);
+      out.push({ hash: tx.hash, url: tx.url });
+    }
+    return out;
+  }
+
+  /** Cancels every resting order (of one market, if given): one transaction through an agent account. */
+  async cancelAll(market?: string): Promise<TxResult[]> {
+    const m = market ? await this.market(market) : null;
+    const ids = (await this.orders()).filter((o) => !m || o.marketId.toLowerCase() === m.id.toLowerCase()).map((o) => o.id);
+    if (ids.length === 0) return [];
+    if (this.agentAccount) {
+      const tx = await this.send("multicall", [ids.map((id) => encodeFunctionData({ abi: agentAccountAbi, functionName: "cancelOrder", args: [id] }))]);
+      return [{ hash: tx.hash, url: tx.url }];
+    }
+    const out: TxResult[] = [];
+    for (const id of ids) out.push(await this.cancel(id));
+    return out;
+  }
+
+  /**
+   * Closes every position: keeper Close orders for those above 100x, direct closes for the rest. One transaction
+   * through an agent account.
+   */
+  async closeAll(opts: { slippageBps?: number } = {}): Promise<TxResult[]> {
+    const [positions, markets] = await Promise.all([this.positions(), this.markets()]);
+    const bps = BigInt(opts.slippageBps ?? 50);
+    const calls: { fn: "setTriggerOrder" | "closePosition"; args: readonly unknown[] }[] = [];
+    for (const pos of positions) {
+      const m = markets.find((x) => x.id.toLowerCase() === pos.marketId.toLowerCase());
+      if (!m) continue;
+      const px = m.price ?? m.lastPrice;
+      const mark = px ? (pos.isLong ? px.bid : px.ask) : 0n;
+      const bound = mark ? (pos.isLong ? (mark * (BPS - bps)) / BPS : (mark * (BPS + bps)) / BPS) : 0n;
+      if (!m.settled && needsKeeperOrders(pos.size, pos.margin)) calls.push({ fn: "setTriggerOrder", args: [m.id, 3, bound, 0n] });
+      else calls.push({ fn: "closePosition", args: [m.id, 0n, bound, []] });
+    }
+    if (calls.length === 0) return [];
+    if (this.agentAccount) {
+      // biome-ignore lint: the union of two forwarders' argument tuples
+      const data = calls.map((c) => encodeFunctionData({ abi: agentAccountAbi, functionName: c.fn, args: c.args } as any));
+      const tx = await this.send("multicall", [data]);
+      return [{ hash: tx.hash, url: tx.url }];
+    }
+    const out: TxResult[] = [];
+    for (const c of calls) {
+      const tx = await this.send(c.fn, c.args);
+      out.push({ hash: tx.hash, url: tx.url });
+    }
     return out;
   }
 
@@ -357,8 +468,11 @@ export class DryPowder {
     return this.publicClient.readContract({ address: factory, abi: agentAccountFactoryAbi, functionName: "accountOf", args: [w.account.address] });
   }
 
-  /** Owner only: approves an agent key with an on-chain policy. */
-  async approveAgent(account: Address, agent: Address, policy: { expiresInSeconds: number; maxLeverage: number; maxMarginPerOrder: bigint }): Promise<TxResult> {
+  /**
+   * Owner only: approves an agent key with an on-chain policy. `gas` (native USDC, 18 decimals) is forwarded to
+   * the key in the same transaction.
+   */
+  async approveAgent(account: Address, agent: Address, policy: { expiresInSeconds: number; maxLeverage: number; maxMarginPerOrder: bigint; gas?: bigint }): Promise<TxResult> {
     const w = this.requireWallet();
     const now = (await this.publicClient.getBlock()).timestamp;
     const hash = await w.writeContract({
@@ -366,10 +480,31 @@ export class DryPowder {
       abi: agentAccountAbi,
       functionName: "setAgent",
       args: [agent, now + BigInt(policy.expiresInSeconds), policy.maxLeverage, policy.maxMarginPerOrder],
+      value: policy.gas ?? 0n,
       ...(await this.fees()),
     });
     await this.publicClient.waitForTransactionReceipt({ hash });
     return { hash, url: this.explorerTx(hash) };
+  }
+
+  /**
+   * Creates the signer's AgentAccount with `agent` approved and funded with `gas` in one transaction (v3.1
+   * factories). Returns the account.
+   */
+  async createAgentAccountWithAgent(agent: Address, policy: { expiresInSeconds: number; maxLeverage: number; maxMarginPerOrder: bigint; gas?: bigint }): Promise<Address> {
+    const w = this.requireWallet();
+    const factory = this.requireFactory();
+    const now = (await this.publicClient.getBlock()).timestamp;
+    const hash = await w.writeContract({
+      address: factory,
+      abi: agentAccountFactoryAbi,
+      functionName: "createAccountWithAgent",
+      args: [agent, now + BigInt(policy.expiresInSeconds), policy.maxLeverage, policy.maxMarginPerOrder],
+      value: policy.gas ?? 0n,
+      ...(await this.fees()),
+    });
+    await this.publicClient.waitForTransactionReceipt({ hash });
+    return this.publicClient.readContract({ address: factory, abi: agentAccountFactoryAbi, functionName: "accountOf", args: [w.account.address] });
   }
 
   // ── Internals ──
@@ -407,16 +542,31 @@ export class DryPowder {
     await this.publicClient.waitForTransactionReceipt({ hash });
   }
 
-  private async send(functionName: "createLimitOrder" | "closePosition" | "setTriggerOrder" | "cancelOrder", args: readonly unknown[]) {
+  private async send(functionName: "createLimitOrder" | "closePosition" | "setTriggerOrder" | "cancelOrder" | "addMargin" | "multicall", args: readonly unknown[]) {
     const w = this.requireWallet();
     const target = this.agentAccount
       ? { address: this.agentAccount, abi: [...agentAccountAbi, ...perpEngineAbi.filter((x) => x.type === "error")] }
       : { address: this.deployment.engine, abi: perpEngineAbi };
-    // biome-ignore lint: one call site for four functions on two ABIs
+    // biome-ignore lint: one call site for six functions on two ABIs
     const { request } = await this.publicClient.simulateContract({ ...target, functionName, args, account: w.account } as any);
     const hash = await w.writeContract({ ...(request as object), ...(await this.fees()) } as never);
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash, timeout: 90_000 });
     if (receipt.status !== "success") throw new Error(`transaction reverted: ${hash}`);
     return { hash, url: this.explorerTx(hash), receipt };
   }
+}
+
+/** The notional to close: `size`, or `fraction` of the position, or 0 (everything). */
+export function closeSizeOf(positionSize: bigint, opts: { size?: bigint; fraction?: number }): bigint {
+  if (opts.size !== undefined && opts.fraction !== undefined) throw new Error("pass size or fraction, not both");
+  if (opts.size !== undefined) {
+    if (opts.size < 0n) throw new Error("size must be positive");
+    return opts.size >= positionSize ? 0n : opts.size;
+  }
+  if (opts.fraction !== undefined) {
+    if (!(opts.fraction > 0 && opts.fraction <= 1)) throw new Error("fraction must be in (0, 1]");
+    if (opts.fraction === 1) return 0n;
+    return (positionSize * BigInt(Math.round(opts.fraction * 1_000_000))) / 1_000_000n;
+  }
+  return 0n;
 }

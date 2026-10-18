@@ -129,3 +129,46 @@ export function assessRisk(r: RiskInput): Risk {
     profitCapMove: capPx === null ? null : frac(r.isLong ? capPx - r.entry : r.entry - capPx, r.entry),
   };
 }
+
+/** PerpEngine's unit scale (`size * 1e36 / entry`): the merged entry price is computed from it. */
+const UNIT_PRECISION = 10n ** 36n;
+
+export interface MergeInput {
+  /** The open position. */
+  position: { size: bigint; margin: bigint; entry: bigint; isLong: boolean };
+  /** What the order adds, filled at `price`. */
+  add: { size: bigint; margin: bigint; price: bigint };
+}
+
+/**
+ * The position after an addition, as the engine computes it (v3.1): size and margin add up; the entry is
+ * size over units, rounded against the trader (up for a long, down for a short), so the position's PnL at any
+ * price is what the two parts would have made separately (less rounding).
+ */
+export function mergedPosition(m: MergeInput): { size: bigint; margin: bigint; entry: bigint; leverage: number; liquidationPrice: bigint | null } {
+  const { position: p, add } = m;
+  const units = (p.size * UNIT_PRECISION) / p.entry + (add.size * UNIT_PRECISION) / add.price;
+  const size = p.size + add.size;
+  const margin = p.margin + add.margin;
+  const entry = p.isLong ? ceilDiv(size * UNIT_PRECISION, units) : (size * UNIT_PRECISION) / units;
+  return { size, margin, entry, leverage: Number((size * 100n) / margin) / 100, liquidationPrice: liquidationPrice(entry, margin, size, p.isLong) };
+}
+
+/**
+ * A partial close as the engine settles it (v3.1): margin released in proportion (rounded down) and the part's
+ * own profit cap; when what would remain is under `minMargin`, the whole position closes instead.
+ */
+export function partialClose(position: { size: bigint; margin: bigint }, closeSize: bigint, minMargin = 5_000_000n): { whole: boolean; releasedMargin: bigint; remaining: { size: bigint; margin: bigint } } {
+  if (closeSize === 0n || closeSize >= position.size) return { whole: true, releasedMargin: position.margin, remaining: { size: 0n, margin: 0n } };
+  const releasedMargin = (position.margin * closeSize) / position.size;
+  if (position.margin - releasedMargin < minMargin) return { whole: true, releasedMargin: position.margin, remaining: { size: 0n, margin: 0n } };
+  return { whole: false, releasedMargin, remaining: { size: position.size - closeSize, margin: position.margin - releasedMargin } };
+}
+
+/** Prices for a ladder of `count` orders evenly spaced from `from` to `to` (both included). */
+export function ladderPrices(from: bigint, to: bigint, count: number): bigint[] {
+  if (!Number.isInteger(count) || count < 1) throw new Error("count must be a positive integer");
+  if (count === 1) return [from];
+  const step = (to - from) / BigInt(count - 1);
+  return Array.from({ length: count }, (_, i) => (i === count - 1 ? to : from + step * BigInt(i)));
+}

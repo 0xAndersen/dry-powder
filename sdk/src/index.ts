@@ -1,4 +1,4 @@
-export { DryPowder, type DryPowderOptions, type Market, type MarketKind, type Order, type Position, type Quote, type TradeIntent, type TxResult } from "./client.js";
+export { DryPowder, closeSizeOf, type DryPowderOptions, type Market, type MarketKind, type Order, type Position, type Quote, type TradeIntent, type TxResult } from "./client.js";
 export { ARC_TESTNET_DEPLOYMENT_URL, ARC_TESTNET_RPCS, type Deployment, loadDeployment } from "./deployment.js";
 export {
   BPS,
@@ -9,11 +9,15 @@ export {
   type Risk,
   type RiskInput,
   type RiskLevel,
+  type MergeInput,
   assessRisk,
   feeCap,
+  ladderPrices,
   liquidationPrice,
   marginFor,
+  mergedPosition,
   needsKeeperOrders,
+  partialClose,
   profitCapPrice,
   riskLevel,
 } from "./risk.js";

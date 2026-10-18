@@ -258,7 +258,7 @@ export class Agent {
         it.x.br = 1;
         kind = "limit:resting";
       }
-      const p = { priceId: m.id, isLong: long, margin: BigInt(mg), size: BigInt(Math.floor(mg * it.lev)), triggerPrice: trig, takeProfit: tp, stopLoss: sl };
+      const p = { priceId: m.id, isLong: long, margin: BigInt(mg), size: BigInt(Math.floor(mg * it.lev)), triggerPrice: trig, takeProfit: tp, stopLoss: sl, stopEntry: false };
       const r = await this.tx(S.dep.addr.engine, "createLimitOrder", [p], { kind, gk: kind + (tp ? 2 : 0) });
       if (r) ok = r; else { this.openFailed(it); break; }
     }
@@ -278,7 +278,7 @@ export class Agent {
     const acc = this.k[3] < 0.3 ? 0n : mulf(p.l ? px.bid : px.ask, 1 - (p.l ? 1 : -1) * S.cfg.pace.slippage);
     // With keeper-executable orders attached the position can vanish under us: always simulate that close.
     const linked = Object.values(this.ord).filter((o) => o.m === sym && o.ty).length;
-    const r = await this.tx(S.dep.addr.engine, "closePosition", [m.id, acc, upd.map((u) => u.upd)], { kind: "close", gk: "close" + upd.length + linked, upd, t0, cache: !linked });
+    const r = await this.tx(S.dep.addr.engine, "closePosition", [m.id, 0n, acc, upd.map((u) => u.upd)], { kind: "close", gk: "close" + upd.length + linked, upd, t0, cache: !linked });
     if (!r) {
       const n = this.lastRev;
       if (n === "PriceNotAfterOpen") { p.na = (p.na || 0) + 1; if (p.na === 3) anomaly("stuckPriceNotAfterOpen", "#" + this.i + " " + sym); }
@@ -288,7 +288,7 @@ export class Agent {
   }
   async trigger(sym, ty, price) {
     const m = S.mkBySym[sym];
-    return this.tx(S.dep.addr.engine, "setTriggerOrder", [m.id, ty, price], { kind: "trigger:" + ["", "tp", "sl", "close"][ty], gk: "trig" + ty });
+    return this.tx(S.dep.addr.engine, "setTriggerOrder", [m.id, ty, price, 0n], { kind: "trigger:" + ["", "tp", "sl", "close"][ty], gk: "trig" + ty });
   }
   async cancel(id) {
     const r = await this.tx(S.dep.addr.engine, "cancelOrder", [BigInt(id)], { kind: "cancelOrder" });

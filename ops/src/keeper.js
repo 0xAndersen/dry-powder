@@ -15,6 +15,8 @@ export const isLiq = (isLong, lp, mid) => (isLong ? lp === MAXU || mid <= lp : m
 /** Mirrors PerpEngine._fillLimit / _fillTrigger price conditions (type 3 = Close with a worst-price bound). */
 export function triggered(ty, isLong, trig, px) {
   if (ty === 0) return isLong ? px.ask <= trig : px.bid >= trig;
+  // Stop-entry (v3.1): a long once the ask is at or above the trigger, a short once the bid is at or below it.
+  if (ty === 4) return isLong ? px.ask >= trig : px.bid <= trig;
   if (ty === 1) return isLong ? px.mid >= trig : px.mid <= trig;
   if (ty === 2) return isLong ? px.mid <= trig : px.mid >= trig;
   return trig === 0n || (isLong ? px.bid >= trig : px.ask <= trig);
@@ -158,17 +160,18 @@ export function makeKeeper() {
         if (!m || !q) continue;
         const pos = byOwner.get(o.trader + o.mk);
         let minPt = o.createdAt;
-        if (o.ty === 0) {
-          if (pos) continue; // PositionExists
+        const opens = o.ty === 0 || o.ty === 4;
+        if (opens) {
+          if (pos && pos.isLong !== o.isLong) continue; // PositionExists: a same-side fill adds to the position
           if (m.exp && tNow >= m.exp) { if (!warned.has(o.id)) { warned.add(o.id); anomaly("limitOnExpiredMarket", "order " + o.id + " can never fill"); } continue; }
         } else {
           if (!pos || doomed.has(pos.key)) continue;
           if (pos.openedAt + 1 > minPt) minPt = pos.openedAt + 1;
         }
-        const ok = (z) => z && (z.settled || z.pt >= minPt) && triggered(o.ty, pos ? pos.isLong : o.isLong, o.trig, z) &&
-          !(o.ty === 0 && o.sl !== 0n && (o.isLong ? o.sl >= z.ask : o.sl <= z.bid)) &&
+        const ok = (z) => z && (z.settled || z.pt >= minPt) && triggered(o.ty, pos && !opens ? pos.isLong : o.isLong, o.trig, z) &&
+          !(opens && o.sl !== 0n && (o.isLong ? o.sl >= z.ask : o.sl <= z.bid)) &&
           !(pos && isLiq(pos.isLong, pos.lp, z.mid));
-        if (!ok(q)) { if (first.has(o.id) && !triggered(o.ty, pos ? pos.isLong : o.isLong, o.trig, q)) first.delete(o.id); continue; }
+        if (!ok(q)) { if (first.has(o.id) && !triggered(o.ty, pos && !opens ? pos.isLong : o.isLong, o.trig, q)) first.delete(o.id); continue; }
         if (!first.has(o.id)) first.set(o.id, now());
         // If the price already stored on-chain satisfies the order, execute without paying for an update.
         let viaChain = false;

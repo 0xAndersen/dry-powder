@@ -73,7 +73,7 @@ function fmtPosition(v, markets) {
   };
 }
 
-const TYPES = ["limit open", "take-profit", "stop-loss", "close"];
+const TYPES = ["limit open", "take-profit", "stop-loss", "close", "stop-entry open"];
 
 export function createServer(ctx = new Context(loadConfig())) {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: INSTRUCTIONS });
@@ -113,7 +113,8 @@ export function createServer(ctx = new Context(loadConfig())) {
       orders: orders.map((o) => ({
         id: String(o.id), market: markets.find((m) => m.id.toLowerCase() === o.priceId.toLowerCase())?.symbol, type: TYPES[o.orderType],
         side: o.isLong ? "long" : "short", triggerPrice: o.triggerPrice === 0n ? null : toPx(o.triggerPrice),
-        ...(o.orderType === 0 ? { sizeUsd: toUsd(o.size), marginUsd: toUsd(o.margin) } : {}), createdAt: new Date(Number(o.createdAt) * 1000).toISOString(),
+        ...(o.orderType === 0 || o.orderType === 4 ? { sizeUsd: toUsd(o.size), marginUsd: toUsd(o.margin) } : o.size > 0n ? { closesSizeUsd: toUsd(o.size) } : {}),
+        createdAt: new Date(Number(o.createdAt) * 1000).toISOString(),
       })),
     };
     if (!address && ctx.mode === "agent-account") {
@@ -123,7 +124,7 @@ export function createServer(ctx = new Context(loadConfig())) {
     return out;
   }, true);
 
-  async function plan({ market: sym, side: s, sizeUsd, leverage, price, takeProfit, stopLoss, slippageBps }) {
+  async function plan({ market: sym, side: s, sizeUsd, leverage, price, takeProfit, stopLoss, slippageBps, stopEntry }) {
     const m = await ctx.market(sym);
     ctx.guard.checkMarket(m);
     const isLong = s === "long";
@@ -147,10 +148,14 @@ export function createServer(ctx = new Context(loadConfig())) {
     const entry = isLong ? ref.ask : ref.bid;
     if (tp && (isLong ? tp <= entry : tp >= entry)) throw new ToolError("INVALID_TAKE_PROFIT", `take-profit must be ${isLong ? "above" : "below"} the entry price (~${toPx(entry)})`);
     if (sl && (isLong ? sl >= entry : sl <= entry)) throw new ToolError("INVALID_STOP_LOSS", `stop-loss must be ${isLong ? "below" : "above"} the entry price (~${toPx(entry)})`);
+    let adds = null;
     if (ctx.trader) {
       const p = await engineRead("getPosition", [ctx.trader, m.id]);
-      if (p.trader !== ZERO) throw new ToolError("POSITION_EXISTS", `there is already a ${m.symbol} position; close it first (one position per market)`);
+      // One position per market: an order on the side held adds to it; the engine refuses the other side.
+      if (p.trader !== ZERO && p.isLong !== isLong) throw new ToolError("POSITION_EXISTS", `there is a ${p.isLong ? "long" : "short"} ${m.symbol} position; close it (or part of it with dp_close percent) first`);
+      if (p.trader !== ZERO) adds = { sizeUsd: toUsd(p.size), marginUsd: toUsd(p.margin), entryPrice: toPx(p.entryPrice) };
     }
+    if (stopEntry && price === undefined) throw new ToolError("STOP_PRICE_REQUIRED", "a stop-entry order needs `price`, the breakout level");
     const [fee, execFee] = await Promise.all([engineRead("quoteOpenFee", [m.id, size, isLong, margin]), engineRead("executionFee")]);
     const loss = LIQ_THRESHOLD * (Number(margin) / Number(size));
     const liq = toPx(entry) * (isLong ? 1 - loss : 1 + loss);
@@ -164,8 +169,14 @@ export function createServer(ctx = new Context(loadConfig())) {
         maxLossUsd: toUsd(margin + fee * 2n + execFee * (1n + (tp ? 1n : 0n) + (sl ? 1n : 0n))),
         maxProfitUsd: toUsd(margin * 10n),
         takeProfit: tp ? toPx(tp) : null, stopLoss: sl ? toPx(sl) : null,
-        notes: price !== undefined ? "Rests until the price is reached; a keeper fills it." : "Keeper-filled market order at the next oracle price.",
+        ...(adds ? { addsToPosition: adds } : {}),
+        notes: stopEntry
+          ? `Rests until the market breaks ${isLong ? "up through" : "down through"} the price; a keeper fills it.`
+          : price !== undefined
+            ? "Rests until the price is reached; a keeper fills it."
+            : "Keeper-filled market order at the next oracle price.",
       },
+      stopEntry: !!stopEntry,
     };
   }
 
@@ -183,7 +194,7 @@ export function createServer(ctx = new Context(loadConfig())) {
     }
     if (ctx.config.requireConfirm) ctx.confirm.consume(args.confirmToken, name, fp);
     await ctx.ensureAllowance(p.margin + p.fee * 2n + p.execFee * 3n);
-    const tx = await ctx.trade("createLimitOrder", [{ priceId: p.m.id, isLong: p.isLong, margin: p.margin, size: p.size, triggerPrice: p.trigger, takeProfit: p.tp, stopLoss: p.sl }]);
+    const tx = await ctx.trade("createLimitOrder", [{ priceId: p.m.id, isLong: p.isLong, margin: p.margin, size: p.size, triggerPrice: p.trigger, takeProfit: p.tp, stopLoss: p.sl, stopEntry: p.stopEntry }]);
     const orderId = ctx.orderIdFrom(tx.receipt) ?? tx.result;
     const out = { orderId: String(orderId), tx: tx.url, preview: p.preview };
     if (!wait) return { ...out, status: "resting" };
@@ -193,21 +204,28 @@ export function createServer(ctx = new Context(loadConfig())) {
     return { ...out, status: "filled", entryPrice: toPx(r.position.entryPrice), sizeUsd: toUsd(r.position.size), marginUsd: toUsd(r.position.margin) };
   }
 
-  tool("dp_open", "Open a position with a keeper-filled market order (waits for the fill). Optional take-profit and stop-loss prices.", {
+  tool("dp_open", "Open a position, or add to the one held on the same side, with a keeper-filled market order (waits for the fill). Optional take-profit and stop-loss prices (on an addition they move the existing ones).", {
     market, side, sizeUsd: decimal("sizeUsd"), leverage: z.number().min(1).max(1000),
     takeProfit: decimal("takeProfit").optional(), stopLoss: decimal("stopLoss").optional(), slippageBps, confirmToken,
   }, (a) => placeOrder("dp_open", a, true));
 
-  tool("dp_limit", "Place a resting limit order to open a position when price reaches `price` (long: at or below, short: at or above).", {
+  tool("dp_limit", "Place a resting order to open (or add to) a position: a limit fills when price reaches `price` (long: at or below, short: at or above); with stopEntry it is a breakout order (long: once the market is at or above `price`, short: at or below).", {
     market, side, sizeUsd: decimal("sizeUsd"), leverage: z.number().min(1).max(1000), price: decimal("price"),
-    takeProfit: decimal("takeProfit").optional(), stopLoss: decimal("stopLoss").optional(), confirmToken,
+    takeProfit: decimal("takeProfit").optional(), stopLoss: decimal("stopLoss").optional(), stopEntry: z.boolean().optional(), confirmToken,
   }, (a) => placeOrder("dp_limit", a, false));
 
-  tool("dp_close", "Close the position in a market with a keeper-executed close order (waits for it).", { market, slippageBps, confirmToken }, async (args) => {
+  tool("dp_close", "Close the position in a market, or part of it (`percent` 1-100 or `sizeUsd` of notional), with a keeper-executed close order (waits for it). If what would remain is under the minimum margin, everything closes.", {
+    market, slippageBps, percent: z.number().gt(0).max(100).optional(), sizeUsd: decimal("sizeUsd").optional(), confirmToken,
+  }, async (args) => {
     ctx.requireTrading();
     const m = await ctx.market(args.market);
     const pos = await engineRead("getPosition", [ctx.trader, m.id]);
     if (pos.trader === ZERO) throw new ToolError("NO_POSITION", `no ${m.symbol} position`);
+    if (args.percent !== undefined && args.sizeUsd !== undefined) throw new ToolError("BAD_ARGUMENTS", "pass percent or sizeUsd, not both");
+    let closeSize = 0n;
+    if (args.sizeUsd !== undefined) closeSize = fromUsd(args.sizeUsd);
+    else if (args.percent !== undefined) closeSize = (pos.size * BigInt(Math.round(args.percent * 10_000))) / 1_000_000n;
+    if (closeSize >= pos.size) closeSize = 0n;
     let bound = 0n;
     if (!m.settled) {
       const bps = BigInt(args.slippageBps ?? ctx.config.defaultSlippageBps);
@@ -215,7 +233,7 @@ export function createServer(ctx = new Context(loadConfig())) {
       const ref = ctx.refPrice(m);
       bound = pos.isLong ? (ref.bid * (BPS - bps)) / BPS : (ref.ask * (BPS + bps)) / BPS;
     }
-    const preview = { market: m.symbol, side: pos.isLong ? "long" : "short", sizeUsd: toUsd(pos.size), worstPrice: bound ? toPx(bound) : "settlement price" };
+    const preview = { market: m.symbol, side: pos.isLong ? "long" : "short", sizeUsd: toUsd(pos.size), closingSizeUsd: closeSize === 0n ? toUsd(pos.size) : toUsd(closeSize), worstPrice: bound ? toPx(bound) : "settlement price" };
     const fp = fingerprint(args);
     if (ctx.config.requireConfirm && !args.confirmToken) {
       const { token, expiresAt } = ctx.confirm.issue("dp_close", fp, null);
@@ -223,29 +241,59 @@ export function createServer(ctx = new Context(loadConfig())) {
     }
     if (ctx.config.requireConfirm) ctx.confirm.consume(args.confirmToken, "dp_close", fp);
     const before = (await ctx.balances()).usdc;
-    const tx = await ctx.trade("setTriggerOrder", [m.id, 3, bound]);
+    const tx = await ctx.trade("setTriggerOrder", [m.id, 3, bound, closeSize]);
     const until = Date.now() + ctx.config.fillTimeoutMs;
     while (Date.now() < until) {
       const p = await engineRead("getPosition", [ctx.trader, m.id]);
-      if (p.trader === ZERO) {
+      if (p.trader === ZERO || p.size < pos.size) {
         const after = (await ctx.balances()).usdc;
-        return { status: "closed", tx: tx.url, returnedUsd: toUsd(after - before), note: "returnedUsd is margin plus PnL minus fees, as credited back" };
+        return {
+          status: p.trader === ZERO ? "closed" : "partly closed",
+          tx: tx.url,
+          returnedUsd: toUsd(after - before),
+          ...(p.trader === ZERO ? {} : { remainingSizeUsd: toUsd(p.size), remainingMarginUsd: toUsd(p.margin) }),
+          note: "returnedUsd is margin released plus PnL minus fees, as credited back",
+        };
       }
       await new Promise((r) => setTimeout(r, 1000));
     }
     return { status: "pending", tx: tx.url, note: "Close order placed; the keeper fills it at the next price within the bound." };
   });
 
-  tool("dp_set_tpsl", "Set or move the take-profit and/or stop-loss of an open position (keeper-executed).", {
-    market, takeProfit: decimal("takeProfit").optional(), stopLoss: decimal("stopLoss").optional(),
-  }, async ({ market: sym, takeProfit, stopLoss }) => {
+  tool("dp_set_tpsl", "Set or move the take-profit and/or stop-loss of an open position (keeper-executed). With sizeUsd they close only that much notional when they fire.", {
+    market, takeProfit: decimal("takeProfit").optional(), stopLoss: decimal("stopLoss").optional(), sizeUsd: decimal("sizeUsd").optional(),
+  }, async ({ market: sym, takeProfit, stopLoss, sizeUsd }) => {
     ctx.requireTrading();
     if (!takeProfit && !stopLoss) throw new ToolError("NOTHING_TO_SET", "pass takeProfit and/or stopLoss");
     const m = await ctx.market(sym);
+    const size = sizeUsd ? fromUsd(sizeUsd) : 0n;
     const out = {};
-    if (takeProfit) out.takeProfit = (await ctx.trade("setTriggerOrder", [m.id, 1, fromPx(takeProfit)])).url;
-    if (stopLoss) out.stopLoss = (await ctx.trade("setTriggerOrder", [m.id, 2, fromPx(stopLoss)])).url;
-    return { market: m.symbol, ...out };
+    if (takeProfit) out.takeProfit = (await ctx.trade("setTriggerOrder", [m.id, 1, fromPx(takeProfit), size])).url;
+    if (stopLoss) out.stopLoss = (await ctx.trade("setTriggerOrder", [m.id, 2, fromPx(stopLoss), size])).url;
+    return { market: m.symbol, ...(size ? { closesSizeUsd: toUsd(size) } : {}), ...out };
+  });
+
+  tool("dp_add_margin", "Add collateral to an open position: lower leverage, liquidation price further away. Refused while the position is in profit (it would lift the profit cap) or below 1x.", {
+    market, amountUsd: decimal("amountUsd"), confirmToken,
+  }, async (args) => {
+    ctx.requireTrading();
+    const m = await ctx.market(args.market);
+    const pos = await engineRead("getPosition", [ctx.trader, m.id]);
+    if (pos.trader === ZERO) throw new ToolError("NO_POSITION", `no ${m.symbol} position`);
+    const amount = fromUsd(args.amountUsd);
+    ctx.guard.checkNotional(amount);
+    const margin = pos.margin + amount;
+    if (margin > pos.size) throw new ToolError("LEVERAGE_OUT_OF_RANGE", `that would bring leverage below 1x: at most $${toUsd(pos.size - pos.margin)} can be added`);
+    const preview = { market: m.symbol, side: pos.isLong ? "long" : "short", addUsd: toUsd(amount), marginUsd: toUsd(margin), leverageAfter: Math.round((Number(pos.size) / Number(margin)) * 100) / 100 };
+    const fp = fingerprint(args);
+    if (ctx.config.requireConfirm && !args.confirmToken) {
+      const { token, expiresAt } = ctx.confirm.issue("dp_add_margin", fp, null);
+      return { preview, confirmToken: token, expiresAt: new Date(expiresAt).toISOString() };
+    }
+    if (ctx.config.requireConfirm) ctx.confirm.consume(args.confirmToken, "dp_add_margin", fp);
+    await ctx.ensureAllowance(amount);
+    const tx = await ctx.trade("addMargin", [m.id, amount]);
+    return { status: "added", tx: tx.url, ...preview };
   });
 
   tool("dp_cancel", "Cancel an open order by id (escrow is refunded to the trader).", { orderId: z.string().regex(/^\d+$/) }, async ({ orderId }) => {

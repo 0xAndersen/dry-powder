@@ -45,9 +45,10 @@ const revertName = (e) => {
   return m ? m[1] || m[2] : null;
 };
 
-/** Mirrors PerpEngine trigger conditions (0 LimitOpen, 1 TakeProfit, 2 StopLoss, 3 Close). */
+/** Mirrors PerpEngine trigger conditions (0 LimitOpen, 1 TakeProfit, 2 StopLoss, 3 Close, 4 StopOpen). */
 export function triggered(type, isLong, trigger, px) {
   if (type === 0) return isLong ? px.ask <= trigger : px.bid >= trigger;
+  if (type === 4) return isLong ? px.ask >= trigger : px.bid <= trigger;
   if (type === 1) return isLong ? px.mid >= trigger : px.mid <= trigger;
   if (type === 2) return isLong ? px.mid <= trigger : px.mid >= trigger;
   return trigger === 0n || (isLong ? px.bid >= trigger : px.ask <= trigger);
@@ -55,6 +56,14 @@ export function triggered(type, isLong, trigger, px) {
 /** Lens liquidation price (PositionMath.liquidationPrice): a long at or below it, a short at or above it.
  *  Zero means a long no price can liquidate, or a short every price does; both fall out of the comparison. */
 export const isLiquidatable = (isLong, lp, mid) => (isLong ? mid <= lp : mid >= lp);
+
+/** True when an open order would fill at or through its take-profit or stop-loss (PerpEngine._validateBrackets). */
+export function gapsBracket(o, px) {
+  const fill = o.isLong ? px.ask : px.bid;
+  if (o.takeProfit !== 0n && (o.isLong ? o.takeProfit <= fill : o.takeProfit >= fill)) return true;
+  if (o.stopLoss !== 0n && (o.isLong ? o.stopLoss >= fill : o.stopLoss <= fill)) return true;
+  return false;
+}
 
 export function makeOperator({ pub, publisher, keeper, funder, chainId, addresses, kraken, opts, log }) {
   const { engine, lens, vault, oracle } = addresses;
@@ -93,7 +102,19 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
       }
       const hash = await wallet.writeContract({ ...request, ...(await fees()) });
       const receipt = await pub.waitForTransactionReceipt({ hash, timeout: 60_000 });
-      if (receipt.status !== "success") throw new Error(`${functionName} reverted on-chain: ${hash}`);
+      if (receipt.status !== "success") {
+        // Usually a lost race: a trader's transaction (a cancel, a close, a moved trigger) landed between the
+        // simulation and this one. The receipt carries no reason, so replay the call on the new state to name it;
+        // a benign reason is then counted as such instead of as a fault.
+        const failed = new Error(`${functionName} reverted on-chain: ${hash}`);
+        try {
+          await pub.simulateContract({ account: wallet.account, address, abi: [...abi, ...ERRORS], functionName, args });
+        } catch (replay) {
+          const reason = revertName(replay);
+          if (reason) failed.data = { errorName: reason };
+        }
+        throw failed;
+      }
       if (id) backoff.delete(id);
       return receipt;
     } catch (e) {
@@ -290,8 +311,10 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
       const m = byId.get(o.priceId.toLowerCase());
       if (!m) continue;
       const pos = posBy.get(o.trader.toLowerCase() + o.priceId.toLowerCase());
-      if (o.orderType === 0) {
-        if (pos) continue;
+      // Open orders (limit, stop-entry) add to a position on the same side; the engine refuses the other side.
+      const opens = o.orderType === 0 || o.orderType === 4;
+      if (opens) {
+        if (pos && pos.position.isLong !== o.isLong) continue;
         if (Number(m.market.expiry) && chainNow >= Number(m.market.expiry)) continue;
       } else if (!pos || liqSet.has(pos.key.toLowerCase())) continue;
       const p = await P(m);
@@ -300,7 +323,9 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
         if (p.pt < Number(o.createdAt)) continue;
         if (pos && p.pt <= Number(pos.position.openedAt)) continue;
       }
-      if (!triggered(o.orderType, pos ? pos.position.isLong : o.isLong, o.triggerPrice, p.px)) continue;
+      if (!triggered(o.orderType, pos && !opens ? pos.position.isLong : o.isLong, o.triggerPrice, p.px)) continue;
+      // A fill through one of its own brackets would close at once: the engine leaves such an order resting.
+      if (opens && gapsBracket(o, p.px)) continue;
       const r = await send(keeper, engine, perpEngineAbi, "executeOrder", [o.id, p.upd], id);
       if (r) stats.executed++;
     }

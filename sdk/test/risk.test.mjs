@@ -56,3 +56,47 @@ test("risk bands match the app", () => {
 test("margin rounds up so leverage is never exceeded", () => {
   assert.equal(marginFor(usd(1_000), 3), 333_333_334n);
 });
+
+// ── v3.1: adding to a position, partial closes, ladders ──
+import { closeSizeOf, ladderPrices, mergedPosition, partialClose } from "../dist/index.js";
+
+test("adding to a long: entry is size over units (the harmonic mean), rounded up", () => {
+  const m = mergedPosition({ position: { size: usd(10_000), margin: usd(1_000), entry: price(100_000), isLong: true }, add: { size: usd(10_000), margin: usd(1_000), price: price(110_000) } });
+  assert.equal(m.size, usd(20_000));
+  assert.equal(m.margin, usd(2_000));
+  assert.equal(m.leverage, 10);
+  // 20,000 / (10,000/100,000 + 10,000/110,000) = 104,761.904761904761904761...
+  assert.ok(m.entry >= 104_761_904_761_904_761_904_761n && m.entry <= 104_761_904_761_904_761_904_763n);
+  // At 110,000 the merged position is worth the first part's +1,000.
+  const pnl = (m.size * (price(110_000) - m.entry)) / m.entry;
+  assert.ok(pnl <= usd(1_000) && pnl >= usd(1_000) - 2n);
+  assert.ok(m.liquidationPrice > 0n && m.liquidationPrice < m.entry);
+});
+
+test("adding to a short rounds the entry down", () => {
+  const m = mergedPosition({ position: { size: usd(10_000), margin: usd(1_000), entry: price(100_000), isLong: false }, add: { size: usd(10_000), margin: usd(1_000), price: price(90_000) } });
+  const pnl = (m.size * (m.entry - price(90_000))) / m.entry;
+  assert.ok(pnl <= usd(1_000) && pnl >= usd(1_000) - 2n);
+});
+
+test("partial close: margin in proportion, everything when the rest would be under the minimum", () => {
+  assert.deepEqual(partialClose({ size: usd(10_000), margin: usd(1_000) }, usd(4_000)), { whole: false, releasedMargin: usd(400), remaining: { size: usd(6_000), margin: usd(600) } });
+  assert.equal(partialClose({ size: usd(1_000), margin: usd(10) }, usd(600)).whole, true, "4 USDC would remain; the minimum is 5");
+  assert.equal(partialClose({ size: usd(1_000), margin: usd(10) }, 0n).whole, true);
+  assert.equal(partialClose({ size: usd(1_000), margin: usd(10) }, usd(1_001)).whole, true);
+});
+
+test("close size from size or fraction", () => {
+  assert.equal(closeSizeOf(usd(1_000), {}), 0n);
+  assert.equal(closeSizeOf(usd(1_000), { fraction: 0.25 }), usd(250));
+  assert.equal(closeSizeOf(usd(1_000), { fraction: 1 }), 0n);
+  assert.equal(closeSizeOf(usd(1_000), { size: usd(2_000) }), 0n, "more than the position closes it all");
+  assert.throws(() => closeSizeOf(usd(1_000), { fraction: 0 }));
+  assert.throws(() => closeSizeOf(usd(1_000), { size: 1n, fraction: 0.5 }));
+});
+
+test("ladder prices are evenly spaced and end exactly at `to`", () => {
+  assert.deepEqual(ladderPrices(price(100), price(96), 5), [price(100), price(99), price(98), price(97), price(96)]);
+  assert.deepEqual(ladderPrices(price(100), price(110), 1), [price(100)]);
+  assert.throws(() => ladderPrices(price(100), price(110), 0));
+});
