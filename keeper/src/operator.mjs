@@ -94,6 +94,8 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
   let lastTopUp = 0;
   let krakenOk = false;
   let maxConfBps = 50n;
+  // The engine's price age limit for reads without an update (add-on pokes read the stored price).
+  let maxPriceAge = 10;
 
   async function fees() {
     const block = await pub.getBlock();
@@ -198,9 +200,10 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
     return out;
   };
 
-  /** Heartbeat for readers (the app, direct traders): pushes feeds that are old or have moved. Keeper
-   *  transactions carry their own fresh prices, so nothing here is needed for fills or liquidations. */
-  async function publish(chainNow, oc) {
+  /** Heartbeat for readers (the app, direct traders): pushes feeds that are old or have moved, and the feeds in
+   *  `force`. Keeper transactions carry their own fresh prices, so nothing here is needed for fills or
+   *  liquidations; add-on pokes (TWAP slices) read the stored price and force their feeds when it is old. */
+  async function publish(chainNow, oc, force = null) {
     const publishTime = Math.max(lastPublish + 1, Math.min(Math.floor(Date.now() / 1000), chainNow + 1));
     const updates = [];
     for (const f of FEEDS) {
@@ -212,7 +215,7 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
       const cur = oc.get(f.key);
       const age = chainNow - cur.publishTime;
       const moved = cur.mid ? Math.abs(mid / cur.mid - 1) * 1e4 : Infinity;
-      if (!(age >= opts.heartbeatSeconds || moved >= opts.moveBps)) continue;
+      if (!(force?.has(f.key) || age >= opts.heartbeatSeconds || moved >= opts.moveBps)) continue;
       if (publishTime <= cur.publishTime) continue;
       updates.push({ f, data: await signUpdate(publisher.account, chainId, oracle, f, price, conf, publishTime) });
     }
@@ -367,7 +370,7 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
     // 3c. TWAP orders (the TwapOrders add-on): place the slices that are due.
     if (addresses.twapOrders) {
       try {
-        await twap();
+        await twap(view);
       } catch (e) {
         count(stats.errors, "twap");
         stats.lastError = `twap: ${String(e?.shortMessage ?? e?.message ?? e).split("\n")[0].slice(0, 240)}`;
@@ -432,29 +435,52 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
   /**
    * Pokes the TWAPs with a slice due, in batches. `due()` is the contract's own answer (interval passed, a usable
    * price, not holding the other side), so a poke always places or is refused; accounts that withdrew the
-   * contract's approval are skipped until they renew it. Each slice is an ordinary keeper order, filled by step 3.
+   * contract's approval, or that hold the other side, are skipped. Each slice is an ordinary keeper order, filled
+   * by step 3. A TWAP still not due after its market's price was refreshed backs off (no publish every tick).
    */
-  async function twap() {
+  async function twap(view) {
     const tw = addresses.twapOrders;
     const abi = ABIS.twapOrdersAbi;
     if (!abi) return;
     const n = await pub.readContract({ address: tw, abi, functionName: "twapCount" });
     if (n === 0n) return;
     const now = BigInt(Math.floor(Date.now() / 1000));
-    const due = [];
+    const sideOf = new Map(view.positions.map((v) => [v.position.trader.toLowerCase() + v.position.priceId.toLowerCase(), v.position.isLong]));
+    const candidates = [];
     for (let at = 0n; at < n; at += PAGE) {
       const [accounts, markets, twaps] = await pub.readContract({ address: tw, abi, functionName: "getTwaps", args: [at, PAGE] });
       for (let i = 0; i < accounts.length; i += 1) {
         const id = `twap:${accounts[i]}:${markets[i]}`;
         if (!ready(id) || BigInt(twaps[i].nextAt) > now) continue;
-        if (!(await pub.readContract({ address: tw, abi, functionName: "due", args: [accounts[i], markets[i]] }))) continue;
+        // Slices wait while the account holds the other side (they could not fill).
+        const held = sideOf.get(accounts[i].toLowerCase() + markets[i].toLowerCase());
+        if (held !== undefined && held !== twaps[i].isLong) continue;
         const [expiry] = await pub.readContract({ address: accounts[i], abi: ABIS.agentAccountAbi, functionName: "agents", args: [tw] });
         if (BigInt(expiry) <= now) {
           defer(id);
           continue;
         }
-        due.push({ account: accounts[i], market: markets[i], id });
+        candidates.push({ account: accounts[i], market: markets[i], id });
       }
+    }
+    if (candidates.length === 0) return;
+    // A poke reads the engine's stored price (no update rides along), which on a quiet venue is older than the
+    // engine accepts between heartbeats: refresh the feeds of markets whose price has under 3 s of life left.
+    const block = await pub.getBlock();
+    const chainNow = Number(block.timestamp);
+    const byId = new Map(view.markets.map((m) => [m.id.toLowerCase(), m]));
+    const force = new Set();
+    for (const c of candidates) {
+      const m = byId.get(c.market.toLowerCase());
+      if (!m || m.market.settlementPrice !== 0n) continue;
+      const age = m.hasPrice ? chainNow - Number(m.price.publishTime) : Infinity;
+      if (age >= maxPriceAge - 3) for (const f of feedsOf(m)) force.add(f.key);
+    }
+    if (force.size > 0 && krakenOk) await publish(chainNow, await onchainFeeds(), force);
+    const due = [];
+    for (const c of candidates) {
+      if (await pub.readContract({ address: tw, abi, functionName: "due", args: [c.account, c.market] })) due.push(c);
+      else defer(c.id);
     }
     for (let i = 0; i < due.length; i += opts.batchSize) {
       const batch = due.slice(i, i + opts.batchSize);
@@ -495,7 +521,10 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
       stats.lastError = `kraken: ${String(e?.message ?? e)}`;
     }
     await topUp();
-    if (stats.ticks % 100 === 1) maxConfBps = await pub.readContract({ address: engine, abi: perpEngineAbi, functionName: "maxConfBps" }).catch(() => maxConfBps);
+    if (stats.ticks % 100 === 1) {
+      maxConfBps = await pub.readContract({ address: engine, abi: perpEngineAbi, functionName: "maxConfBps" }).catch(() => maxConfBps);
+      maxPriceAge = Number(await pub.readContract({ address: engine, abi: perpEngineAbi, functionName: "maxPriceAge" }).catch(() => BigInt(maxPriceAge)));
+    }
     const block = await pub.getBlock();
     const chainNow = Number(block.timestamp);
     if (krakenOk) await publish(chainNow, await onchainFeeds());
