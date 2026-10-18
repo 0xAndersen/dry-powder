@@ -1,5 +1,5 @@
 import { BaseError, ContractFunctionRevertedError, decodeErrorResult, type Abi, type Hex } from "viem";
-import { engineLensAbi, houseVaultAbi, perpEngineAbi, publisherOracleAbi, rewardTokenAbi, testUSDCAbi } from "./abi";
+import { agentAccountAbi, engineLensAbi, houseVaultAbi, perpEngineAbi, publisherOracleAbi, rewardTokenAbi, testUSDCAbi, trailingStopsAbi, twapOrdersAbi } from "./abi";
 import { erc20Abi, pythErrorsAbi } from "./abis-extra";
 
 /** Thrown by our own pre-flight checks; the message is already fit for display. */
@@ -79,6 +79,23 @@ const MESSAGES: Record<string, string> = {
   NoFreshUpdate: "The oracle already has a newer price.",
   PriceFeedNotFound: "The oracle does not know this price feed.",
   StalePrice: "The oracle price is stale.",
+  // AgentAccount (instant trading)
+  NotOwner: "Only the trading account's owner can do this.",
+  NotAuthorized: "This key is not approved on the trading account, or its approval has expired. Renew instant trading.",
+  InvalidPolicy: "That limit is not valid: it needs an expiry in the future, at least 1x and a margin cap above zero.",
+  LeverageCapExceeded: "Above the leverage your trading key may use. Lower the leverage or raise the limit under instant trading.",
+  MarginCapExceeded: "Above the margin your trading key may use per order. Use less margin or raise the limit under instant trading.",
+  MarketNotAllowed: "Your trading account does not let this key trade this market.",
+  GasTopUpFailed: "The gas top-up could not be sent to the trading key.",
+  // TrailingStops and TwapOrders
+  NotAllowed: "Only the account's owner or one of its approved keys can do this.",
+  NoPosition: "There is no position in this market.",
+  InvalidDistance: "Choose a trailing distance between 0.1% and 50%.",
+  NoTrail: "There is no trailing stop on this position.",
+  AgentPolicyExceeded: "Each slice must fit your instant-trading limits: more slices (less margin each) or lower leverage.",
+  InvalidTwap: "That TWAP is not valid: 2 to 100 slices, 30 seconds to a day apart, slippage up to 5%, at least 1x.",
+  NoTwap: "There is no TWAP running in this market.",
+  InsufficientGas: "The transaction ran short of gas. Try again.",
 };
 
 const errorItems = [
@@ -90,6 +107,9 @@ const errorItems = [
   ...testUSDCAbi,
   ...erc20Abi,
   ...pythErrorsAbi,
+  ...agentAccountAbi,
+  ...trailingStopsAbi,
+  ...twapOrdersAbi,
 ].filter(
   (item) => item.type === "error",
 );

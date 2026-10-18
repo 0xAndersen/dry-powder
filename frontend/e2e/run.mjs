@@ -160,7 +160,15 @@ if (want("trade")) {
     await t("position-BTC-USD").getByTestId("edit-tp").click();
     await t("input-tp").fill((mark * 0.9).toFixed(2));
     if (!(await t("save-tp").isDisabled())) throw new Error("a take-profit below the price was not blocked");
-    await page.keyboard.press("Escape");
+    // Scale out: the same take-profit closing half the position (v3.1 sized trigger orders).
+    await t("input-tp").fill((mark * 1.04).toFixed(2));
+    await t("size-tp").selectOption("50");
+    await t("save-tp").click();
+    await page.getByText(/closing 50% of the position/).waitFor({ timeout: 20_000 });
+    await t("position-BTC-USD").getByTestId("part-tp").waitFor({ timeout: 10_000 });
+    const sized = await read(addresses.engine, "PerpEngine", "getOrder", [pos.tpOrderId]);
+    if (sized.size !== pos.size / 2n) throw new Error(`the take-profit closes ${sized.size}, expected half of ${pos.size}`);
+    return `trigger ${onchain.toFixed(2)}, then sized to half`;
   });
 
   await step("limit order by clicking the chart, then cancel it", async () => {
@@ -198,6 +206,26 @@ if (want("trade")) {
     const value = Number(await t("ticket-sl").inputValue());
     if (Math.abs(value / (mark * 0.97) - 1) > 0.0001) throw new Error(`stop-loss field holds ${value}`);
     await t("ticket-sl").fill("");
+  });
+
+  await step("draw a horizontal line on the chart, then clear it", async () => {
+    await page.getByRole("group", { name: "Set a price by clicking the chart" }).getByRole("button", { name: "Line", exact: true }).click();
+    const input = page.getByLabel(/Click the chart to set the line/);
+    const mark = await price();
+    await input.fill((mark * 1.01).toFixed(2));
+    await input.press("Enter");
+    await t("clear-lines").getByText("Clear 1 line").waitFor({ timeout: 5_000 });
+    await t("clear-lines").click();
+    await t("clear-lines").waitFor({ state: "detached", timeout: 5_000 });
+  });
+
+  await step("the ticket's details show the open fee by size for both sides (a vault venue's depth)", async () => {
+    await page.getByText("Details: fees, funding, profit cap").click();
+    await t("cost-by-size").waitFor({ timeout: 5_000 });
+    await page.waitForFunction(() => (document.querySelector('[data-testid="cost-by-size"]')?.textContent?.match(/ bp/g) ?? []).length >= 4, null, { timeout: 15_000 });
+    const text = (await t("cost-by-size").innerText()).replace(/\s+/g, " ");
+    await page.getByText("Details: fees, funding, profit cap").click();
+    return text.slice(0, 140);
   });
 
   await step("close half from the positions table, then the rest; history shows the partial close and the round trip", async () => {
@@ -351,6 +379,39 @@ if (want("positions")) {
     await t("scale-toggle").uncheck();
     await t("kind-market").click();
     return summary.slice(0, 120);
+  });
+
+  await step("practice: start over closes everything, cancels entry orders and adds test funds", async () => {
+    await ensureWallet();
+    await selectMarket("ETH-USD");
+    const eth = addresses.markets.find((m) => m.symbol === "ETH-USD").marketId;
+    // A position and a resting limit to clear.
+    await setQty("Margin", 60);
+    await submitTicket();
+    await waitPosition("ETH-USD");
+    await t("kind-limit").click();
+    const mark = num(await t("market-price").innerText());
+    await page.getByLabel("Limit price").fill((mark * 0.9).toFixed(2));
+    await setQty("Margin", 40);
+    await submitTicket();
+    await t("kind-market").click();
+    await t("tab-orders").click();
+    await page.locator('[data-testid^="order-"]').filter({ hasText: "ETH-USD" }).filter({ hasText: "Limit" }).first().waitFor({ timeout: 20_000 });
+    const before = await read(addresses.usdc, "TestUSDC", "balanceOf", [UI_TRADER.address]);
+    await t("start-over").click();
+    await t("confirm-yes").click();
+    await page.getByText(/Started over:/).waitFor({ timeout: 60_000 });
+    for (let i = 0; i < 60; i += 1) {
+      const pos = await read(addresses.engine, "PerpEngine", "getPosition", [UI_TRADER.address, eth]);
+      if (pos.trader === "0x0000000000000000000000000000000000000000") break;
+      if (i === 59) throw new Error("the position was not closed");
+      await sleep(750);
+    }
+    const [, list] = await read(addresses.lens, "EngineLens", "getTraderOrders", [UI_TRADER.address]);
+    if (list.some((o) => o.orderType === 0 || o.orderType === 4)) throw new Error("entry orders left after starting over");
+    const after = await read(addresses.usdc, "TestUSDC", "balanceOf", [UI_TRADER.address]);
+    if (after < before + 10_000_000_000n - 1_000_000_000n) throw new Error(`balance ${after} after starting over, from ${before}`);
+    return "closed, cancelled, topped up";
   });
 }
 
@@ -707,6 +768,24 @@ if (want("portfolio")) {
     await page.keyboard.press("Escape");
     return `${name}, ${size[0]}x${size[1]}`;
   });
+
+  await step("challenges: start one at the account value, see each rule, abandon it", async () => {
+    await t("share-sheet").waitFor({ state: "detached", timeout: 5_000 });
+    await t("challenges").scrollIntoViewIfNeeded();
+    if ((await t("challenge-new").count()) > 0) await t("challenge-new").click();
+    await t("challenge-start-steady").click();
+    await t("challenge-active").waitFor({ timeout: 5_000 });
+    // Trades from before the start do not count; the rules are listed with their budgets.
+    const counted = (await t("challenge-trades").innerText()).trim();
+    if (counted !== "0") throw new Error(`${counted} trades counted at the start; none should be`);
+    for (const key of ["target", "trades", "drawdown", "liquidations"]) await t(`challenge-check-${key}`).waitFor({ timeout: 5_000 });
+    const target = await t("challenge-check-target").innerText();
+    if (!/of \+5%/.test(target)) throw new Error(`unexpected target row: ${target}`);
+    await shot(page, "18f-challenge");
+    await t("challenge-abandon").click();
+    await t("challenge-history").getByText("Abandoned").waitFor({ timeout: 5_000 });
+    return "Steady hand: 0 trades counted at the start, target, drawdown and liquidation rules shown; abandoned";
+  });
 }
 
 // ─────────────────────────────── dated settlement ───────────────────────────────
@@ -978,10 +1057,96 @@ if (want("instant")) {
       const tradeSends = await p.evaluate(() => window.__walletSends);
       if (tradeSends !== 0) throw new Error(`the wallet was asked to send ${tradeSends} transaction(s) for an instant order`);
       await p.screenshot({ path: join(SHOTS, "26-instant-trading.png"), fullPage: true });
+
+      // A trailing stop on the instant position: the wallet allows the contract once, the key sets the trail, and
+      // the keeper moves the stop-loss up behind the market.
+      let trailNote = "no trailing-stop contract in this deployment";
+      if (addresses.trailingStops) {
+        await p.getByTestId("tab-positions").click();
+        await p.getByTestId("position-SOL-USD").getByTestId("trail-position").click();
+        await p.getByTestId("trail-sheet").waitFor({ timeout: 5_000 });
+        await p.getByTestId("trail-distance").fill("1");
+        await p.screenshot({ path: join(SHOTS, "26b-trail-sheet.png") });
+        await p.getByTestId("trail-confirm").click();
+        await p.getByTestId("position-SOL-USD").getByTestId("trail-tag").waitFor({ timeout: 30_000 });
+        const trailSends = await p.evaluate(() => window.__walletSends);
+        if (trailSends !== 1) throw new Error(`allowing trailing stops took ${trailSends} wallet transactions; one is expected`);
+        await fetch(`${KRAKEN_URL}/control/move?feed=SOL&pct=1.5`);
+        let stop = 0n;
+        for (let i = 0; i < 60 && stop === 0n; i++) {
+          const pos = await read(addresses.engine, "PerpEngine", "getPosition", [account, sol]);
+          if (pos.slOrderId !== 0n) stop = (await read(addresses.engine, "PerpEngine", "getOrder", [pos.slOrderId])).triggerPrice;
+          else await sleep(1000);
+        }
+        if (stop === 0n) throw new Error("the keeper did not set the trailed stop");
+        // Read the best price and the stop together (a later poke may move both in between).
+        let best = 0n;
+        for (let i = 0; i < 5; i++) {
+          best = (await read(addresses.trailingStops, "TrailingStops", "getTrail", [account, sol])).best;
+          const pos = await read(addresses.engine, "PerpEngine", "getPosition", [account, sol]);
+          stop = (await read(addresses.engine, "PerpEngine", "getOrder", [pos.slOrderId])).triggerPrice;
+          if (best > 0n && stop === best - (best * 100n) / 10_000n) break;
+          if (i === 4) throw new Error(`stop ${stop} is not 1% under the best mid ${best}`);
+          await sleep(500);
+        }
+        trailNote = `trailed stop ${Number(stop / 10n ** 14n) / 10_000} under a best of ${Number(best / 10n ** 14n) / 10_000}`;
+      }
+
+      // A TWAP from the trading account: the wallet allows the TWAP contract once, the key starts it, the keeper
+      // places the first slice at once and fills it; stopping it leaves the filled slice and places no more.
+      let twapNote = "no TWAP contract in this deployment";
+      if (addresses.twapOrders) {
+        await p.goto(`${WEB_URL}/trade/?market=BTC-USD`);
+        await p.getByTestId("market-price").waitFor({ timeout: 20_000 });
+        const reconnect = p.getByRole("button", { name: "Connect wallet", exact: true });
+        if ((await reconnect.count()) > 0) await reconnect.first().click();
+        await p.getByRole("button", { name: /0x[0-9a-fA-F]{4}…/ }).waitFor({ timeout: 10_000 });
+        await p.getByText("Trading account", { exact: true }).first().waitFor({ timeout: 15_000 });
+        await p.evaluate(() => {
+          const eth = window.ethereum;
+          const original = eth.request.bind(eth);
+          window.__walletSends = 0;
+          eth.request = (args) => {
+            if (args.method === "eth_sendTransaction") window.__walletSends += 1;
+            return original(args);
+          };
+        });
+        await p.getByTestId("kind-market").click();
+        await p.getByTestId("twap-toggle").check();
+        await p.getByTestId("twap-slices").fill("2");
+        await p.getByTestId("twap-every-60").click();
+        await p.getByRole("group", { name: "Quantity entered as" }).getByRole("button", { name: "Margin", exact: true }).click();
+        await p.getByTestId("ticket-qty").fill("100");
+        await p.getByTestId("twap-summary").waitFor({ timeout: 5_000 });
+        await p.screenshot({ path: join(SHOTS, "26c-twap-ticket.png") });
+        await p.getByTestId("ticket-submit").click();
+        await p.getByTestId("confirm-yes").click();
+        const btc = addresses.markets.find((m) => m.symbol === "BTC-USD").marketId;
+        let filled = null;
+        for (let i = 0; i < 50 && !filled; i++) {
+          const pos = await read(addresses.engine, "PerpEngine", "getPosition", [account, btc]);
+          if (pos.trader.toLowerCase() === account.toLowerCase()) filled = pos;
+          else await sleep(1000);
+        }
+        if (!filled) throw new Error("the first TWAP slice was not placed and filled");
+        const twapSends = await p.evaluate(() => window.__walletSends);
+        if (twapSends !== 1) throw new Error(`starting the TWAP took ${twapSends} wallet transactions; one (the approval) is expected`);
+        await p.getByTestId("tab-orders").click();
+        const row = p.getByTestId("twap-BTC-USD");
+        await row.getByText("1 of 2 slices").waitFor({ timeout: 15_000 });
+        await p.screenshot({ path: join(SHOTS, "26d-twap-orders.png") });
+        await row.getByTestId("stop-twap").click();
+        await row.waitFor({ state: "detached", timeout: 30_000 });
+        const left = await read(addresses.twapOrders, "TwapOrders", "getTwap", [account, btc]);
+        if (Number(left.slices) !== 0) throw new Error("the TWAP is still set after stopping it");
+        const after = await read(addresses.engine, "PerpEngine", "getPosition", [account, btc]);
+        if (after.size !== filled.size) throw new Error(`the position changed after the TWAP stopped (${filled.size} -> ${after.size})`);
+        twapNote = `TWAP first slice filled at ${Number(filled.size) / 1e6} tUSDC of 500, then stopped`;
+      }
       await p.getByTestId("instant-chip").click();
       await p.getByTestId("instant-revoke").click();
       await p.getByText(/Instant trading is off/).waitFor({ timeout: 60_000 });
-      return `${setupSends} wallet transactions to set up, 0 for the trade; account ${account}`;
+      return `${setupSends} wallet transactions to set up, 0 for the trade; ${trailNote}; ${twapNote}; account ${account}`;
     } finally {
       await context.close();
     }

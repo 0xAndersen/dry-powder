@@ -10,10 +10,11 @@
 - Liquidation when losses plus funding reach 90% of margin (a 0.09% move at 1000x). Profit capped at 10x margin. Fees: 5 bp of size plus a skew surcharge, each side capped at 10% of margin.
 - Units: USDC 6 decimals; prices 18 decimals. One position per market per trader: an open on the same side adds to it, the other side reverts PositionExists.
 - Manage: closePosition(marketId, size, acceptablePrice, priceUpdate) closes all or part; setTriggerOrder(marketId, 1|2, price, size) for sized take-profit/stop-loss; addMargin(marketId, amount) (not while in profit); LimitParams.stopEntry = true for breakout entries; AgentAccount.multicall for atomic batches.
+- Add-ons for agent accounts (approve each as an agent; the keeper pokes them): TrailingStops.setTrail(account, marketId, distanceBps, size, activation) for a stop that only tightens; TwapOrders.setTwap(account, marketId, isLong, sliceMargin, sliceSize, slices, interval, maxSlippageBps) for 2-100 slices 30 s to 1 day apart.
 - Collateral on testnet is tUSDC (anyone may mint up to 1,000,000 per call); gas is native USDC from https://faucet.circle.com.
 
 ## Addresses
-- [Live deployment JSON](https://raw.githubusercontent.com/0xAndersen/dry-powder/main/deployments/arc-testnet.json): engine, lens, vault, token, usdc, agentFactory, markets.
+- [Live deployment JSON](https://raw.githubusercontent.com/0xAndersen/dry-powder/main/deployments/arc-testnet.json): engine, lens, vault, token, usdc, agentFactory, trailingStops, twapOrders, markets.
 - RPC: https://rpc.testnet.arc.io (fallbacks: rpc.quicknode.testnet.arc.io, rpc.drpc.testnet.arc.io, rpc.blockdaemon.testnet.arc.io). Explorer: https://explorer.testnet.arc.io
 
 ## Docs

@@ -16,12 +16,12 @@ import { useLogFeed } from "@/hooks/use-log-feed";
 import { useChainNow, useMarketData, useMarketPrice } from "@/hooks/use-market-data";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useAccountView } from "@/hooks/use-wallet";
-import { fmtNum, fmtPercent, fmtPrice, fmtUsdc, priceToNum } from "@/lib/format";
+import { fmtClock, fmtNum, fmtPercent, fmtPrice, fmtUsdc, priceToNum } from "@/lib/format";
 import { isOpenOrder } from "@/lib/events";
 import { findBySlug, groupInstruments, marketSlug, type Instrument } from "@/lib/instruments";
 import { orderTracker } from "@/lib/order-tracker";
 import { valuePosition } from "@/lib/position";
-import { priceAlerts, type PriceAlert } from "@/lib/storage";
+import { chartLines, priceAlerts, type PriceAlert } from "@/lib/storage";
 import { notify } from "@/lib/notify";
 import { prefs, utcDayStart } from "@/lib/prefs";
 import { toast } from "@/lib/toasts";
@@ -104,6 +104,7 @@ export function TradeScreen() {
     };
   }, [ticketOpen, desktop]);
   const [alerts, setAlerts] = useLocalStore(priceAlerts);
+  const [drawn, setDrawn] = useLocalStore(chartLines);
 
   const position = useMemo(
     () => (instrument ? account.data?.positions.find((p) => p.position.priceId.toLowerCase() === instrument.id) : undefined),
@@ -142,10 +143,21 @@ export function TradeScreen() {
     }
     return total;
   }, [limit, feed.events, dayStart]);
-  const lossLimitReached =
+  const dailyLimitText =
     limit !== null && todayResult !== null && todayResult <= -BigInt(Math.round(limit * 1e6))
       ? `Daily loss limit reached (${fmtUsdc(todayResult, 2, { sign: true })} today). New positions reopen at 00:00 UTC`
       : null;
+  // Self-imposed cool-off: no new positions for a while after a liquidation.
+  const coolOff = preferences.coolOffMinutes;
+  const lastLiquidation = useMemo(() => {
+    if (coolOff === null) return null;
+    let last = 0;
+    for (const e of feed.events) if (e.type === "liquidation" && e.time > last) last = e.time;
+    return last || null;
+  }, [coolOff, feed.events]);
+  const coolOffUntil = coolOff !== null && lastLiquidation !== null ? lastLiquidation + coolOff * 60 : null;
+  const coolOffText = coolOffUntil !== null && chainNow < coolOffUntil ? `Cooling off after a liquidation. New positions reopen at ${fmtClock(coolOffUntil)}` : null;
+  const lossLimitReached = dailyLimitText ?? coolOffText;
   // Tab title ticker: price, and the position's PnL, readable from another tab or the task switcher.
   const titlePrice = instrument && price.display !== null ? fmtNum(price.display, instrument.priceDecimals) : null;
   const titlePnl = positionValue?.pnl ?? null;
@@ -236,13 +248,19 @@ export function TradeScreen() {
     for (const alert of alerts) {
       if (alert.marketId === instrument.id && alert.firedAt === null) out.push({ key: `alert-${alert.id}`, price: alert.price, title: "Alert", tone: "alert" });
     }
+    for (const line of drawn[instrument.id] ?? []) out.push({ key: `line-${line.id}`, price: line.price, title: "", tone: "drawn" });
     return out;
-  }, [instrument, account.data, position, draft, alerts, params?.maxProfitMultiple]);
+  }, [instrument, account.data, position, draft, alerts, drawn, params?.maxProfitMultiple]);
 
   const onPick = useCallback(
     (target: PickTarget, value: number) => {
       setPick(null);
       if (!instrument) return;
+      if (target === "line") {
+        const line = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, price: Number(value.toFixed(instrument.priceDecimals)) };
+        setDrawn((prev) => ({ ...prev, [instrument.id]: [...(prev[instrument.id] ?? []), line].slice(-20) }));
+        return;
+      }
       if (target === "alert") {
         const current = price.display;
         const alert: PriceAlert = {
@@ -261,7 +279,7 @@ export function TradeScreen() {
       if (target !== "limit" && position && view.canTrade) tablesRef.current?.editTrigger(instrument.id, target, value);
       else ticketRef.current?.setPrice(target, value);
     },
-    [instrument, position, view.canTrade, price.display, setAlerts],
+    [instrument, position, view.canTrade, price.display, setAlerts, setDrawn],
   );
 
   // ── Keyboard shortcuts ──
@@ -319,7 +337,7 @@ export function TradeScreen() {
     );
   }
 
-  const pickTargets: PickTarget[] = view.watching ? ["alert"] : ["limit", "tp", "sl", "alert"];
+  const pickTargets: PickTarget[] = view.watching ? ["alert", "line"] : ["limit", "tp", "sl", "alert", "line"];
 
   return (
     <div className="flex flex-col gap-2">
@@ -351,6 +369,8 @@ export function TradeScreen() {
             price={price}
             lines={lines}
             pickTargets={pickTargets}
+            drawnCount={instrument ? (drawn[instrument.id]?.length ?? 0) : 0}
+            onClearDrawn={() => instrument && setDrawn((prev) => ({ ...prev, [instrument.id]: [] }))}
             pick={pick}
             onPickChange={setPick}
             onPick={onPick}

@@ -5,12 +5,15 @@ import { keepPreviousData } from "@tanstack/react-query";
 import { useConnect, useReadContract, useSwitchChain } from "wagmi";
 import { useApp } from "@/components/providers";
 import { ConfirmDialog, type ConfirmLine } from "@/components/trade/confirm-dialog";
+import { CostBySize } from "@/components/trade/cost-by-size";
 import { TrackedOrders } from "@/components/trade/tracked-orders";
 import { TxStatus } from "@/components/tx-status";
 import type { AccountData, PositionView } from "@/hooks/use-account-data";
 import { useTradeContext } from "@/hooks/use-action-context";
 import { useLocalStore } from "@/hooks/use-local-store";
 import { useMarketData, type MarketPrice } from "@/hooks/use-market-data";
+import { useTradingAccount } from "@/hooks/use-trading-account";
+import { useTwaps } from "@/hooks/use-twap";
 import { useTx } from "@/hooks/use-tx";
 import { useWallet, type AccountView } from "@/hooks/use-wallet";
 import { perpEngineAbi } from "@/lib/abi";
@@ -24,6 +27,7 @@ import { valuePosition } from "@/lib/position";
 import { prefs } from "@/lib/prefs";
 import { MAX_SCALE_ORDERS, scaleFlow, splitLadder } from "@/lib/scale";
 import { MAX_SLIPPAGE_BPS, tradeSettings } from "@/lib/storage";
+import { TWAP_INTERVALS, TWAP_MAX_SLICES, TWAP_MIN_SLICES, fmtInterval, planTwap, sliceLeverage, twapDuration, twapFlow } from "@/lib/twap";
 
 type OrderKind = "market" | "limit" | "stop";
 type QtyMode = "notional" | "margin" | "contracts" | "risk";
@@ -168,6 +172,7 @@ export const OrderTicket = forwardRef<
   const { switchChain, isPending: switching } = useSwitchChain();
   const tx = useTx({ autoDismissMs: 12000 });
   const actionContext = useTradeContext();
+  const trading = useTradingAccount();
   const ids = useId();
   const [settings, setSettings] = useLocalStore(tradeSettings);
   const [preferences] = useLocalStore(prefs);
@@ -189,6 +194,10 @@ export const OrderTicket = forwardRef<
   const [scaleOn, setScaleOn] = useState(false);
   const [scaleToText, setScaleToText] = useState("");
   const [scaleCountText, setScaleCountText] = useState("5");
+  // TWAP: a market order split into equal slices, one every `twapInterval` seconds (the TwapOrders add-on).
+  const [twapOn, setTwapOn] = useState(false);
+  const [twapSlicesText, setTwapSlicesText] = useState("6");
+  const [twapInterval, setTwapInterval] = useState<number>(60);
   const [tpText, setTpText] = useState("");
   const [tpUnit, setTpUnit] = useState<TpUnit>("price");
   const [slText, setSlText] = useState("");
@@ -343,6 +352,25 @@ export const OrderTicket = forwardRef<
   const units = size !== null && entry ? unitsOf(size, entry) : null;
   const scalePlan = ladder && size !== null && margin !== null ? splitLadder(ladder, margin, size) : null;
 
+  // ── TWAP ──
+  const twapSupported = cfg.twapOrders !== null;
+  const twapping = kind === "market" && twapOn && twapSupported;
+  const twapSlices = Number(twapSlicesText);
+  const twapSlicesError =
+    twapping && !(Number.isInteger(twapSlices) && twapSlices >= TWAP_MIN_SLICES && twapSlices <= TWAP_MAX_SLICES) ? `Between ${TWAP_MIN_SLICES} and ${TWAP_MAX_SLICES} slices` : null;
+  const twapPlan =
+    twapping && !twapSlicesError && size !== null && margin !== null && size > 0n ? planTwap(margin, size, twapSlices, twapInterval, settings.slippageBps) : null;
+  const twapState = useTwaps(view.instant ? view.address : undefined, twapSupported ? [instrument.id] : []);
+  const runningTwap = twapState.twaps.get(instrument.id);
+  // The wallet confirms once when the account's approval for the TWAP contract does not cover this plan.
+  const twapNeedsApproval = (() => {
+    if (!twapPlan) return false;
+    const a = twapState.approval;
+    if (!a) return true;
+    const until = Math.floor(Date.now() / 1000) + twapDuration(twapPlan) + 3_600;
+    return a.expiry < until || a.maxLeverage < sliceLeverage(twapPlan) || a.maxMargin < twapPlan.sliceMargin;
+  })();
+
   // ── Brackets ──
   const stopLoss: bigint | null =
     slRaw === ""
@@ -372,7 +400,8 @@ export const OrderTicket = forwardRef<
     if (isLong) return (entry * (1_000_000_000n + scaled)) / 1_000_000_000n;
     return scaled >= 1_000_000_000n ? null : (entry * (1_000_000_000n - scaled)) / 1_000_000_000n;
   })();
-  const brackets = (takeProfit ? 1 : 0) + (stopLoss ? 1 : 0);
+  // TWAP slices carry no brackets (the TP/SL fields are cleared and hidden while it is on).
+  const brackets = twapping ? 0 : (takeProfit ? 1 : 0) + (stopLoss ? 1 : 0);
 
   // ── Fees and totals ──
   const feeQuote = useReadContract({
@@ -399,11 +428,14 @@ export const OrderTicket = forwardRef<
   const openFee = size !== null && size > 0n ? (feeQuote.data ?? legacyFeeQuote.data ?? null) : null;
   const skewFee = openFee !== null && feeBase !== null && openFee > feeBase ? openFee - feeBase : 0n;
   // A ladder escrows every order's fees; fills after the first move the brackets and refund theirs.
-  const executionCount = (brackets + (keeperOrder ? 1 : 0)) * (scalePlan ? scalePlan.length : 1);
+  const executionCount = twapPlan ? twapPlan.slices : (brackets + (keeperOrder ? 1 : 0)) * (scalePlan ? scalePlan.length : 1);
   const executionFees = params ? params.executionFee * BigInt(executionCount) : null;
   /** What the engine pulls now. Keeper orders escrow the fee ceiling and refund the difference on fill. */
   const required =
-    scalePlan && params && executionFees !== null
+    twapPlan && params
+      ? BigInt(twapPlan.slices) *
+        (twapPlan.sliceMargin + maxOpenFee(twapPlan.sliceSize, params.baseFeeBps, params.maxSkewFeeBps, twapPlan.sliceMargin) + params.executionFee)
+      : scalePlan && params && executionFees !== null
       ? scalePlan.reduce((sum, o) => sum + o.margin + maxOpenFee(o.size, params.baseFeeBps, params.maxSkewFeeBps, o.margin), 0n) + executionFees
       : margin !== null && feeCeiling !== null && executionFees !== null
         ? margin + feeCeiling + executionFees
@@ -543,12 +575,24 @@ export const OrderTicket = forwardRef<
     if (size < margin) return "Size cannot be smaller than margin";
     if (tpError) return tpError;
     if (slError) return slError;
+    if (twapping) {
+      if (!view.instant) return "TWAP runs from your trading account: turn on instant trading";
+      if (twapSlicesError) return twapSlicesError;
+      if (twapPlan && params && twapPlan.sliceMargin < params.minMargin) return `Each slice needs ${fmtUsdc(params.minMargin)} ${sym} margin: fewer slices or more margin`;
+      if (twapPlan && trading.policy && twapPlan.sliceMargin > trading.policy.maxMargin) {
+        return `Each slice is over your instant-trading limit of ${fmtUsdc(trading.policy.maxMargin)} ${sym}: use more slices`;
+      }
+      if (twapPlan && trading.policy && sliceLeverage(twapPlan) > trading.policy.maxLeverage) return `Over your instant-trading limit of ${trading.policy.maxLeverage}x`;
+      if (twapNeedsApproval && !trading.ownerConnected) return "Connect the wallet that owns your trading account: it allows TWAP orders once";
+    }
     if (oppositeSide && kind === "market") return `You hold a ${position!.position.isLong ? "long" : "short"}: close it or reverse`;
     if (capProblem) return capProblem;
     if (scalePlan && params && scalePlan.some((o) => o.margin < params.minMargin)) {
       return `Each order needs ${fmtUsdc(params.minMargin)} ${sym} margin: fewer orders or more margin`;
     }
-    if (balance !== undefined && required !== null && required > balance) return `Not enough ${sym}: ${fmtUsdc(required)} needed`;
+    if (balance !== undefined && required !== null && required > balance) {
+      return twapPlan ? `Not enough ${sym} for all ${twapPlan.slices} slices: ${fmtUsdc(required)} needed` : `Not enough ${sym}: ${fmtUsdc(required)} needed`;
+    }
     if (view.canTrade && balance === undefined) return "Loading balance";
     return null;
   })();
@@ -635,9 +679,15 @@ export const OrderTicket = forwardRef<
     const req = buildRequest();
     if (!req) return;
     const plan = scalePlan;
+    const twap = twapPlan;
     const ok = await tx.run(async (api) => {
       const ctx = actionContext(api);
       if (!ctx) throw new UserFacingError("Connect your wallet first.");
+      if (twap) {
+        const result = await twapFlow(ctx, { instrument, isLong, plan: twap, owner: trading.ownerConnected ? wallet.address : undefined, session: trading.policy });
+        twapState.refetch();
+        return result;
+      }
       if (plan) return scaleFlow(ctx, { instrument, isLong, orders: plan, takeProfit: req.takeProfit, stopLoss: req.stopLoss, required: req.required });
       return openFlow(ctx, req);
     });
@@ -722,10 +772,12 @@ export const OrderTicket = forwardRef<
         setKind("limit");
         setLimitText(text);
       } else if (target === "tp") {
+        setTwapOn(false);
         setBracketsOpen(true);
         setTpUnit("price");
         setTpText(text);
       } else {
+        setTwapOn(false);
         setBracketsOpen(true);
         setSlUnit("price");
         setSlText(text);
@@ -737,7 +789,17 @@ export const OrderTicket = forwardRef<
   const confirmLines: ConfirmLine[] = useMemo(() => {
     if (confirming === "open") {
       return [
-        { label: "Order", value: `${kind === "market" ? (publisher ? "Market (keeper-filled)" : "Market") : kind === "stop" ? "Stop entry" : scalePlan ? `${scalePlan.length} limits,` : "Limit"} ${sideWord} ${instrument.symbol}` },
+        { label: "Order", value: `${twapPlan ? "TWAP" : kind === "market" ? (publisher ? "Market (keeper-filled)" : "Market") : kind === "stop" ? "Stop entry" : scalePlan ? `${scalePlan.length} limits,` : "Limit"} ${sideWord} ${instrument.symbol}` },
+        ...(twapPlan
+          ? [
+              {
+                label: "Slices",
+                value: `${twapPlan.slices} of ${fmtUsdc(twapPlan.sliceSize)} ${sym} (${fmtUsdc(twapPlan.sliceMargin)} margin), one every ${fmtInterval(twapPlan.interval)}, about ${fmtInterval(Math.max(twapPlan.interval, twapDuration(twapPlan)))} in all`,
+              },
+              { label: "Worst fill per slice", value: `${(twapPlan.slippageBps / 100).toFixed(2)}% past the ${isLong ? "ask" : "bid"} when it is placed` },
+              ...(runningTwap ? [{ label: "Replaces", value: `the running TWAP (${runningTwap.done} of ${runningTwap.slices} slices placed)` }] : []),
+            ]
+          : []),
         ...(scalePlan
           ? [
               {
@@ -757,11 +819,11 @@ export const OrderTicket = forwardRef<
         { label: "Most you can lose", value: maxLoss !== null ? `${fmtUsdc(maxLoss)} ${sym}` : "—" },
         ...(takeProfit ? [{ label: "Take-profit", value: fmtPrice(takeProfit, dp) }] : []),
         ...(stopLoss ? [{ label: "Stop-loss", value: fmtPrice(stopLoss, dp) }] : []),
-        { label: view.instant ? "Taken from your trading account now" : "Taken from your wallet now", value: required !== null ? `${fmtUsdc(required)} ${sym}` : "—" },
+        { label: twapPlan ? "Drawn from your trading account, slice by slice" : view.instant ? "Taken from your trading account now" : "Taken from your wallet now", value: required !== null ? `${fmtUsdc(required)} ${sym}` : "—" },
       ];
     }
     return [];
-  }, [confirming, kind, publisher, sideWord, instrument.symbol, instrument.unitLabel, size, units, margin, leverage, entry, bracketRef, liq, liqDistance, maxLoss, takeProfit, stopLoss, required, sym, dp, view.instant, merged, mergedLiq, mergedLiqDistance, position, scalePlan]);
+  }, [confirming, kind, publisher, sideWord, instrument.symbol, instrument.unitLabel, size, units, margin, leverage, entry, bracketRef, liq, liqDistance, maxLoss, takeProfit, stopLoss, required, sym, dp, view.instant, merged, mergedLiq, mergedLiqDistance, position, scalePlan, twapPlan, runningTwap, isLong]);
 
   // ── Primary button ──
   let button: React.ReactNode;
@@ -785,8 +847,9 @@ export const OrderTicket = forwardRef<
       </button>
     );
   } else {
-    const action =
-      kind === "limit"
+    const action = twapping
+      ? `Start TWAP ${sideWord}${twapPlan ? `: ${twapPlan.slices} slices` : ""}`
+      : kind === "limit"
         ? scalePlan
           ? `Place ${scalePlan.length} limit ${sideWord}s`
           : `Place limit ${sideWord}`
@@ -942,7 +1005,9 @@ export const OrderTicket = forwardRef<
         </div>
 
         <p className="text-xs text-faint">
-          {kind === "market"
+          {twapping
+            ? `TWAP: the keeper places one market slice every ${fmtInterval(twapInterval)}; each fills at the next oracle price, so a large order goes in at an average price instead of all at once.`
+            : kind === "market"
             ? publisher
               ? "Market (keeper-filled, ~1-2 s): a keeper fills your order at the next oracle price."
               : "Market: opens in one transaction at the current Pyth price."
@@ -950,6 +1015,75 @@ export const OrderTicket = forwardRef<
               ? `Stop entry: a keeper fills it once the ${isLong ? "ask rises to" : "bid falls to"} your price (a breakout ${sideWord}).`
               : `Limit: a keeper fills it when the ${isLong ? "ask falls to" : "bid rises to"} your price.`}
         </p>
+
+        {kind === "market" && twapSupported ? (
+          <div data-testid="twap-controls">
+            <label className="flex items-center gap-2 text-xs text-muted">
+              <input
+                type="checkbox"
+                className="check"
+                checked={twapOn}
+                onChange={(event) => {
+                  setTwapOn(event.target.checked);
+                  if (event.target.checked) {
+                    // Slices carry no brackets: clear them rather than leave a target that will not be placed.
+                    setTpText("");
+                    setSlText("");
+                    setBracketsOpen(false);
+                  }
+                }}
+                data-testid="twap-toggle"
+              />
+              TWAP: split into slices over time
+              {!view.instant ? <span className="text-faint">(with instant trading)</span> : null}
+            </label>
+            {twapOn ? (
+              <div className="mt-2 grid gap-2">
+                <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-end gap-2">
+                  <div className="min-w-0">
+                    <label className="field-label" htmlFor={`${ids}-twap-n`}>
+                      Slices
+                    </label>
+                    <div className="field" data-invalid={twapSlicesError !== null}>
+                      <input
+                        id={`${ids}-twap-n`}
+                        inputMode="numeric"
+                        autoComplete="off"
+                        value={twapSlicesText}
+                        onChange={(event) => setTwapSlicesText(event.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
+                        aria-invalid={twapSlicesError !== null}
+                        data-testid="twap-slices"
+                      />
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="field-label">Every</span>
+                    <div className="segmented" role="group" aria-label="Time between slices">
+                      {TWAP_INTERVALS.map((sec) => (
+                        <button key={sec} type="button" aria-pressed={twapInterval === sec} onClick={() => setTwapInterval(sec)} data-testid={`twap-every-${sec}`}>
+                          {fmtInterval(sec)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                {twapSlicesError ? <p className="text-xs text-short">{twapSlicesError}</p> : null}
+                {twapPlan ? (
+                  <p className="num text-xs text-muted" data-testid="twap-summary">
+                    {twapPlan.slices} slices of {fmtUsdc(twapPlan.sliceSize)} {sym} ({fmtUsdc(twapPlan.sliceMargin)} margin), one every {fmtInterval(twapPlan.interval)}:
+                    about {fmtInterval(Math.max(twapPlan.interval, twapDuration(twapPlan)))} in all. Each fills at most {(twapPlan.slippageBps / 100).toFixed(2)}% past the{" "}
+                    {isLong ? "ask" : "bid"} when it goes out; a slice that cannot rests as a limit at that bound.
+                  </p>
+                ) : null}
+                {runningTwap ? (
+                  <p className="text-xs text-warn">
+                    A TWAP is running here ({runningTwap.done} of {runningTwap.slices} slices placed): starting a new one replaces it.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {kind !== "market" ? (
           <div>
@@ -1160,7 +1294,9 @@ export const OrderTicket = forwardRef<
           ) : null}
         </div>
 
-        {!showBrackets ? (
+        {twapping ? (
+          <p className="text-xs text-faint">TWAP slices carry no take-profit or stop-loss: set them on the position as it builds (a trailing stop works too).</p>
+        ) : !showBrackets ? (
           <button type="button" className="link self-start text-[0.8125rem]" onClick={() => setBracketsOpen(true)} data-testid="add-brackets">
             Add take-profit / stop-loss
           </button>
@@ -1280,9 +1416,9 @@ export const OrderTicket = forwardRef<
             value={openFee !== null && executionFees !== null ? `${fmtUsdc(openFee + executionFees, 2)} ${sym}` : size !== null && size > 0n ? "…" : "—"}
           />
           <Row
-            label="Total required"
+            label={twapPlan ? "Total over the TWAP" : "Total required"}
             strong
-            hint="Taken from your wallet when you submit: margin, the fee escrow and execution fees."
+            hint={twapPlan ? "Drawn from your trading account one slice at a time: each slice's margin, fee escrow and execution fee." : "Taken from your wallet when you submit: margin, the fee escrow and execution fees."}
             value={required !== null ? `${fmtUsdc(required)} ${sym}` : "—"}
           />
         </dl>
@@ -1325,6 +1461,7 @@ export const OrderTicket = forwardRef<
               value={maxProfit !== null && margin ? `${fmtUsdc(maxProfit)} ${sym}${capPrice ? ` at ${fmtPrice(capPrice, dp)}` : ""}` : "—"}
             />
           </dl>
+          <CostBySize instrument={instrument} enabled={settings.ticketDetails} />
         </details>
 
         {awaiting && kind === "market" ? (
@@ -1368,16 +1505,18 @@ export const OrderTicket = forwardRef<
 
       {confirming === "open" ? (
         <ConfirmDialog
-          title={`Confirm ${kind === "limit" ? "limit" : kind === "stop" ? "stop" : merged ? "addition to your" : "market"} ${sideWord}`}
+          title={`Confirm ${twapPlan ? "TWAP" : kind === "limit" ? "limit" : kind === "stop" ? "stop" : merged ? "addition to your" : "market"} ${sideWord}`}
           lines={confirmLines}
           note={
-            highLeverage
+            twapPlan
+              ? `The keeper places one slice every ${fmtInterval(twapPlan.interval)} from your trading account and fills it at the next price; each fill adds to the position. Stop it any time from Orders (slices already placed stay). ${twapNeedsApproval ? "Your wallet confirms once to let the TWAP contract place slices within your instant-trading limits." : "No wallet confirmation needed."}`
+              : highLeverage
               ? `${leverage.toFixed(0)}x leverage: a ${liqDistance !== null ? fmtPercent(liqDistance, 2) : "very small"} move against you liquidates this position and you lose the margin. A keeper fills it at the next oracle price; closing also goes through a keeper order.`
               : kind === "market" && publisher
                 ? "A keeper fills this at the next oracle price, usually within 1-2 seconds. If the price runs past your worst fill, the order rests until it comes back or you cancel it."
                 : undefined
           }
-          confirmLabel={kind === "limit" ? `Place limit ${sideWord}` : kind === "stop" ? `Place stop ${sideWord}` : merged ? `Add to ${sideWord}` : `${isLong ? "Buy / Long" : "Sell / Short"}`}
+          confirmLabel={twapPlan ? `Start TWAP ${sideWord}` : kind === "limit" ? `Place limit ${sideWord}` : kind === "stop" ? `Place stop ${sideWord}` : merged ? `Add to ${sideWord}` : `${isLong ? "Buy / Long" : "Sell / Short"}`}
           tone={isLong ? "long" : "short"}
           allowSkip={!highLeverage}
           onSkipChange={(skip) => setSettings((s) => ({ ...s, oneClick: skip }))}

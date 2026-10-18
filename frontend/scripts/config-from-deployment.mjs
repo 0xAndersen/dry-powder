@@ -13,6 +13,7 @@ const config = {
   usdcAddress: d.usdc,
   ...(d.agentFactory ? { agentFactoryAddress: d.agentFactory } : {}),
   ...(d.trailingStops ? { trailingStopsAddress: d.trailingStops } : {}),
+  ...(d.twapOrders ? { twapOrdersAddress: d.twapOrders } : {}),
   rpcUrl: d.rpcUrl,
   chainId: d.chainId,
   oracleMode: "publisher",

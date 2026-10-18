@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Address } from "viem";
 import { AppLink } from "@/components/app-link";
+import { Challenges } from "@/components/portfolio/challenges";
 import { PnlCalendar } from "@/components/portfolio/pnl-calendar";
 import { PnlCurve } from "@/components/portfolio/pnl-curve";
 import { Journal } from "@/components/portfolio/journal";
@@ -17,6 +18,7 @@ import { useLocalStore } from "@/hooks/use-local-store";
 import { useAccountView, useWallet } from "@/hooks/use-wallet";
 import { accountTotals } from "@/lib/account-totals";
 import { closedTrades } from "@/lib/aggregate";
+import { challengeAttempts } from "@/lib/challenges";
 import { USDC_DECIMALS, fmtAge, fmtCompact, fmtDateTime, fmtDuration, fmtPercent, fmtPrice, fmtUsdc, shortAddress, usdcToNum } from "@/lib/format";
 import { valuePosition } from "@/lib/position";
 import { RISK_TEXT, riskTone } from "@/lib/risk-tone";
@@ -83,7 +85,12 @@ export function PortfolioScreen() {
   // Read further back when the chosen period starts before what is loaded (bounded by the deployment time).
   const periodSeconds = PERIODS.find((p) => p.key === period)!.seconds;
   const floor = since ?? chainNow - ALL_FALLBACK;
-  const wantFrom = Math.max(floor, periodSeconds === null ? floor : chainNow - periodSeconds);
+  // A running challenge needs its whole history, whatever the period shown.
+  const [attempts] = useLocalStore(challengeAttempts);
+  const challengeFrom = address
+    ? attempts.find((a) => a.result === null && a.account === address.toLowerCase() && a.chainId === cfg.chainId && a.engine === cfg.perpEngine.toLowerCase())?.startedAt
+    : undefined;
+  const wantFrom = Math.min(Math.max(floor, periodSeconds === null ? floor : chainNow - periodSeconds), challengeFrom !== undefined ? Math.max(floor, challengeFrom) : Infinity);
   const status = feed.status;
   const covered = status.loadedFromTime > 0 && (since !== null ? status.loadedFromTime <= since + 60 : false);
   useEffect(() => {
@@ -386,6 +393,19 @@ export function PortfolioScreen() {
           )}
         </section>
       </div>
+
+      {!view.watching ? (
+        <Challenges
+          address={address}
+          trades={allTrades}
+          positions={positions}
+          equity={totals?.equity ?? null}
+          chainNow={chainNow}
+          historyFrom={covered ? 1 : status.loadedFromTime}
+          readOnly={view.watching}
+          onShare={(r, label) => setShare({ card: profileCard(r, label, cardContext(address)), title: "Share your challenge" })}
+        />
+      ) : null}
 
       <Journal trades={trades} readOnly={view.watching} onShare={(t) => setShare({ card: closedTradeCard(t, cardContext(address)), title: "Share this trade" })} />
 

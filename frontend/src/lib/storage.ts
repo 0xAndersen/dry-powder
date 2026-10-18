@@ -143,3 +143,20 @@ export const priceAlerts = createLocalStore<PriceAlert[]>("arc-house:alerts:v1",
   }
   return out;
 });
+
+
+/** Horizontal lines the trader drew on a market's chart (support, resistance, levels to watch), by market id. */
+export type DrawnLine = { id: string; price: number };
+export const chartLines = createLocalStore<Record<string, DrawnLine[]>>("dp:chart-lines:v1", {}, (stored) => {
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) return null;
+  const out: Record<string, DrawnLine[]> = {};
+  for (const [market, list] of Object.entries(stored as Record<string, unknown>)) {
+    if (!Array.isArray(list)) continue;
+    const lines = list
+      .filter((l): l is DrawnLine => !!l && typeof (l as DrawnLine).id === "string" && Number((l as DrawnLine).price) > 0)
+      .map((l) => ({ id: l.id, price: Number(l.price) }))
+      .slice(-20);
+    if (lines.length > 0) out[market.toLowerCase()] = lines;
+  }
+  return out;
+});

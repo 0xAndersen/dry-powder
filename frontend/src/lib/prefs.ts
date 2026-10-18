@@ -16,6 +16,8 @@ export type Prefs = {
   dailyLossLimit: number | null;
   /** Personal leverage cap, below the market maximum. Null: the market's own maximum. */
   maxLeverage: number | null;
+  /** After a liquidation, refuse new positions for this many minutes. Null: no cool-off. */
+  coolOffMinutes: number | null;
 };
 
 export const DEFAULT_PREFS: Prefs = {
@@ -26,6 +28,7 @@ export const DEFAULT_PREFS: Prefs = {
   followAlerts: true,
   dailyLossLimit: null,
   maxLeverage: null,
+  coolOffMinutes: null,
 };
 
 export const prefs = createLocalStore<Prefs>("dp:prefs:v1", DEFAULT_PREFS, (stored) => {
@@ -43,6 +46,7 @@ export const prefs = createLocalStore<Prefs>("dp:prefs:v1", DEFAULT_PREFS, (stor
     followAlerts: s.followAlerts !== false,
     dailyLossLimit: positive(s.dailyLossLimit, 1e12),
     maxLeverage: positive(s.maxLeverage, 1000),
+    coolOffMinutes: positive(s.coolOffMinutes, 7 * 24 * 60),
   };
 });
 

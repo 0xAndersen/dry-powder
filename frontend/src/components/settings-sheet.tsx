@@ -91,6 +91,15 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
               </button>
             ))}
           </div>
+          <span className="field-label mt-3">After a liquidation, pause new positions for</span>
+          <div className="segmented" role="group" aria-label="Cool-off after a liquidation">
+            {([null, 15, 60, 240] as const).map((m) => (
+              <button key={m ?? "off"} type="button" aria-pressed={p.coolOffMinutes === m} onClick={() => set({ coolOffMinutes: m })}>
+                {m === null ? "No pause" : m < 60 ? `${m} min` : `${m / 60} h`}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 text-xs text-faint">Closing and managing positions always works; only new ones wait.</p>
         </Section>
 
         <Section title="Alerts and notifications">

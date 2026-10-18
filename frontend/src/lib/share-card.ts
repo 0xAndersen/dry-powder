@@ -234,7 +234,7 @@ export async function drawCard(card: ShareCard, scale = 1): Promise<HTMLCanvasEl
     ctx.font = `400 20px ${SANS}`;
     ctx.fillText(f.label, x, y);
     ctx.fillStyle = C.paper;
-    fit(ctx, f.value, "500", MONO, 32, col - 24);
+    fit(ctx, f.value, "500", MONO, 32, col - 40);
     ctx.fillText(f.value, x, y + 44);
   });
 

@@ -25,6 +25,7 @@ export function startStaticServer(addresses) {
     rewardTokenAddress: addresses.token,
     agentFactoryAddress: addresses.agentFactory,
     ...(addresses.trailingStops ? { trailingStopsAddress: addresses.trailingStops } : {}),
+    ...(addresses.twapOrders ? { twapOrdersAddress: addresses.twapOrders } : {}),
     usdcAddress: addresses.usdc,
     rpcUrl: RPC_URL,
     chainId: 31337,

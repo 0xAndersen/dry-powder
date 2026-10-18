@@ -16,6 +16,8 @@ export type RuntimeConfig = {
   agentFactory: Address | null;
   /** TrailingStops add-on (v3.1); null when this deployment has none (no trailing stops offered). */
   trailingStops: Address | null;
+  /** TwapOrders add-on (v3.1); null when this deployment has none (no TWAP orders offered). */
+  twapOrders: Address | null;
   usdc: Address;
   oracleMode: OracleMode;
   collateralSymbol: string;
@@ -45,6 +47,7 @@ export const CONFIG_KEYS = [
   { env: "USDC_ADDRESS", json: "usdcAddress", query: "collateral" },
   { env: "AGENT_FACTORY_ADDRESS", json: "agentFactoryAddress", query: "agents" },
   { env: "TRAILING_STOPS_ADDRESS", json: "trailingStopsAddress", query: "trails" },
+  { env: "TWAP_ORDERS_ADDRESS", json: "twapOrdersAddress", query: "twaps" },
   { env: "RPC_URL", json: "rpcUrl", query: "rpc" },
   { env: "CHAIN_ID", json: "chainId", query: "chain" },
   { env: "ORACLE_MODE", json: "oracleMode", query: "mode" },
@@ -157,6 +160,7 @@ export function readRuntimeConfig(raw: RawConfig, overrides: string[] = []): Run
   const rewardToken = address("REWARD_TOKEN_ADDRESS");
   const agentFactory = value("AGENT_FACTORY_ADDRESS") ? address("AGENT_FACTORY_ADDRESS") : null;
   const trailingStops = value("TRAILING_STOPS_ADDRESS") ? address("TRAILING_STOPS_ADDRESS") : null;
+  const twapOrders = value("TWAP_ORDERS_ADDRESS") ? address("TWAP_ORDERS_ADDRESS") : null;
   const usdc = address("USDC_ADDRESS", DEFAULTS.USDC_ADDRESS);
   const rpcUrl = url("RPC_URL");
   const hermesUrl = url("HERMES_URL");
@@ -206,6 +210,7 @@ export function readRuntimeConfig(raw: RawConfig, overrides: string[] = []): Run
       rewardToken,
       agentFactory,
       trailingStops,
+      twapOrders,
       usdc,
       oracleMode: rawMode as OracleMode,
       collateralSymbol,

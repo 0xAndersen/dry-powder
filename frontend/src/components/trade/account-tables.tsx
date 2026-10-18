@@ -7,17 +7,20 @@ import { useApp } from "@/components/providers";
 import { ShareSheet } from "@/components/social/share-sheet";
 import { ConfirmDialog } from "@/components/trade/confirm-dialog";
 import { AddMarginSheet, ClosePositionSheet } from "@/components/trade/position-sheets";
+import { TrailSheet } from "@/components/trade/trail-sheet";
 import { TxStatus } from "@/components/tx-status";
 import type { AccountData, OrderRow, PositionView } from "@/hooks/use-account-data";
 import { useTradeContext } from "@/hooks/use-action-context";
 import { useLocalStore } from "@/hooks/use-local-store";
 import type { LogFeedHandle } from "@/hooks/use-log-feed";
 import { useChainNow, useMarketData, type MarketPrice } from "@/hooks/use-market-data";
+import { useTrailing, type TrailingState } from "@/hooks/use-trailing";
+import { useTwaps } from "@/hooks/use-twap";
 import { useTx, type TxHandle } from "@/hooks/use-tx";
-import type { AccountView } from "@/hooks/use-wallet";
-import { ORDER_TYPE, submitAddMargin, submitBatch, submitCancel, submitTrigger, type BatchCall } from "@/lib/actions";
+import { useWallet, type AccountView } from "@/hooks/use-wallet";
+import { ORDER_TYPE, TEST_MINT_AMOUNT, submitAddMargin, submitBatch, submitCancel, submitTestMint, submitTrigger, type BatchCall } from "@/lib/actions";
 import { UserFacingError } from "@/lib/errors";
-import { orderTypeLabel } from "@/lib/events";
+import { isOpenOrder, orderTypeLabel } from "@/lib/events";
 import { closeFlow } from "@/lib/flows";
 import { PRICE_DECIMALS, fmtAge, fmtDateTime, fmtNum, fmtPercent, fmtPrice, fmtQty, fmtUsdc, parseAmount, shortAddress, toInputString } from "@/lib/format";
 import { buildHistory, historyCsv } from "@/lib/history";
@@ -28,6 +31,8 @@ import { valuePosition } from "@/lib/position";
 import type { TradeCard } from "@/lib/share-card";
 import { openPositionCard, profileLink, shareText } from "@/lib/share-data";
 import { follows, nicknameOf } from "@/lib/social";
+import { approveTrailing, clearTrail, setTrail } from "@/lib/trailing";
+import { cancelTwap, fmtInterval, type Twap } from "@/lib/twap";
 import { priceAlerts, tradeSettings, type PriceAlert } from "@/lib/storage";
 
 type Tab = "positions" | "orders" | "history" | "alerts";
@@ -46,7 +51,9 @@ function Empty({ children }: { children: React.ReactNode }) {
   return <div className="px-4 py-10 text-center text-muted">{children}</div>;
 }
 
-type EditState = { marketId: string; type: "tp" | "sl"; text: string } | null;
+/** `part`: the share of the position the order closes when it fires (100: all of it, the engine's size 0). */
+type EditState = { marketId: string; type: "tp" | "sl"; text: string; part?: number } | null;
+const PARTS = [100, 75, 50, 25] as const;
 
 function TriggerCell({
   kind,
@@ -62,9 +69,16 @@ function TriggerCell({
   disabled,
   canEdit,
   symbol,
+  part,
+  onPart,
+  currentPart,
 }: {
   kind: "tp" | "sl";
   current: bigint | null;
+  /** Share of the position the existing order closes (100 when all). */
+  currentPart: number;
+  part: number;
+  onPart: (part: number) => void;
   editing: string | null;
   onEdit: () => void;
   onText: (text: string) => void;
@@ -83,6 +97,7 @@ function TriggerCell({
     return (
       <button type="button" className="num inline-edit" onClick={onEdit} aria-label={`${current ? "Edit" : "Add"} ${name} for ${symbol}`} data-testid={`edit-${kind}`}>
         {current ? fmtPrice(current, dp) : <span className="text-faint">Add</span>}
+        {current && currentPart < 100 ? <span className="ml-1 text-2xs text-faint" data-testid={`part-${kind}`}>{currentPart}%</span> : null}
       </button>
     );
   }
@@ -106,6 +121,20 @@ function TriggerCell({
         onKeyDown={(event) => event.key === "Escape" && onCancel()}
         data-testid={`input-${kind}`}
       />
+      <select
+        className="unit-select h-7"
+        aria-label={`How much the ${name} closes`}
+        title="How much of the position it closes when it fires"
+        value={part}
+        onChange={(event) => onPart(Number(event.target.value))}
+        data-testid={`size-${kind}`}
+      >
+        {PARTS.map((p) => (
+          <option key={p} value={p}>
+            {p === 100 ? "All" : `${p}%`}
+          </option>
+        ))}
+      </select>
       <button type="submit" className="btn btn-sm btn-primary px-2" disabled={disabled || error !== null || editing.trim() === ""} title={error ?? `Set ${name}`} data-testid={`save-${kind}`}>
         Set
       </button>
@@ -133,6 +162,7 @@ function PositionRow({
   edit,
   setEdit,
   onSelectMarket,
+  trailing,
 }: {
   view: PositionView;
   instrument: Instrument | undefined;
@@ -145,6 +175,8 @@ function PositionRow({
   edit: EditState;
   setEdit: (edit: EditState) => void;
   onSelectMarket: (instrument: Instrument) => void;
+  /** Trailing stops for the trading account (instant trading only); null when not offered. */
+  trailing: TrailingState | null;
 }) {
   const { config: cfg } = useApp();
   const { params } = useMarketData();
@@ -157,11 +189,19 @@ function PositionRow({
   const symbol = instrument?.symbol ?? `${pos.priceId.slice(0, 10)}…`;
   const mark = price?.mark ?? null;
   const value = valuePosition(view, mark, params?.maxProfitMultiple ?? 10n);
-  const tp = orders.find((o) => o.id === pos.tpOrderId && pos.tpOrderId !== 0n)?.order.triggerPrice ?? null;
-  const sl = orders.find((o) => o.id === pos.slOrderId && pos.slOrderId !== 0n)?.order.triggerPrice ?? null;
+  const tpOrder = orders.find((o) => o.id === pos.tpOrderId && pos.tpOrderId !== 0n)?.order ?? null;
+  const slOrder = orders.find((o) => o.id === pos.slOrderId && pos.slOrderId !== 0n)?.order ?? null;
+  const tp = tpOrder?.triggerPrice ?? null;
+  const sl = slOrder?.triggerPrice ?? null;
+  // Share of the position a sized order closes (an order sized above the position closes all of it).
+  const partOf = (size: bigint | undefined) => (!size || size === 0n || size >= pos.size ? 100 : Math.max(1, Math.round(Number((size * 100n) / pos.size))));
+  const tpPart = partOf(tpOrder?.size);
+  const slPart = partOf(slOrder?.size);
   const settled = instrument ? isSettled(instrument) : false;
   const closing = pos.closeOrderId !== 0n;
-  const [sheet, setSheet] = useState<"close" | "margin" | null>(null);
+  const [sheet, setSheet] = useState<"close" | "margin" | "trail" | null>(null);
+  const wallet = useWallet();
+  const trail = trailing?.trails.get(marketId);
   // Frozen when the sheet opens, so the image does not redraw on every price tick.
   const [shareCard, setShareCard] = useState<TradeCard | null>(null);
   const [followList] = useLocalStore(follows);
@@ -205,10 +245,12 @@ function PositionRow({
     const type = edit.type;
     const existing = type === "tp" ? pos.tpOrderId : pos.slOrderId;
     const name = type === "tp" ? "Take-profit" : "Stop-loss";
+    const part = edit.part ?? 100;
+    const size = part >= 100 ? 0n : (pos.size * BigInt(part)) / 100n;
     run(async (api) => {
-      await submitTrigger(withCtx(api), pos.priceId, type === "tp" ? ORDER_TYPE.TakeProfit : ORDER_TYPE.StopLoss, parsed, existing === 0n ? params.executionFee : 0n, `${existing === 0n ? "Set" : "Move"} ${name.toLowerCase()}`);
+      await submitTrigger(withCtx(api), pos.priceId, type === "tp" ? ORDER_TYPE.TakeProfit : ORDER_TYPE.StopLoss, parsed, existing === 0n ? params.executionFee : 0n, `${existing === 0n ? "Set" : "Move"} ${name.toLowerCase()}`, size);
       setEdit(null);
-      return `${name} ${existing === 0n ? "set" : "moved"} to ${fmtPrice(parsed, dp)} on ${symbol}.`;
+      return `${name} ${existing === 0n ? "set" : "moved"} to ${fmtPrice(parsed, dp)} on ${symbol}${part < 100 ? `, closing ${part}% of the position` : ""}.`;
     });
   };
   const removeTrigger = (type: "tp" | "sl") => {
@@ -230,6 +272,28 @@ function PositionRow({
     run(async (api) => {
       await submitAddMargin(withCtx(api), pos.priceId, amount, `Add margin to ${symbol}`);
       return `${fmtUsdc(amount)} ${cfg.collateralSymbol} added to the ${symbol} margin.`;
+    });
+  };
+  const startTrail = (args: { distanceBps: number; size: bigint; activation: bigint }) => {
+    setSheet(null);
+    const pct = fmtPercent(args.distanceBps / 10_000, 2);
+    run(async (api) => {
+      const ctx = withCtx(api);
+      if (!trailing?.approved) {
+        if (!wallet.address) throw new UserFacingError("Connect the wallet that owns your trading account: it allows trailing stops once.");
+        await approveTrailing(ctx, wallet.address);
+      }
+      await setTrail(ctx, { marketId: pos.priceId, ...args }, `Trail the ${symbol} stop ${pct} behind`);
+      trailing?.refetch();
+      return `Trailing stop on ${symbol}: ${pct} behind the best price. The keeper moves the stop-loss as the market moves your way; it never moves back.`;
+    });
+  };
+  const removeTrail = () => {
+    setSheet(null);
+    run(async (api) => {
+      await clearTrail(withCtx(api), pos.priceId, `Stop trailing ${symbol}`);
+      trailing?.refetch();
+      return `${symbol} no longer trails. Its stop-loss stays where it is.`;
     });
   };
   const cancelClose = () => {
@@ -298,8 +362,10 @@ function PositionRow({
             <span className="w-5 text-xs text-long">TP</span>
             <TriggerCell
               kind="tp" current={tp} editing={editingFor("tp")} dp={dp} symbol={symbol} canEdit={canTrade && !settled} disabled={tx.busy} error={edit?.type === "tp" ? editError : null}
-              onEdit={() => setEdit({ marketId, type: "tp", text: tp ? toInputString(tp, PRICE_DECIMALS, dp) : "" })}
-              onText={(text) => setEdit({ marketId, type: "tp", text })}
+              currentPart={tpPart} part={edit?.type === "tp" && edit.marketId === marketId ? (edit.part ?? tpPart) : tpPart}
+              onPart={(part) => edit && setEdit({ ...edit, part })}
+              onEdit={() => setEdit({ marketId, type: "tp", text: tp ? toInputString(tp, PRICE_DECIMALS, dp) : "", part: tpPart })}
+              onText={(text) => setEdit({ marketId, type: "tp", text, part: edit?.part ?? tpPart })}
               onSave={saveTrigger} onRemove={() => removeTrigger("tp")} onCancel={() => setEdit(null)}
             />
           </span>
@@ -307,10 +373,17 @@ function PositionRow({
             <span className="w-5 text-xs text-short">SL</span>
             <TriggerCell
               kind="sl" current={sl} editing={editingFor("sl")} dp={dp} symbol={symbol} canEdit={canTrade && !settled} disabled={tx.busy} error={edit?.type === "sl" ? editError : null}
-              onEdit={() => setEdit({ marketId, type: "sl", text: sl ? toInputString(sl, PRICE_DECIMALS, dp) : "" })}
-              onText={(text) => setEdit({ marketId, type: "sl", text })}
+              currentPart={slPart} part={edit?.type === "sl" && edit.marketId === marketId ? (edit.part ?? slPart) : slPart}
+              onPart={(part) => edit && setEdit({ ...edit, part })}
+              onEdit={() => setEdit({ marketId, type: "sl", text: sl ? toInputString(sl, PRICE_DECIMALS, dp) : "", part: slPart })}
+              onText={(text) => setEdit({ marketId, type: "sl", text, part: edit?.part ?? slPart })}
               onSave={saveTrigger} onRemove={() => removeTrigger("sl")} onCancel={() => setEdit(null)}
             />
+            {trail ? (
+              <span className="tag" data-tone="accent" title={`Trails ${fmtPercent(trail.distanceBps / 10_000, 2)} behind the best price${trail.best > 0n ? ` (${fmtPrice(trail.best, dp)} so far)` : ""}`} data-testid="trail-tag">
+                Trail {fmtPercent(trail.distanceBps / 10_000, trail.distanceBps % 100 === 0 ? 0 : 1)}
+              </span>
+            ) : null}
           </span>
           {edit && edit.marketId === marketId && editError ? <span className="max-w-[16rem] whitespace-normal text-xs text-short">{editError}</span> : null}
         </div>
@@ -338,6 +411,11 @@ function PositionRow({
               <button type="button" className="btn btn-sm" disabled={tx.busy || !instrument} onClick={() => setSheet("close")} data-testid="close-position">
                 Close
               </button>
+              {trailing?.available ? (
+                <button type="button" className="btn btn-sm" disabled={tx.busy || !instrument} onClick={() => setSheet("trail")} title="A stop-loss that follows the best price" data-testid="trail-position">
+                  {trail ? "Trailing" : "Trail"}
+                </button>
+              ) : null}
               <button type="button" className="btn btn-sm btn-ghost" disabled={value.pnl === null} onClick={openShare} title="Share this position as an image" data-testid="position-share">
                 Share
               </button>
@@ -353,25 +431,102 @@ function PositionRow({
         {sheet === "margin" && instrument ? (
           <AddMarginSheet view={view} instrument={instrument} price={price} balance={balance} busy={tx.busy} onClose={() => setSheet(null)} onConfirm={addMargin} />
         ) : null}
+        {sheet === "trail" && instrument && trailing ? (
+          <TrailSheet
+            view={view}
+            instrument={instrument}
+            price={price}
+            orders={orders}
+            trail={trail}
+            approved={trailing.approved}
+            busy={tx.busy}
+            onClose={() => setSheet(null)}
+            onConfirm={startTrail}
+            onRemove={removeTrail}
+          />
+        ) : null}
       </td>
     </tr>
+  );
+}
+
+/** Running TWAPs on the trading account: progress, the next slice, and a way to stop each. */
+function TwapList({
+  twaps,
+  canTrade,
+  busy,
+  chainNow,
+  onStop,
+  onSelectMarket,
+}: {
+  twaps: readonly (readonly [string, Twap])[];
+  canTrade: boolean;
+  busy: boolean;
+  chainNow: number;
+  onStop: (marketId: Hex, symbol: string) => void;
+  onSelectMarket: (instrument: Instrument) => void;
+}) {
+  const { config: cfg } = useApp();
+  const { byId } = useMarketData();
+  if (twaps.length === 0) return null;
+  return (
+    <ul className="divide-y divide-line border-b border-line" data-testid="twap-list">
+      {twaps.map(([m, t]) => {
+        const instrument = byId.get(m);
+        const symbol = instrument?.symbol ?? "Unknown";
+        const wait = t.nextAt - chainNow;
+        const pct = Math.round((t.done / t.slices) * 100);
+        return (
+          <li key={m} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-3 py-2.5 text-[0.8125rem]" data-testid={`twap-${symbol}`}>
+            <div className="min-w-0">
+              <span className="chip mr-1.5 align-middle">TWAP</span>
+              <SideTag isLong={t.isLong} />{" "}
+              <button type="button" className="font-semibold hover:text-accent" disabled={!instrument} onClick={() => instrument && onSelectMarket(instrument)}>
+                {symbol}
+              </button>{" "}
+              <span className="num text-muted" data-testid="twap-progress">
+                {t.done} of {t.slices} slices
+              </span>
+              <span className="num block text-xs text-faint">
+                {fmtUsdc(t.sliceSize)} {cfg.collateralSymbol} each ({fmtUsdc(t.sliceMargin)} margin), every {fmtInterval(t.interval)} · next {wait > 0 ? `in ${fmtAge(wait)}` : "due now"}
+                {t.refusals > 0 ? <span className="text-warn"> · last {t.refusals === 1 ? "slice was" : `${t.refusals} slices were`} refused (3 in a row stop it)</span> : null}
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="h-1.5 w-20 overflow-hidden rounded-full bg-line" role="progressbar" aria-valuemin={0} aria-valuemax={t.slices} aria-valuenow={t.done} aria-label={`${symbol} TWAP progress`}>
+                <span className={`block h-full ${t.isLong ? "bg-long" : "bg-short"}`} style={{ width: `${pct}%` }} />
+              </span>
+              {canTrade ? (
+                <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onStop(m as Hex, symbol)} data-testid="stop-twap">
+                  Stop
+                </button>
+              ) : null}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
 function OrdersTable({
   orders,
   positions,
+  twaps,
   tx,
   canTrade,
   chainNow,
   onSelectMarket,
+  onStopTwap,
 }: {
   orders: OrderRow[];
   positions: readonly PositionView[];
+  twaps: readonly (readonly [string, Twap])[];
   tx: TxHandle;
   canTrade: boolean;
   chainNow: number;
   onSelectMarket: (instrument: Instrument) => void;
+  onStopTwap: (marketId: Hex, symbol: string) => void;
 }) {
   const { config: cfg } = useApp();
   const { byId, prices } = useMarketData();
@@ -379,7 +534,14 @@ function OrdersTable({
   const sym = cfg.collateralSymbol;
   const sorted = useMemo(() => [...orders].sort((a, b) => (a.id < b.id ? 1 : -1)), [orders]);
 
-  if (sorted.length === 0) return <Empty>No open orders. Limit orders, take-profits, stop-losses and pending keeper orders appear here.</Empty>;
+  const twapList = <TwapList twaps={twaps} canTrade={canTrade} busy={tx.busy} chainNow={chainNow} onStop={onStopTwap} onSelectMarket={onSelectMarket} />;
+  if (sorted.length === 0) {
+    return twaps.length > 0 ? (
+      twapList
+    ) : (
+      <Empty>No open orders. Limit orders, take-profits, stop-losses, TWAPs and pending keeper orders appear here.</Empty>
+    );
+  }
 
   const cancel = (row: OrderRow) => {
     void tx.run(async (api) => {
@@ -391,6 +553,8 @@ function OrdersTable({
   };
 
   return (
+    <>
+    {twapList}
     <div className="relative overflow-x-auto">
       <table className="data-table">
         <thead>
@@ -475,6 +639,7 @@ function OrdersTable({
         </tbody>
       </table>
     </div>
+    </>
   );
 }
 
@@ -707,7 +872,7 @@ export const AccountTables = forwardRef<
   const { byId, prices, params } = useMarketData();
   const tx = useTx({ autoDismissMs: 10000 });
   const [tab, setTab] = useState<Tab>("positions");
-  const [bulk, setBulk] = useState<null | "close" | "cancel">(null);
+  const [bulk, setBulk] = useState<null | "close" | "cancel" | "reset">(null);
   const bulkContext = useTradeContext();
   const [bulkSettings] = useLocalStore(tradeSettings);
   const [edit, setEdit] = useState<EditState>(null);
@@ -725,6 +890,12 @@ export const AccountTables = forwardRef<
 
   const positions = account?.positions ?? [];
   const orders = account?.orders ?? [];
+  // Trailing stops work for positions in the trading account (instant trading), where a contract can be an agent.
+  const trailing = useTrailing(view.instant ? view.address : undefined, positions.map((p) => p.position.priceId));
+  // TWAPs run from the trading account too; one per market, so every listed market is read.
+  const marketIds = useMemo(() => [...byId.keys()] as Hex[], [byId]);
+  const twapState = useTwaps(view.instant ? view.address : undefined, cfg.twapOrders ? marketIds : []);
+  const twaps = useMemo(() => [...twapState.twaps.entries()], [twapState.twaps]);
   const equity = useMemo(() => {
     if (!account || !params) return null;
     let total = account.balance;
@@ -737,12 +908,82 @@ export const AccountTables = forwardRef<
 
   const tabs: { key: Tab; label: string }[] = [
     { key: "positions", label: `Positions${account ? ` (${positions.length})` : ""}` },
-    { key: "orders", label: `Orders${account ? ` (${orders.length})` : ""}` },
+    { key: "orders", label: `Orders${account ? ` (${orders.length + twaps.length})` : ""}` },
     { key: "history", label: "History" },
     { key: "alerts", label: "Alerts" },
   ];
 
   const needsAccount = tab !== "alerts" && !view.address;
+
+  /** One close per open position: a keeper Close order (worst price at the slippage setting), or a direct close at
+   *  the settlement price for a settled dated market. Positions already closing are skipped. */
+  const closeCalls = (): BatchCall[] => {
+    const bps = BigInt(bulkSettings.slippageBps);
+    const calls: BatchCall[] = [];
+    for (const p of positions) {
+      if (p.position.closeOrderId !== 0n) continue;
+      const inst = byId.get(p.position.priceId.toLowerCase());
+      if (!inst) continue;
+      const ref = prices.get(inst.id)?.reference ?? null;
+      const worst = ref ? (p.position.isLong ? withSlippageDown(ref.bid, bps) : withSlippageUp(ref.ask, bps)) : 0n;
+      calls.push(
+        inst.settlementPrice !== 0n
+          ? { functionName: "closePosition", args: [inst.id, 0n, 0n, []], label: `Close ${inst.symbol}` }
+          : { functionName: "setTriggerOrder", args: [inst.id, ORDER_TYPE.Close, worst, 0n], label: `Close ${inst.symbol}` },
+      );
+    }
+    return calls;
+  };
+
+  const stopTwap = (marketId: Hex, symbol: string) => {
+    void tx.run(async (api) => {
+      const ctx = bulkContext(api);
+      if (!ctx) throw new UserFacingError("Connect your wallet first.");
+      await cancelTwap(ctx, marketId, `Stop the ${symbol} TWAP`);
+      twapState.refetch();
+      return `${symbol} TWAP stopped. Slices already placed stay; a resting one can be cancelled below.`;
+    });
+  };
+
+  /** Stops every running TWAP first, so none places a slice while the rest is being cancelled or closed. */
+  const stopAllTwaps = async (ctx: NonNullable<ReturnType<typeof bulkContext>>): Promise<number> => {
+    if (!ctx.session) return 0;
+    for (const [m] of twaps) await cancelTwap(ctx, m as Hex, `Stop the ${byId.get(m)?.symbol ?? "market"} TWAP`);
+    if (twaps.length > 0) twapState.refetch();
+    return twaps.length;
+  };
+
+  /**
+   * Practice: start over. Cancels resting entry orders, closes every position, and adds test funds; history and the
+   * journal stay. With instant trading the cancels and closes are one transaction.
+   */
+  const startOver = () => {
+    setBulk(null);
+    if (!params) return;
+    void tx.run(async (api) => {
+      const ctx = bulkContext(api);
+      if (!ctx) throw new UserFacingError("Connect your wallet first.");
+      const stopped = await stopAllTwaps(ctx);
+      const entries = orders.filter((o) => isOpenOrder(o.order.orderType));
+      let closes = 0;
+      if (ctx.session && cfg.oracleMode === "publisher") {
+        const calls: BatchCall[] = [...entries.map((o) => ({ functionName: "cancelOrder" as const, args: [o.id], label: `Cancel order #${o.id}` })), ...closeCalls()];
+        closes = calls.length - entries.length;
+        if (calls.length > 0) await submitBatch(ctx, "Start over: cancel orders and close positions", calls);
+      } else {
+        for (const o of entries) await submitCancel(ctx, o.id, `Cancel order #${o.id}`);
+        for (const p of positions) {
+          if (p.position.closeOrderId !== 0n) continue;
+          const inst = byId.get(p.position.priceId.toLowerCase());
+          if (!inst) continue;
+          await closeFlow(ctx, { instrument: inst, view: p, reference: prices.get(inst.id)?.reference ?? null, slippageBps: bulkSettings.slippageBps, executionFee: params.executionFee, balance: account?.balance });
+          closes += 1;
+        }
+      }
+      await submitTestMint(ctx, `Add test ${cfg.collateralSymbol}`);
+      return `Started over: ${stopped > 0 ? `${stopped} TWAP${stopped === 1 ? "" : "s"} stopped, ` : ""}${entries.length} order${entries.length === 1 ? "" : "s"} cancelled, ${closes} close${closes === 1 ? "" : "s"} sent (the keeper fills them at the next price), ${fmtUsdc(TEST_MINT_AMOUNT, 0)} ${cfg.collateralSymbol} added. Your history and journal stay.`;
+    });
+  };
 
   /** Close every open position (keeper orders where needed), one after another. */
   const closeAll = () => {
@@ -753,20 +994,7 @@ export const AccountTables = forwardRef<
       if (!ctx) throw new UserFacingError("Connect your wallet first.");
       // Instant trading: every close in one transaction from the trading account (all or nothing, no pop-up).
       if (ctx.session && cfg.oracleMode === "publisher") {
-        const bps = BigInt(bulkSettings.slippageBps);
-        const calls: BatchCall[] = [];
-        for (const p of positions) {
-          if (p.position.closeOrderId !== 0n) continue;
-          const inst = byId.get(p.position.priceId.toLowerCase());
-          if (!inst) continue;
-          const ref = prices.get(inst.id)?.reference ?? null;
-          const worst = ref ? (p.position.isLong ? withSlippageDown(ref.bid, bps) : withSlippageUp(ref.ask, bps)) : 0n;
-          calls.push(
-            inst.settlementPrice !== 0n
-              ? { functionName: "closePosition", args: [inst.id, 0n, 0n, []], label: `Close ${inst.symbol}` }
-              : { functionName: "setTriggerOrder", args: [inst.id, ORDER_TYPE.Close, worst, 0n], label: `Close ${inst.symbol}` },
-          );
-        }
+        const calls = closeCalls();
         await submitBatch(ctx, `Close ${calls.length} position${calls.length === 1 ? "" : "s"}`, calls);
         return `Sent ${calls.length} close${calls.length === 1 ? "" : "s"} in one transaction. Keeper orders fill at the next price.`;
       }
@@ -796,8 +1024,9 @@ export const AccountTables = forwardRef<
       const ctx = bulkContext(api);
       if (!ctx) throw new UserFacingError("Connect your wallet first.");
       if (ctx.session) {
-        await submitBatch(ctx, `Cancel ${orders.length} orders`, orders.map((o) => ({ functionName: "cancelOrder", args: [o.id], label: `Cancel order #${o.id}` })));
-        return `Cancelled ${orders.length} order${orders.length === 1 ? "" : "s"} in one transaction. Escrow refunded.`;
+        const stopped = await stopAllTwaps(ctx);
+        if (orders.length > 0) await submitBatch(ctx, `Cancel ${orders.length} orders`, orders.map((o) => ({ functionName: "cancelOrder", args: [o.id], label: `Cancel order #${o.id}` })));
+        return `${stopped > 0 ? `Stopped ${stopped} TWAP${stopped === 1 ? "" : "s"}; c` : "C"}ancelled ${orders.length} order${orders.length === 1 ? "" : "s"}${orders.length > 1 ? " in one transaction" : ""}. Escrow refunded.`;
       }
       for (const o of orders) await submitCancel(ctx, o.id, `Cancel order #${o.id}`);
       return `Cancelled ${orders.length} order${orders.length === 1 ? "" : "s"}. Escrow refunded.`;
@@ -819,9 +1048,14 @@ export const AccountTables = forwardRef<
             Close all
           </button>
         ) : null}
-        {view.canTrade && tab === "orders" && orders.length > 1 ? (
+        {view.canTrade && tab === "orders" && orders.length + twaps.length > 1 ? (
           <button type="button" className="btn btn-sm" disabled={tx.busy} onClick={() => setBulk("cancel")} data-testid="cancel-all">
             Cancel all
+          </button>
+        ) : null}
+        {view.canTrade && cfg.collateralIsTest && (positions.length > 0 || orders.length > 0 || twaps.length > 0) && (tab === "positions" || tab === "orders") ? (
+          <button type="button" className="btn btn-sm btn-ghost" disabled={tx.busy} onClick={() => setBulk("reset")} title="Practice: close everything, cancel orders, add test funds" data-testid="start-over">
+            Start over
           </button>
         ) : null}
         {view.watching && view.address ? (
@@ -837,22 +1071,31 @@ export const AccountTables = forwardRef<
       {tx.state.phase !== "idle" ? <TxStatus state={tx.state} onDismiss={tx.reset} className="m-3 mb-0" /> : null}
       {bulk ? (
         <ConfirmDialog
-          title={bulk === "close" ? `Close all ${positions.length} positions?` : `Cancel all ${orders.length} orders?`}
+          title={bulk === "reset" ? "Start over?" : bulk === "close" ? `Close all ${positions.length} positions?` : `Cancel all ${orders.length + twaps.length} orders?`}
           lines={
-            bulk === "close"
-              ? positions.map((p) => ({ label: byId.get(p.position.priceId.toLowerCase())?.symbol ?? "Position", value: `${p.position.isLong ? "Long" : "Short"} ${fmtUsdc(p.position.size)}` }))
-              : [{ label: "Orders", value: String(orders.length) }]
+            bulk === "reset"
+              ? [
+                  ...(twaps.length > 0 ? [{ label: "TWAPs stopped", value: String(twaps.length) }] : []),
+                  { label: "Positions closed", value: String(positions.filter((p) => p.position.closeOrderId === 0n).length) },
+                  { label: "Entry orders cancelled", value: String(orders.filter((o) => isOpenOrder(o.order.orderType)).length) },
+                  { label: "Test funds added", value: `${fmtUsdc(TEST_MINT_AMOUNT, 0)} ${cfg.collateralSymbol}` },
+                ]
+              : bulk === "close"
+                ? positions.map((p) => ({ label: byId.get(p.position.priceId.toLowerCase())?.symbol ?? "Position", value: `${p.position.isLong ? "Long" : "Short"} ${fmtUsdc(p.position.size)}` }))
+                : [{ label: "Orders", value: String(orders.length) }, ...(twaps.length > 0 ? [{ label: "TWAPs stopped", value: String(twaps.length) }] : [])]
           }
           note={
-            bulk === "close"
-              ? view.instant
-                ? "Sent from your trading account, no wallet pop-ups."
-                : "Your wallet asks once per position."
-              : "Take-profits and stop-losses are cancelled too, so open positions lose their protection."
+            bulk === "reset"
+              ? "Practice money only. Your trade history, journal and stats stay; closes fill at the next price."
+              : bulk === "close"
+                ? view.instant
+                  ? "Sent from your trading account, no wallet pop-ups."
+                  : "Your wallet asks once per position."
+                : `Take-profits and stop-losses are cancelled too, so open positions lose their protection.${twaps.length > 0 ? " Running TWAPs stop." : ""}`
           }
-          confirmLabel={bulk === "close" ? "Close all" : "Cancel all"}
+          confirmLabel={bulk === "reset" ? "Start over" : bulk === "close" ? "Close all" : "Cancel all"}
           tone="short"
-          onConfirm={bulk === "close" ? closeAll : cancelAll}
+          onConfirm={bulk === "reset" ? startOver : bulk === "close" ? closeAll : cancelAll}
           onCancel={() => setBulk(null)}
         />
       ) : null}
@@ -908,6 +1151,7 @@ export const AccountTables = forwardRef<
                     edit={edit}
                     setEdit={setEdit}
                     onSelectMarket={onSelectMarket}
+                    trailing={trailing.available ? trailing : null}
                   />
                 ))}
               </tbody>
@@ -915,7 +1159,16 @@ export const AccountTables = forwardRef<
           </div>
         )
       ) : (
-        <OrdersTable orders={orders} positions={positions} tx={tx} canTrade={view.canTrade} chainNow={chainNow} onSelectMarket={onSelectMarket} />
+        <OrdersTable
+          orders={orders}
+          positions={positions}
+          twaps={twaps}
+          tx={tx}
+          canTrade={view.canTrade}
+          chainNow={chainNow}
+          onSelectMarket={onSelectMarket}
+          onStopTwap={stopTwap}
+        />
       )}
     </section>
   );

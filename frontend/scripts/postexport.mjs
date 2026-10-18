@@ -92,6 +92,7 @@ writeFileSync(
       houseVaultAddress: "0x…",
       agentFactoryAddress: "0x…",
       trailingStopsAddress: "0x…",
+      twapOrdersAddress: "0x…",
       rewardTokenAddress: "0x…",
       usdcAddress: "0x3600000000000000000000000000000000000000",
       rpcUrl: "https://rpc.testnet.arc.io",

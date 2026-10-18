@@ -29,14 +29,14 @@ import { krakenSource, type Instrument } from "@/lib/instruments";
 import { RESOLUTIONS, fetchInstrumentCandles, resolutionInfo, type Candle, type Resolution } from "@/lib/kraken";
 import { indicatorSettings } from "@/lib/storage";
 
-export type ChartLineTone = "entry" | "liq" | "tp" | "sl" | "order" | "draft" | "alert" | "settle";
+export type ChartLineTone = "entry" | "liq" | "tp" | "sl" | "order" | "draft" | "alert" | "settle" | "drawn";
 export type ChartLine = { key: string; price: number; title: string; tone: ChartLineTone };
 /** One of your fills drawn on the candles: entries as arrows, exits and liquidations as circles. */
 export type ChartMarker = { id: string; time: number; kind: "open" | "close" | "liquidation"; isLong: boolean | null; text: string };
 
 /** What a click on the chart sets. */
-export type PickTarget = "limit" | "tp" | "sl" | "alert";
-export const PICK_LABELS: Record<PickTarget, string> = { limit: "limit price", tp: "take-profit", sl: "stop-loss", alert: "alert" };
+export type PickTarget = "limit" | "tp" | "sl" | "alert" | "line";
+export const PICK_LABELS: Record<PickTarget, string> = { limit: "limit price", tp: "take-profit", sl: "stop-loss", alert: "alert", line: "line" };
 
 const COLORS = {
   text: "#a0a9b6",
@@ -65,6 +65,7 @@ const LINE_STYLE: Record<ChartLineTone, { color: string; style: LineStyle }> = {
   draft: { color: COLORS.text, style: LineStyle.Dotted },
   alert: { color: COLORS.vwap, style: LineStyle.SparseDotted },
   settle: { color: COLORS.sma, style: LineStyle.Solid },
+  drawn: { color: COLORS.text, style: LineStyle.Dashed },
 };
 
 type Legend = { open: number; high: number; low: number; close: number; volume: number; time: number } | null;
@@ -186,6 +187,8 @@ export function PriceChart({
   indicatorsHidden,
   chainNow,
   markers = [],
+  drawnCount = 0,
+  onClearDrawn,
 }: {
   instrument: Instrument;
   price: MarketPrice;
@@ -200,6 +203,9 @@ export function PriceChart({
   /** Temporarily hides every indicator (keyboard shortcut I). */
   indicatorsHidden: boolean;
   chainNow: number;
+  /** Lines the trader drew on this market; with a clear control when there are any. */
+  drawnCount?: number;
+  onClearDrawn?: () => void;
 }) {
   const cfg = useAppConfig();
   const ids = useId();
@@ -560,9 +566,14 @@ export function PriceChart({
               title={`Click the chart to set the ${PICK_LABELS[target]}`}
               onClick={() => onPickChange(pick === target ? null : target)}
             >
-              {target === "limit" ? "Limit" : target === "tp" ? "TP" : target === "sl" ? "SL" : "Alert"}
+              {target === "limit" ? "Limit" : target === "tp" ? "TP" : target === "sl" ? "SL" : target === "line" ? "Line" : "Alert"}
             </button>
           ))}
+          {drawnCount > 0 && onClearDrawn ? (
+            <button type="button" className="chip" title="Remove the lines you drew on this market" onClick={onClearDrawn} data-testid="clear-lines">
+              Clear {drawnCount} line{drawnCount === 1 ? "" : "s"}
+            </button>
+          ) : null}
         </div>
         <div className="relative ml-auto flex items-center gap-1" ref={menuRef}>
           <button type="button" className="chip" aria-expanded={menuOpen} aria-haspopup="dialog" onClick={() => setMenuOpen((v) => !v)}>
