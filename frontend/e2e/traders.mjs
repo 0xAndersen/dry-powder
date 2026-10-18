@@ -52,9 +52,10 @@ export async function startTraders({ addresses, count, actionsPerSecond = 3, qui
 
     if (positions.length > 0 && (roll < 0.42 || positions.length >= 3)) {
       const view = pick(positions);
-      // Half close through the keeper, half directly against the price already on-chain.
-      if (Math.random() < 0.5) await send(trader, addresses.engine, engineAbi, "setTriggerOrder", [view.position.priceId, 3, 0n]);
-      else await send(trader, addresses.engine, engineAbi, "closePosition", [view.position.priceId, 0n, []]);
+      // Half close through the keeper, half directly against the price already on-chain; a third of them only part.
+      const size = Math.random() < 0.33 ? view.position.size / 2n : 0n;
+      if (Math.random() < 0.5) await send(trader, addresses.engine, engineAbi, "setTriggerOrder", [view.position.priceId, 3, 0n, size]);
+      else await send(trader, addresses.engine, engineAbi, "closePosition", [view.position.priceId, size, 0n, []]);
       return;
     }
     if (positions.length > 0 && roll < 0.55) {
@@ -62,7 +63,22 @@ export async function startTraders({ addresses, count, actionsPerSecond = 3, qui
       const pos = view.position;
       const up = (pos.entryPrice * 1012n) / 1000n;
       const down = (pos.entryPrice * 990n) / 1000n;
-      await send(trader, addresses.engine, engineAbi, "setTriggerOrder", [pos.priceId, 1, pos.isLong ? up : down]);
+      // Take profit on everything, or on half.
+      await send(trader, addresses.engine, engineAbi, "setTriggerOrder", [pos.priceId, 1, pos.isLong ? up : down, Math.random() < 0.5 ? 0n : pos.size / 2n]);
+      return;
+    }
+    if (positions.length > 0 && roll < 0.62) {
+      const pos = pick(positions).position;
+      // Add to a winner's side through the keeper, or top up the margin of a loser (refused while in profit).
+      if (Math.random() < 0.5) {
+        const m = live.find((x) => x.id.toLowerCase() === pos.priceId.toLowerCase());
+        if (!m) return;
+        const margin = usd(20 + Math.random() * 100);
+        const trigger = pos.isLong ? (m.price.ask * 1005n) / 1000n : (m.price.bid * 995n) / 1000n;
+        await send(trader, addresses.engine, engineAbi, "createLimitOrder", [{ priceId: m.id, isLong: pos.isLong, margin, size: margin * 5n, triggerPrice: trigger, takeProfit: 0n, stopLoss: 0n, stopEntry: false }]);
+      } else {
+        await send(trader, addresses.engine, engineAbi, "addMargin", [pos.priceId, usd(10 + Math.random() * 40)]);
+      }
       return;
     }
 
@@ -77,9 +93,13 @@ export async function startTraders({ addresses, count, actionsPerSecond = 3, qui
     const leverage = Math.random() < 0.25 ? maxLev : Math.max(2, Math.round(Math.random() * Math.min(25, maxLev)));
     const margin = usd(20 + Math.random() * 380);
     const size = margin * BigInt(leverage);
-    if (Math.random() < 0.6) {
+    if (Math.random() < 0.1) {
+      // A breakout entry 0.3% beyond the market.
+      const trigger = isLong ? (m.price.ask * 1003n) / 1000n : (m.price.bid * 997n) / 1000n;
+      await send(trader, addresses.engine, engineAbi, "createLimitOrder", [{ priceId: m.id, isLong, margin, size, triggerPrice: trigger, takeProfit: 0n, stopLoss: 0n, stopEntry: true }]);
+    } else if (Math.random() < 0.6) {
       const trigger = isLong ? (m.price.ask * 1005n) / 1000n : (m.price.bid * 995n) / 1000n;
-      await send(trader, addresses.engine, engineAbi, "createLimitOrder", [{ priceId: m.id, isLong, margin, size, triggerPrice: trigger, takeProfit: 0n, stopLoss: 0n }]);
+      await send(trader, addresses.engine, engineAbi, "createLimitOrder", [{ priceId: m.id, isLong, margin, size, triggerPrice: trigger, takeProfit: 0n, stopLoss: 0n, stopEntry: false }]);
     } else {
       await send(trader, addresses.engine, engineAbi, "openPosition", [{ priceId: m.id, isLong, margin, size, acceptablePrice: 0n, takeProfit: 0n, stopLoss: 0n }, []]);
     }

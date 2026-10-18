@@ -10,28 +10,30 @@ import { orderTracker } from "./order-tracker";
 export async function openFlow(ctx: ActionContext, req: OpenRequest): Promise<string> {
   const { instrument, isLong } = req;
   const side = isLong ? "long" : "short";
-  const label = req.type === "limit" ? `Place limit ${side} ${instrument.symbol}` : `${isLong ? "Buy" : "Sell"} ${instrument.symbol}`;
+  const label =
+    req.type === "limit" ? `Place limit ${side} ${instrument.symbol}` : req.type === "stop" ? `Place stop ${side} ${instrument.symbol}` : `${isLong ? "Buy" : "Sell"} ${instrument.symbol}`;
   const result = await submitOpen(ctx, req, label);
   if (result.orderId === null) return `${isLong ? "Long" : "Short"} ${instrument.symbol} opened.`;
   orderTracker.track({
     orderId: result.orderId,
     marketId: instrument.id,
     symbol: instrument.symbol,
-    action: req.type === "limit" ? "limit" : "open",
+    action: req.type === "market" ? "open" : "limit",
     isLong,
   });
-  return req.type === "limit"
-    ? `Limit ${side} #${result.orderId} is resting. A keeper fills it when the price is reached.`
-    : `Market ${side} sent as order #${result.orderId}. A keeper fills it at the next oracle price.`;
+  if (req.type === "limit") return `Limit ${side} #${result.orderId} is resting. A keeper fills it when the price is reached.`;
+  if (req.type === "stop") return `Stop ${side} #${result.orderId} is resting. A keeper fills it once the market breaks ${isLong ? "up" : "down"} through the price.`;
+  return `Market ${side} sent as order #${result.orderId}. A keeper fills it at the next oracle price.`;
 }
 
 export async function closeFlow(
   ctx: ActionContext,
-  args: { instrument: Instrument; view: PositionView; reference: Quote | null; slippageBps: number; executionFee: bigint; balance?: bigint },
+  args: { instrument: Instrument; view: PositionView; reference: Quote | null; slippageBps: number; executionFee: bigint; balance?: bigint; size?: bigint },
 ): Promise<string> {
   const { instrument, view } = args;
   const pos = view.position;
   const settled = instrument.settlementPrice !== 0n;
+  const part = args.size !== undefined && args.size > 0n && args.size < pos.size;
   const result = await submitClose(
     ctx,
     {
@@ -44,11 +46,12 @@ export async function closeFlow(
       // A wallet that cannot cover the keeper's fee closes directly against the on-chain price instead.
       direct: pos.closeOrderId === 0n && args.balance !== undefined && args.balance < args.executionFee,
       highLeverage: needsKeeperOrders(pos.size, pos.margin),
+      size: part ? args.size : 0n,
     },
-    settled ? `Settle and close ${instrument.symbol}` : `Close ${instrument.symbol}`,
+    settled ? `Settle and close ${instrument.symbol}` : part ? `Close part of ${instrument.symbol}` : `Close ${instrument.symbol}`,
   );
   if (result.direct) {
-    return settled ? `${instrument.symbol} position closed at the settlement price.` : `${instrument.symbol} position closed.`;
+    return settled ? `${instrument.symbol} position closed at the settlement price.` : part ? `Part of the ${instrument.symbol} position closed.` : `${instrument.symbol} position closed.`;
   }
   if (result.orderId !== null) {
     orderTracker.track({ orderId: result.orderId, marketId: instrument.id, symbol: instrument.symbol, action: "close", isLong: pos.isLong });

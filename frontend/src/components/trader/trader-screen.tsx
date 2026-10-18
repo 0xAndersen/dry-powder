@@ -9,6 +9,7 @@ import { PnlCurve } from "@/components/portfolio/pnl-curve";
 import { Journal } from "@/components/portfolio/journal";
 import { useApp } from "@/components/providers";
 import { Avatar } from "@/components/social/avatar";
+import { ShareSheet } from "@/components/social/share-sheet";
 import { FollowButton, useIsMe } from "@/components/social/trader-name";
 import { useAccountData } from "@/hooks/use-account-data";
 import { useLocalStore } from "@/hooks/use-local-store";
@@ -19,6 +20,8 @@ import { DAY, allTime, closedTrades, continueState, roiOf, winRateOf } from "@/l
 import { USDC_DECIMALS, fmtAge, fmtCompact, fmtDateTime, fmtPercent, fmtPrice, fmtUsdc, shortAddress, usdcToNum } from "@/lib/format";
 import { valuePosition } from "@/lib/position";
 import { RISK_TEXT, riskTone } from "@/lib/risk-tone";
+import type { ShareCard } from "@/lib/share-card";
+import { closedTradeCard, profileCard, profileLink, shareText, type CardContext } from "@/lib/share-data";
 import { follows, isFollowing, nicknameOf, setNickname, toggleFollow } from "@/lib/social";
 import { tradeStats } from "@/lib/trade-stats";
 
@@ -65,6 +68,7 @@ function Profile({ address }: { address: Address }) {
   const [copied, setCopied] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [share, setShare] = useState<{ card: ShareCard; title: string } | null>(null);
   const sym = cfg.collateralSymbol;
 
   const since = cfg.overrides.includes("engine") ? null : cfg.deployedAt;
@@ -121,6 +125,18 @@ function Profile({ address }: { address: Address }) {
   const roi = all ? roiOf(all) : stats.roi;
   const volume = all ? all.volume : stats.volume;
   const liquidations = all ? all.liquidations : stats.liquidations;
+  const cardContext: CardContext = {
+    market: (id) => byId.get(id.toLowerCase()),
+    unit: sym,
+    chainId: cfg.chainId,
+    trader: nickname ?? shortAddress(address),
+    href: profileUrl,
+  };
+  const shareProfile = () =>
+    setShare({
+      card: profileCard({ net, roi, trades: tradesCount, winRate, volume, liquidations }, all ? "All time" : "Recent trades", cardContext),
+      title: me ? "Share your profile" : "Share this profile",
+    });
 
   return (
     <div className="flex flex-col gap-2" data-testid="trader-profile">
@@ -180,8 +196,8 @@ function Profile({ address }: { address: Address }) {
           <AppLink route="trade" params={{ account: address }} className="btn btn-sm" title="Open the trade screen read-only on this account">
             Watch in Trade
           </AppLink>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => copy(profileUrl, "link")}>
-            {copied === "link" ? "Link copied" : "Share profile"}
+          <button type="button" className="btn btn-sm btn-ghost" onClick={shareProfile} data-testid="share-profile">
+            Share profile
           </button>
           <a className="btn btn-sm btn-ghost" href={`${cfg.explorerUrl}/address/${address}`} target="_blank" rel="noreferrer">
             Explorer
@@ -297,7 +313,9 @@ function Profile({ address }: { address: Address }) {
         )}
       </section>
 
-      <Journal trades={trades} readOnly notes={false} title="Recent trades" />
+      <Journal trades={trades} readOnly notes={false} title="Recent trades" onShare={(t) => setShare({ card: closedTradeCard(t, cardContext), title: "Share this trade" })} />
+
+      {share ? <ShareSheet card={share.card} title={share.title} text={shareText(share.card)} link={profileLink(address)} onClose={() => setShare(null)} /> : null}
       {!covered && feed.status.loadedFromTime > 0 && feed.status.pending === 0 ? (
         <p className="px-1 text-center text-xs text-faint">
           Trades read back to {fmtDateTime(feed.status.loadedFromTime)}.{" "}

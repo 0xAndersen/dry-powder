@@ -78,6 +78,7 @@ export function startBot({ addresses, model, intervalMs = 1_000, settleDelaySeco
         if (!px || px.publishTime < o.createdAt) continue;
         let met;
         if (o.orderType === 0) met = o.isLong ? px.ask <= o.triggerPrice : px.bid >= o.triggerPrice;
+        else if (o.orderType === 4) met = o.isLong ? px.ask >= o.triggerPrice : px.bid <= o.triggerPrice; // stop-entry
         else if (o.orderType === 3) met = o.triggerPrice === 0n || (o.isLong ? px.bid >= o.triggerPrice : px.ask <= o.triggerPrice);
         else met = (o.isLong === (o.orderType === 1)) ? px.mid >= o.triggerPrice : px.mid <= o.triggerPrice;
         if (!met) continue;
@@ -85,7 +86,7 @@ export function startBot({ addresses, model, intervalMs = 1_000, settleDelaySeco
           await write(addresses.engine, engineAbi, "executeOrder", [ids[i], []]);
           stats.executed += 1;
         } catch {
-          // Typical reasons: a position already exists in that market, or the position was opened this second.
+          // Typical reasons: a position on the other side exists in that market, or the position changed this second.
         }
       }
 

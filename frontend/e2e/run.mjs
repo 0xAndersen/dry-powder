@@ -2,12 +2,12 @@
 // with TRADERS >= 5 so the activity feed and the house have something to show).
 //
 //   node e2e/run.mjs                 # everything
-//   node e2e/run.mjs trade,house     # only some sections: trade, instruments, watch, activity, portfolio, settle, house, extras, agents, pro, phone, instant, responsive
+//   node e2e/run.mjs trade,house     # only some sections: trade, positions, instruments, watch, activity, portfolio, settle, house, extras, agents, pro, phone, instant, responsive
 //
 // Exits non-zero if any step fails. Screenshots land in e2e/out/shots/.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { FIRST_SCRIPTED_TRADER, HERE, KRAKEN_URL, RPC_URL, UI_TRADER, WEB_URL, account, artifact, log, publicClient, readAddresses, sleep } from "./lib.mjs";
+import { DEPLOYER, FIRST_SCRIPTED_TRADER, HERE, KRAKEN_URL, RPC_URL, UI_TRADER, WEB_URL, account, artifact, log, publicClient, readAddresses, sleep } from "./lib.mjs";
 import { launch, newPage } from "./browser.mjs";
 
 const addresses = readAddresses();
@@ -200,13 +200,28 @@ if (want("trade")) {
     await t("ticket-sl").fill("");
   });
 
-  await step("one-click Close places a keeper Close order; history shows the round trip", async () => {
+  await step("close half from the positions table, then the rest; history shows the partial close and the round trip", async () => {
     await selectMarket("BTC-USD");
     await t("tab-positions").click();
+    const btc = addresses.markets[0].marketId;
+    const before = await read(addresses.engine, "PerpEngine", "getPosition", [UI_TRADER.address, btc]);
     await t("position-BTC-USD").getByTestId("close-position").click();
-    await page.getByText(/Close order #\d+ sent/).waitFor({ timeout: 20_000 });
+    await t("close-part-50").click();
+    await shot(page, "07a-close-half");
+    await t("close-confirm").click();
+    await page.getByText(/Close order #\d+ sent/).first().waitFor({ timeout: 20_000 });
+    for (let i = 0; i < 40; i += 1) {
+      const pos = await read(addresses.engine, "PerpEngine", "getPosition", [UI_TRADER.address, btc]);
+      if (pos.size > 0n && pos.size < before.size) break;
+      if (i === 39) throw new Error("half of the position was not closed");
+      await sleep(750);
+    }
+    await page.waitForTimeout(1_500);
+    await t("position-BTC-USD").getByTestId("close-position").click();
+    await t("close-confirm").click();
     await waitPosition("BTC-USD", false);
     await t("tab-history").click();
+    await t("history-decrease").first().waitFor({ timeout: 15_000 });
     await t("history-close").first().waitFor({ timeout: 15_000 });
     await t("history-open").first().waitFor({ timeout: 5_000 });
     await page.waitForTimeout(500);
@@ -244,6 +259,67 @@ if (want("trade")) {
     const house = await read(addresses.token, "RewardToken", "balanceOf", [UI_TRADER.address]);
     if (house === 0n) throw new Error("the stop-loss fill minted no DRY (did the position close at a profit?)");
     return `${summary.replace(/\s+/g, " ")} | DRY ${Number(house / 10n ** 16n) / 100}`;
+  });
+}
+
+// ─────────────────────────────── position management (v3.1) ───────────────────────────────
+if (want("positions")) {
+  await step("add to a position from the ticket, add margin, place and cancel a stop-entry order", async () => {
+    await ensureWallet();
+    await selectMarket("XAU-USD");
+    const xau = addresses.markets.find((m) => m.symbol === "XAU-USD").marketId;
+    await setQty("Margin", 200);
+    await page.getByRole("button", { name: "5x", exact: true }).click();
+    await submitTicket();
+    await waitFilled();
+    await waitPosition("XAU-USD");
+    const first = await read(addresses.engine, "PerpEngine", "getPosition", [UI_TRADER.address, xau]);
+    // The same side again adds to it: the ticket says so, and the position grows.
+    await setQty("Margin", 200);
+    await t("adds-to-position").waitFor({ timeout: 5_000 });
+    await shot(page, "07b-adds-to-position");
+    await submitTicket();
+    for (let i = 0; i < 40; i += 1) {
+      const pos = await read(addresses.engine, "PerpEngine", "getPosition", [UI_TRADER.address, xau]);
+      if (pos.size > first.size) {
+        if (pos.margin !== first.margin * 2n) throw new Error(`margin ${pos.margin} after adding ${first.margin}`);
+        break;
+      }
+      if (i === 39) throw new Error("the addition did not fill");
+      await sleep(750);
+    }
+    // Margin can only be added while the position is not in profit: push gold down a little first.
+    await fetch(`${KRAKEN_URL}/control/move?feed=XAU&pct=-0.4`);
+    await page.waitForTimeout(4_000);
+    await t("tab-positions").click();
+    await t("position-XAU-USD").getByTestId("add-margin").click();
+    await t("margin-amount").fill("100");
+    await shot(page, "07c-add-margin");
+    await t("margin-confirm").click();
+    for (let i = 0; i < 40; i += 1) {
+      const pos = await read(addresses.engine, "PerpEngine", "getPosition", [UI_TRADER.address, xau]);
+      if (pos.margin === first.margin * 2n + 100_000_000n) break;
+      if (i === 39) throw new Error("the margin was not added");
+      await sleep(750);
+    }
+    // A breakout entry 2% above the market, on the long side already held (it would add): it rests until cancelled.
+    await t("kind-stop").click();
+    const mark = num(await t("market-price").innerText());
+    await page.getByLabel("Stop price").fill((mark * 1.02).toFixed(2));
+    await setQty("Margin", 100);
+    await submitTicket();
+    await t("tab-orders").click();
+    const row = page.locator('[data-testid^="order-"]').filter({ hasText: "Stop entry" }).first();
+    await row.waitFor({ timeout: 20_000 });
+    await row.getByTestId("cancel-order").click();
+    await row.waitFor({ state: "detached", timeout: 20_000 });
+    await t("kind-market").click();
+    // Leave the market as it was found.
+    await t("tab-positions").click();
+    await t("position-XAU-USD").getByTestId("close-position").click();
+    await t("close-confirm").click();
+    await waitPosition("XAU-USD", false, 45_000);
+    return "added, topped up, stop entry placed and cancelled, closed";
   });
 }
 
@@ -332,6 +408,7 @@ if (want("instruments")) {
     await waitFilled();
     await waitPosition("EUR-USD");
     await t("position-EUR-USD").getByTestId("close-position").click();
+    await t("close-confirm").click();
     // The keeper resumes a market it saw closed only once the tape moves again, so allow it longer here.
     await waitPosition("EUR-USD", false, 75_000);
   });
@@ -497,6 +574,22 @@ if (want("activity")) {
     return title ?? "";
   });
 
+  await step("following: a trade by a followed trader raises an alert that links to their profile", async () => {
+    // The trader followed above (nickname "Desk 7") is a scripted trader, which trades every few seconds.
+    const alert = page.locator(".toast").filter({ hasText: "Desk 7" }).first();
+    await alert.waitFor({ timeout: 90_000 });
+    const text = (await alert.innerText()).replace(/\s+/g, " ").trim();
+    if (!/opened|added|closed|liquidated/.test(text)) throw new Error(`unexpected alert: ${text}`);
+    await alert.getByRole("link", { name: "View trader" }).click();
+    await page.waitForURL(/\/trader\/?\?.*address=0x/, { timeout: 10_000 });
+    await t("trader-profile").waitFor({ timeout: 15_000 });
+    // Off again, so later steps are not covered by alerts.
+    await t("settings-button").click();
+    await t("follow-alerts").uncheck();
+    await page.keyboard.press("Escape");
+    return text.slice(0, 120);
+  });
+
   await step("markets: every market, search, favourites, sort, a row opens the trade screen", async () => {
     await page.goto(`${WEB_URL}/markets/`);
     await page.locator('[data-testid^="market-row-"]').first().waitFor({ timeout: 20_000 });
@@ -554,6 +647,31 @@ if (want("portfolio")) {
     if (!csv.includes("Waited for the retest") || !csv.includes("Plan")) throw new Error("the CSV is missing the note or the tag");
     await shot(page, "18d-portfolio");
     return `${trades} closed trades, net ${await t("portfolio-net").innerText()}`;
+  });
+
+  await step("share cards: a closed trade and the period's results as images, with download and link", async () => {
+    // Still on the portfolio from the step above.
+    await t("journal-share").first().click();
+    await t("share-sheet").waitFor({ timeout: 5_000 });
+    await page.waitForFunction(() => {
+      const img = document.querySelector('[data-testid="share-image"]');
+      return img instanceof HTMLImageElement && img.complete && img.naturalWidth > 0;
+    }, null, { timeout: 15_000 });
+    const size = await t("share-image").evaluate((img) => [img.naturalWidth, img.naturalHeight]);
+    if (size[0] !== 2400 || size[1] !== 1350) throw new Error(`card is ${size[0]}x${size[1]}, expected 2400x1350`);
+    const [download] = await Promise.all([page.waitForEvent("download", { timeout: 10_000 }), t("share-download").click()]);
+    const name = download.suggestedFilename();
+    if (!/^dry-powder-.+\.png$/.test(name)) throw new Error(`unexpected file name ${name}`);
+    const path = await download.path();
+    const head = path ? (await import("node:fs")).readFileSync(path).subarray(0, 8).toString("hex") : "";
+    if (head !== "89504e470d0a1a0a") throw new Error("the download is not a PNG");
+    await shot(page, "18e-share-card");
+    await page.keyboard.press("Escape");
+    await t("share-sheet").waitFor({ state: "detached", timeout: 5_000 });
+    await t("share-results").click();
+    await t("share-image").waitFor({ timeout: 15_000 });
+    await page.keyboard.press("Escape");
+    return `${name}, ${size[0]}x${size[1]}`;
   });
 }
 
@@ -690,7 +808,8 @@ if (want("agents")) {
     const { createWalletClient, http } = await import("viem");
     const { foundry } = await import("viem/chains");
     const agentAcct = privateKeyToAccount(shown.trim());
-    const fund = createWalletClient({ chain: foundry, transport: http(RPC_URL), account: account(5) });
+    // The deployer is idle once the stack is up; a scripted trader's key would race its own transactions.
+    const fund = createWalletClient({ chain: foundry, transport: http(RPC_URL), account: DEPLOYER });
     await pub.waitForTransactionReceipt({ hash: await fund.sendTransaction({ to: agentAcct.address, value: 10n ** 18n }) });
     const agentWallet = createWalletClient({ chain: foundry, transport: http(RPC_URL), account: agentAcct });
     const eth = addresses.markets.find((m) => m.symbol === "ETH-USD").marketId;
@@ -702,7 +821,7 @@ if (want("agents")) {
     }
     if (ask === 0n) throw new Error("ETH-USD has no on-chain price to quote against");
     const abi = artifact("AgentAccount").abi;
-    await pub.waitForTransactionReceipt({ hash: await agentWallet.writeContract({ address: agentAccount, abi, functionName: "createLimitOrder", args: [{ priceId: eth, isLong: true, margin: 100_000_000n, size: 500_000_000n, triggerPrice: (ask * 101n) / 100n, takeProfit: 0n, stopLoss: 0n }] }) });
+    await pub.waitForTransactionReceipt({ hash: await agentWallet.writeContract({ address: agentAccount, abi, functionName: "createLimitOrder", args: [{ priceId: eth, isLong: true, margin: 100_000_000n, size: 500_000_000n, triggerPrice: (ask * 101n) / 100n, takeProfit: 0n, stopLoss: 0n, stopEntry: false }] }) });
     for (let i = 0; i < 40; i++) {
       const p = await read(addresses.engine, "PerpEngine", "getPosition", [agentAccount, eth]);
       if (p.trader.toLowerCase() === agentAccount.toLowerCase()) break;
@@ -780,7 +899,7 @@ if (want("phone")) {
 }
 
 if (want("instant")) {
-  await step("instant trading: enable with two wallet confirmations, trade with no wallet prompt, revoke", async () => {
+  await step("instant trading: enable with one wallet confirmation, trade with no wallet prompt, revoke", async () => {
     const { page: p, context } = await newPage(browser);
     try {
       // SOL-USD: the agents step leaves an ETH-USD position in this same account.
@@ -803,6 +922,7 @@ if (want("instant")) {
       await p.getByTestId("instant-enable").click();
       await p.getByText(/Instant trading is on/).waitFor({ timeout: 60_000 });
       const setupSends = await p.evaluate(() => window.__walletSends);
+      if (setupSends !== 1) throw new Error(`setting up took ${setupSends} wallet transactions; one is expected (approve and fund the key together)`);
       await p.keyboard.press("Escape");
       await p.getByText("Trading account", { exact: true }).first().waitFor({ timeout: 15_000 });
       await p.evaluate(() => {

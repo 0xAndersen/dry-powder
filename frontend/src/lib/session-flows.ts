@@ -28,10 +28,18 @@ function factoryOf(cfg: RuntimeConfig): Address {
   return cfg.agentFactory;
 }
 
+/** Whether a revert means "this contract predates v3.1" (no such function, or not payable) rather than a refusal. */
+function unsupported(error: unknown): boolean {
+  const text = error instanceof Error ? `${error.message} ${(error as { shortMessage?: string }).shortMessage ?? ""}` : String(error);
+  return !/InvalidPolicy|ZeroAddress|AccountExists|NotOwner|insufficient funds|User rejected|denied/i.test(text);
+}
+
 /**
- * Sets up instant trading: a new key in this browser, gas for it, the owner's AgentAccount (created by the key, so
- * the wallet does not pay for it) and the key's on-chain policy. Two wallet confirmations: the gas transfer and
- * the approval. On a test deployment the key then mints test collateral straight into the account.
+ * Sets up instant trading: a new key in this browser, its on-chain policy, gas for it and, if needed, the owner's
+ * AgentAccount. On v3.1 contracts that is one wallet confirmation (the factory creates the account with the key
+ * approved, or the account approves it, and either forwards the gas to it); older contracts take two (the gas
+ * transfer, then the approval, with the key creating the account in between). On a test deployment the key then
+ * mints test collateral straight into the account.
  */
 export async function enableInstantTrading(ctx: SessionFlowContext, policy: SessionPolicy, gas: bigint, previous: Session | null): Promise<Session> {
   const { wagmi, cfg, chain, rpcUrls, api, owner } = ctx;
@@ -67,30 +75,37 @@ export async function enableInstantTrading(ctx: SessionFlowContext, policy: Sess
 
   const client = sessionClient(chain, rpcUrls, key);
   const have = await client.getBalance({ address: agent });
-  if (have < gas / 2n) {
-    await api.send("Send gas to the trading key", () => sendTransaction(wagmi, { to: agent, value: gas - have, chainId: cfg.chainId }));
-  }
-
-  if (existing === zeroAddress) {
-    await api.send("Create your trading account", async () => {
-      const { request } = await client.simulateContract({ address: factory, abi: agentAccountFactoryAbi, functionName: "createAccount", args: [owner], account: client.account });
-      return client.writeContract({ ...(request as object), ...(await arcFees(client)) } as never);
-    });
-  }
-
+  const topUp = have < gas / 2n ? gas - have : 0n;
   const block = await client.getBlock();
   const expiry = Number(block.timestamp) + policy.durationSeconds;
-  await api.send("Approve the trading key", async () => {
-    const { request } = await simulateContract(wagmi, {
-      address: account,
-      abi: agentAccountAbi,
-      functionName: "setAgent",
-      args: [agent, BigInt(expiry), policy.maxLeverage, policy.maxMargin],
-      account: owner,
-      chainId: cfg.chainId,
+  const policyArgs = [agent, BigInt(expiry), policy.maxLeverage, policy.maxMargin] as const;
+
+  // One confirmation where the contracts allow it.
+  let request: unknown = null;
+  try {
+    request =
+      existing === zeroAddress
+        ? (await simulateContract(wagmi, { address: factory, abi: agentAccountFactoryAbi, functionName: "createAccountWithAgent", args: policyArgs, value: topUp, account: owner, chainId: cfg.chainId })).request
+        : (await simulateContract(wagmi, { address: account, abi: agentAccountAbi, functionName: "setAgent", args: policyArgs, value: topUp, account: owner, chainId: cfg.chainId })).request;
+  } catch (error) {
+    if (!unsupported(error)) throw error;
+  }
+
+  if (request) {
+    await api.send(existing === zeroAddress ? "Create your trading account and approve this browser" : "Approve this browser's trading key", () => writeContract(wagmi, request as never));
+  } else {
+    if (topUp > 0n) await api.send("Send gas to the trading key", () => sendTransaction(wagmi, { to: agent, value: topUp, chainId: cfg.chainId }));
+    if (existing === zeroAddress) {
+      await api.send("Create your trading account", async () => {
+        const { request: create } = await client.simulateContract({ address: factory, abi: agentAccountFactoryAbi, functionName: "createAccount", args: [owner], account: client.account });
+        return client.writeContract({ ...(create as object), ...(await arcFees(client)) } as never);
+      });
+    }
+    await api.send("Approve the trading key", async () => {
+      const { request: approve } = await simulateContract(wagmi, { address: account, abi: agentAccountAbi, functionName: "setAgent", args: policyArgs, account: owner, chainId: cfg.chainId });
+      return writeContract(wagmi, approve);
     });
-    return writeContract(wagmi, request);
-  });
+  }
 
   const session: Session = { ...draft, expiry, status: "active" };
   saveSession(session);

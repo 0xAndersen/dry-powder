@@ -125,6 +125,13 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
           <Toggle label="Notify on fills, take-profits and stop-losses" checked={p.fillNotifications} onChange={(v) => set({ fillNotifications: v })} />
           <Toggle label="Vibrate on fills and warnings" hint="Phones only." checked={p.haptics} onChange={(v) => set({ haptics: v })} />
           <Toggle label="Price and PnL in the tab title" checked={p.titleTicker} onChange={(v) => set({ titleTicker: v })} />
+          <Toggle
+            label="Alert me when traders I follow trade"
+            hint="Opens, additions, closes and liquidations, while the app is open."
+            checked={p.followAlerts}
+            onChange={(v) => set({ followAlerts: v })}
+            testId="follow-alerts"
+          />
         </Section>
 
         {install.canInstall || install.iosHint ? (

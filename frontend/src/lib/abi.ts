@@ -60,72 +60,7 @@ export const perpEngineAbi = [
   },
   {
     "type": "function",
-    "name": "LIQUIDATOR_FEE_BPS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "MARGIN_FEE_CAP_BPS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MAX_BASE_FEE_BPS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MAX_CONF_BPS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MAX_EXECUTION_FEE",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MAX_FUNDING_RATE_PER_SECOND",
     "inputs": [],
     "outputs": [
       {
@@ -151,73 +86,26 @@ export const perpEngineAbi = [
   },
   {
     "type": "function",
-    "name": "MAX_MARKETS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MAX_OI_TO_NAV_BPS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MAX_PRICE_AGE",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MAX_SKEW_FEE_BPS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MIN_OI_TO_NAV_BPS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "acceptOwnership",
     "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "addMargin",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -343,6 +231,11 @@ export const perpEngineAbi = [
         "internalType": "bytes32"
       },
       {
+        "name": "size",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "acceptablePrice",
         "type": "uint256",
         "internalType": "uint256"
@@ -399,6 +292,11 @@ export const perpEngineAbi = [
             "name": "stopLoss",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "stopEntry",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -873,49 +771,6 @@ export const perpEngineAbi = [
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "liquidate",
-    "inputs": [
-      {
-        "name": "trader",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "liquidated",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "liquidate",
-    "inputs": [
-      {
-        "name": "trader",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "priceUpdate",
-        "type": "bytes[]",
-        "internalType": "bytes[]"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "liquidated",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "payable"
   },
   {
     "type": "function",
@@ -1463,6 +1318,11 @@ export const perpEngineAbi = [
         "name": "triggerPrice",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "size",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -1639,6 +1499,37 @@ export const perpEngineAbi = [
       },
       {
         "name": "executionFee",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MarginAdded",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "trader",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newMargin",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -2009,6 +1900,140 @@ export const perpEngineAbi = [
   },
   {
     "type": "event",
+    "name": "PositionDecreased",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "trader",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "priceId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "exitPrice",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "closedSize",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "releasedMargin",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "pnl",
+        "type": "int256",
+        "indexed": false,
+        "internalType": "int256"
+      },
+      {
+        "name": "fee",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "payout",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PositionIncreased",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "trader",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "priceId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "isLong",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "addedMargin",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "addedSize",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "price",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "fee",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newMargin",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newSize",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newEntryPrice",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "PositionLiquidated",
     "inputs": [
       {
@@ -2310,6 +2335,11 @@ export const perpEngineAbi = [
   },
   {
     "type": "error",
+    "name": "PositionInProfit",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PositionLiquidatable",
     "inputs": []
   },
@@ -2331,6 +2361,11 @@ export const perpEngineAbi = [
   {
     "type": "error",
     "name": "PriceNotAfterOpen",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProfitCapReached",
     "inputs": []
   },
   {
@@ -5954,6 +5989,24 @@ export const agentAccountAbi = [
   },
   {
     "type": "function",
+    "name": "addMargin",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "agents",
     "inputs": [
       {
@@ -6009,6 +6062,11 @@ export const agentAccountAbi = [
         "name": "marketId",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "size",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "acceptablePrice",
@@ -6067,6 +6125,11 @@ export const agentAccountAbi = [
             "name": "stopLoss",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "stopEntry",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -6095,6 +6158,34 @@ export const agentAccountAbi = [
   },
   {
     "type": "function",
+    "name": "initAgent",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expiry",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "maxLeverage",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxMargin",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
     "name": "marketAllowed",
     "inputs": [
       {
@@ -6111,6 +6202,25 @@ export const agentAccountAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "multicall",
+    "inputs": [
+      {
+        "name": "data",
+        "type": "bytes[]",
+        "internalType": "bytes[]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "results",
+        "type": "bytes[]",
+        "internalType": "bytes[]"
+      }
+    ],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -6238,7 +6348,7 @@ export const agentAccountAbi = [
       }
     ],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "payable"
   },
   {
     "type": "function",
@@ -6287,6 +6397,11 @@ export const agentAccountAbi = [
       },
       {
         "name": "triggerPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "size",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -6439,6 +6554,27 @@ export const agentAccountAbi = [
   },
   {
     "type": "error",
+    "name": "AddressEmptyCode",
+    "inputs": [
+      {
+        "name": "target",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FailedCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GasTopUpFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidPolicy",
     "inputs": []
   },
@@ -6539,6 +6675,40 @@ export const agentAccountFactoryAbi = [
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "createAccountWithAgent",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expiry",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "maxLeverage",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxMargin",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "payable"
   },
   {
     "type": "function",

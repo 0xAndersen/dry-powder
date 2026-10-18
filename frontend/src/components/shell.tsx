@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { AlertWatcher } from "@/components/alert-watcher";
 import { Header } from "@/components/header";
 import { CommandPalette } from "@/components/command-palette";
+import { FollowWatcher } from "@/components/follow-watcher";
 import { MobileNav } from "@/components/mobile-nav";
 import { ServiceWorkerManager } from "@/components/pwa";
 import { RiskWatcher } from "@/components/risk-watcher";
@@ -45,6 +46,7 @@ export function Shell({ children }: { children: ReactNode }) {
       <ServiceWorkerManager />
       <AlertWatcher />
       <RiskWatcher />
+      <FollowWatcher />
       <CommandPalette />
       <Toasts />
     </>

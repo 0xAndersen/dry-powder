@@ -1,6 +1,6 @@
 import { prefs } from "./prefs";
 import { tradeSettings } from "./storage";
-import { toast, type Toast } from "./toasts";
+import { toast, type Toast, type ToastAction } from "./toasts";
 
 const VIBRATION: Record<Toast["tone"], number[]> = { ok: [18], info: [12], warn: [30, 60, 30], error: [60, 40, 60] };
 
@@ -8,8 +8,13 @@ const VIBRATION: Record<Toast["tone"], number[]> = { ok: [18], info: [12], warn:
  * One place for things the trader should know about: always an in-app toast; a system notification when the tab
  * is in the background and notifications are allowed; a short vibration on phones.
  */
-export function notify(tone: Toast["tone"], title: string, body?: string, options: { system?: boolean; tag?: string; ttlMs?: number } = {}): void {
-  toast(tone, title, body, options.ttlMs);
+export function notify(
+  tone: Toast["tone"],
+  title: string,
+  body?: string,
+  options: { system?: boolean; tag?: string; ttlMs?: number; action?: ToastAction } = {},
+): void {
+  toast(tone, title, body, options.ttlMs, options.action);
   const p = prefs.get();
   if (p.haptics && typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
     try {

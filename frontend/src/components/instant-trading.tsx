@@ -149,7 +149,7 @@ export function InstantTradingSheet({ onClose }: { onClose: () => void }) {
         </ul>
         {policyFields}
         <p className="text-xs text-faint">
-          Two confirmations in your wallet: {formatEther(SESSION_GAS_TOP_UP)} USDC of gas for the key (about a hundred orders; unused gas comes back when you revoke), then the key&rsquo;s approval.
+          One confirmation in your wallet: it approves the key and sends it {formatEther(SESSION_GAS_TOP_UP)} USDC of gas (about a hundred orders; unused gas comes back when you revoke).
           {cfg.collateralIsTest ? ` Test ${sym} is then added to the account for you.` : ""}
         </p>
       </div>

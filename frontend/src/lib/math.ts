@@ -124,3 +124,54 @@ export function scaleBy(value: bigint, factor: number): bigint {
   if (!Number.isFinite(factor)) return 0n;
   return (value * BigInt(Math.round(factor * 1e9))) / 1_000_000_000n;
 }
+
+/** PositionMath.UNIT_PRECISION: the engine's unit counters are `size * 1e36 / entry`. */
+const ENGINE_UNIT_PRECISION = 10n ** 36n;
+
+/**
+ * The position after adding `addSize` filled at `price` (v3.1 merges): sizes and margins add, the entry is size over
+ * units, rounded against the trader (up for a long, down for a short), exactly as `PerpEngine._open` computes it.
+ */
+export function mergedPosition(
+  pos: { size: bigint; margin: bigint; entryPrice: bigint; isLong: boolean },
+  addSize: bigint,
+  addMargin: bigint,
+  price: bigint,
+): { size: bigint; margin: bigint; entryPrice: bigint } {
+  const units = (pos.size * ENGINE_UNIT_PRECISION) / pos.entryPrice + (addSize * ENGINE_UNIT_PRECISION) / price;
+  const size = pos.size + addSize;
+  const scaled = size * ENGINE_UNIT_PRECISION;
+  return { size, margin: pos.margin + addMargin, entryPrice: pos.isLong ? ceilDiv(scaled, units) : scaled / units };
+}
+
+/** Margin released by closing `closeSize` of a position (v3.1 partial close), or null when everything closes. */
+export function partialRelease(size: bigint, margin: bigint, closeSize: bigint, minMargin: bigint): bigint | null {
+  if (closeSize <= 0n || closeSize >= size) return null;
+  const released = (margin * closeSize) / size;
+  return margin - released < minMargin ? null : released;
+}
+
+/** Prices of a ladder of `count` orders from `from` to `to`, both included and evenly spaced. */
+export function ladderPrices(from: bigint, to: bigint, count: number): bigint[] {
+  if (!Number.isInteger(count) || count < 1) return [];
+  if (count === 1) return [from];
+  const step = (to - from) / BigInt(count - 1);
+  return Array.from({ length: count }, (_, i) => (i === count - 1 ? to : from + step * BigInt(i)));
+}
+
+/**
+ * The position a ladder of equal orders adds up to if every order fills (onto `held`, when there is one): size,
+ * margin and the engine's blended entry, rounded against the trader as the engine rounds it.
+ */
+export function ladderFill(
+  orders: readonly { price: bigint; size: bigint; margin: bigint }[],
+  isLong: boolean,
+  held: { size: bigint; margin: bigint; entryPrice: bigint } | null = null,
+): { size: bigint; margin: bigint; entryPrice: bigint } | null {
+  let pos = held;
+  for (const o of orders) {
+    if (o.price <= 0n || o.size <= 0n) return null;
+    pos = pos ? mergedPosition({ ...pos, isLong }, o.size, o.margin, o.price) : { size: o.size, margin: o.margin, entryPrice: o.price };
+  }
+  return pos;
+}

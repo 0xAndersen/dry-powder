@@ -4,16 +4,18 @@ import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from "reac
 import type { Hex } from "viem";
 import { AppLink } from "@/components/app-link";
 import { useApp } from "@/components/providers";
+import { ShareSheet } from "@/components/social/share-sheet";
 import { ConfirmDialog } from "@/components/trade/confirm-dialog";
+import { AddMarginSheet, ClosePositionSheet } from "@/components/trade/position-sheets";
 import { TxStatus } from "@/components/tx-status";
 import type { AccountData, OrderRow, PositionView } from "@/hooks/use-account-data";
 import { useTradeContext } from "@/hooks/use-action-context";
 import { useLocalStore } from "@/hooks/use-local-store";
 import type { LogFeedHandle } from "@/hooks/use-log-feed";
-import { useMarketData, type MarketPrice } from "@/hooks/use-market-data";
+import { useChainNow, useMarketData, type MarketPrice } from "@/hooks/use-market-data";
 import { useTx, type TxHandle } from "@/hooks/use-tx";
 import type { AccountView } from "@/hooks/use-wallet";
-import { ORDER_TYPE, submitCancel, submitTrigger } from "@/lib/actions";
+import { ORDER_TYPE, submitAddMargin, submitBatch, submitCancel, submitTrigger, type BatchCall } from "@/lib/actions";
 import { UserFacingError } from "@/lib/errors";
 import { orderTypeLabel } from "@/lib/events";
 import { closeFlow } from "@/lib/flows";
@@ -21,8 +23,11 @@ import { PRICE_DECIMALS, fmtAge, fmtDateTime, fmtNum, fmtPercent, fmtPrice, fmtQ
 import { buildHistory, historyCsv } from "@/lib/history";
 import { isSettled, type Instrument } from "@/lib/instruments";
 import { RISK_TEXT, riskTone } from "@/lib/risk-tone";
-import { ratio, unitsOf } from "@/lib/math";
+import { ratio, unitsOf, withSlippageDown, withSlippageUp } from "@/lib/math";
 import { valuePosition } from "@/lib/position";
+import type { TradeCard } from "@/lib/share-card";
+import { openPositionCard, profileLink, shareText } from "@/lib/share-data";
+import { follows, nicknameOf } from "@/lib/social";
 import { priceAlerts, tradeSettings, type PriceAlert } from "@/lib/storage";
 
 type Tab = "positions" | "orders" | "history" | "alerts";
@@ -156,6 +161,22 @@ function PositionRow({
   const sl = orders.find((o) => o.id === pos.slOrderId && pos.slOrderId !== 0n)?.order.triggerPrice ?? null;
   const settled = instrument ? isSettled(instrument) : false;
   const closing = pos.closeOrderId !== 0n;
+  const [sheet, setSheet] = useState<"close" | "margin" | null>(null);
+  // Frozen when the sheet opens, so the image does not redraw on every price tick.
+  const [shareCard, setShareCard] = useState<TradeCard | null>(null);
+  const [followList] = useLocalStore(follows);
+  const chainNow = useChainNow(10_000);
+  const { byId } = useMarketData();
+  const openShare = () =>
+    setShareCard(
+      openPositionCard(view, value, mark, chainNow, {
+        market: (id) => byId.get(id.toLowerCase()),
+        unit: sym,
+        chainId: cfg.chainId,
+        trader: nicknameOf(followList, pos.trader) ?? shortAddress(pos.trader),
+        href: typeof window === "undefined" ? "" : window.location.href,
+      }),
+    );
 
   const editingFor = (type: "tp" | "sl") => (edit && edit.marketId === marketId && edit.type === type ? edit.text : null);
   const parsed = edit && edit.marketId === marketId ? parseAmount(edit.text, PRICE_DECIMALS) : null;
@@ -199,9 +220,17 @@ function PositionRow({
       return `${type === "tp" ? "Take-profit" : "Stop-loss"} removed from ${symbol}. Its execution fee was refunded.`;
     });
   };
-  const close = () => {
+  const close = (size = 0n) => {
     if (!instrument || !params) return;
-    run((api) => closeFlow(withCtx(api), { instrument, view, reference: price?.reference ?? null, slippageBps: settings.slippageBps, executionFee: params.executionFee, balance }));
+    setSheet(null);
+    run((api) => closeFlow(withCtx(api), { instrument, view, reference: price?.reference ?? null, slippageBps: settings.slippageBps, executionFee: params.executionFee, balance, size }));
+  };
+  const addMargin = (amount: bigint) => {
+    setSheet(null);
+    run(async (api) => {
+      await submitAddMargin(withCtx(api), pos.priceId, amount, `Add margin to ${symbol}`);
+      return `${fmtUsdc(amount)} ${cfg.collateralSymbol} added to the ${symbol} margin.`;
+    });
   };
   const cancelClose = () => {
     run(async (api) => {
@@ -289,7 +318,7 @@ function PositionRow({
       <td className="r" data-cell="actions">
         {canTrade ? (
           settled ? (
-            <button type="button" className="btn btn-sm btn-primary" disabled={tx.busy || !instrument} onClick={close} data-testid="settle-close">
+            <button type="button" className="btn btn-sm btn-primary" disabled={tx.busy || !instrument} onClick={() => close()} data-testid="settle-close">
               Settle &amp; close
             </button>
           ) : closing ? (
@@ -302,12 +331,27 @@ function PositionRow({
               </button>
             </span>
           ) : (
-            <button type="button" className="btn btn-sm" disabled={tx.busy || !instrument} onClick={close} data-testid="close-position">
-              Close
-            </button>
+            <span className="flex flex-wrap items-center justify-end gap-1.5">
+              <button type="button" className="btn btn-sm" disabled={tx.busy || !instrument} onClick={() => setSheet("margin")} data-testid="add-margin" title="Add margin: lower leverage, liquidation further away">
+                Margin
+              </button>
+              <button type="button" className="btn btn-sm" disabled={tx.busy || !instrument} onClick={() => setSheet("close")} data-testid="close-position">
+                Close
+              </button>
+              <button type="button" className="btn btn-sm btn-ghost" disabled={value.pnl === null} onClick={openShare} title="Share this position as an image" data-testid="position-share">
+                Share
+              </button>
+            </span>
           )
         ) : closing ? (
           <span className="text-xs text-accent">Closing</span>
+        ) : null}
+        {shareCard ? <ShareSheet card={shareCard} title="Share this position" text={shareText(shareCard)} link={profileLink(pos.trader)} onClose={() => setShareCard(null)} /> : null}
+        {sheet === "close" && instrument ? (
+          <ClosePositionSheet view={view} instrument={instrument} price={price} busy={tx.busy} onClose={() => setSheet(null)} onConfirm={(size) => close(size)} />
+        ) : null}
+        {sheet === "margin" && instrument ? (
+          <AddMarginSheet view={view} instrument={instrument} price={price} balance={balance} busy={tx.busy} onClose={() => setSheet(null)} onConfirm={addMargin} />
         ) : null}
       </td>
     </tr>
@@ -370,14 +414,17 @@ function OrdersTable({
             const instrument = byId.get(o.priceId.toLowerCase());
             const dp = instrument?.priceDecimals ?? 2;
             const p = prices.get(o.priceId.toLowerCase());
-            const isOpen = o.orderType === 0;
+            const isOpen = o.orderType === 0 || o.orderType === 4;
             const hasPosition = positions.some((v) => v.position.priceId.toLowerCase() === o.priceId.toLowerCase());
             const escrow = isOpen ? o.margin + o.feeBudget + o.executionFee * BigInt(1 + (o.takeProfit !== 0n ? 1 : 0) + (o.stopLoss !== 0n ? 1 : 0)) : o.executionFee;
             const now = p?.exec ? (o.isLong ? p.exec.ask : p.exec.bid) : null;
-            const marketable = isOpen && now !== null && (o.isLong ? now <= o.triggerPrice : now >= o.triggerPrice);
+            const stop = o.orderType === 4;
+            const marketable =
+              isOpen && now !== null && (stop ? (o.isLong ? now >= o.triggerPrice : now <= o.triggerPrice) : o.isLong ? now <= o.triggerPrice : now >= o.triggerPrice);
+            const held = positions.find((v) => v.position.priceId.toLowerCase() === o.priceId.toLowerCase());
             const state = isOpen
-              ? hasPosition
-                ? { text: "Blocked: a position is open in this market", tone: "text-warn" }
+              ? hasPosition && held && held.position.isLong !== o.isLong
+                ? { text: "Blocked: the other side is open in this market", tone: "text-warn" }
                 : marketable
                   ? { text: "Marketable: waiting for a keeper", tone: "text-accent" }
                   : { text: now !== null ? `Resting, ${fmtPercent(Math.abs(ratio(o.triggerPrice - now, now)), 2)} from price` : "Resting", tone: "text-muted" }
@@ -398,7 +445,7 @@ function OrdersTable({
                 <td>
                   <SideTag isLong={o.isLong} />
                 </td>
-                <td className="r num">{isOpen ? fmtUsdc(o.size) : "Whole position"}</td>
+                <td className="r num">{isOpen ? fmtUsdc(o.size) : o.size > 0n ? fmtUsdc(o.size) : "Whole position"}</td>
                 <td className="r num">{o.triggerPrice === 0n ? "Any price" : fmtPrice(o.triggerPrice, dp)}</td>
                 <td className="num text-xs">
                   {isOpen ? (
@@ -656,6 +703,7 @@ export const AccountTables = forwardRef<
     onPickAlert: () => void;
   }
 >(function AccountTables({ view, account, loading, error, feed, instrument, price, chainNow, onSelectMarket, onPickAlert }, ref) {
+  const { config: cfg } = useApp();
   const { byId, prices, params } = useMarketData();
   const tx = useTx({ autoDismissMs: 10000 });
   const [tab, setTab] = useState<Tab>("positions");
@@ -703,6 +751,25 @@ export const AccountTables = forwardRef<
     void tx.run(async (api) => {
       const ctx = bulkContext(api);
       if (!ctx) throw new UserFacingError("Connect your wallet first.");
+      // Instant trading: every close in one transaction from the trading account (all or nothing, no pop-up).
+      if (ctx.session && cfg.oracleMode === "publisher") {
+        const bps = BigInt(bulkSettings.slippageBps);
+        const calls: BatchCall[] = [];
+        for (const p of positions) {
+          if (p.position.closeOrderId !== 0n) continue;
+          const inst = byId.get(p.position.priceId.toLowerCase());
+          if (!inst) continue;
+          const ref = prices.get(inst.id)?.reference ?? null;
+          const worst = ref ? (p.position.isLong ? withSlippageDown(ref.bid, bps) : withSlippageUp(ref.ask, bps)) : 0n;
+          calls.push(
+            inst.settlementPrice !== 0n
+              ? { functionName: "closePosition", args: [inst.id, 0n, 0n, []], label: `Close ${inst.symbol}` }
+              : { functionName: "setTriggerOrder", args: [inst.id, ORDER_TYPE.Close, worst, 0n], label: `Close ${inst.symbol}` },
+          );
+        }
+        await submitBatch(ctx, `Close ${calls.length} position${calls.length === 1 ? "" : "s"}`, calls);
+        return `Sent ${calls.length} close${calls.length === 1 ? "" : "s"} in one transaction. Keeper orders fill at the next price.`;
+      }
       let done = 0;
       for (const p of positions) {
         if (p.position.closeOrderId !== 0n) continue;
@@ -728,6 +795,10 @@ export const AccountTables = forwardRef<
     void tx.run(async (api) => {
       const ctx = bulkContext(api);
       if (!ctx) throw new UserFacingError("Connect your wallet first.");
+      if (ctx.session) {
+        await submitBatch(ctx, `Cancel ${orders.length} orders`, orders.map((o) => ({ functionName: "cancelOrder", args: [o.id], label: `Cancel order #${o.id}` })));
+        return `Cancelled ${orders.length} order${orders.length === 1 ? "" : "s"} in one transaction. Escrow refunded.`;
+      }
       for (const o of orders) await submitCancel(ctx, o.id, `Cancel order #${o.id}`);
       return `Cancelled ${orders.length} order${orders.length === 1 ? "" : "s"}. Escrow refunded.`;
     });

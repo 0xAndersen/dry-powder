@@ -68,58 +68,6 @@ export const pythAbi = [
   },
 ] as const;
 
-/**
- * Engine events added in v3.1 (adding to a position, partial closes, margin top-ups). Read alongside the generated
- * engine ABI so history and analytics are right once v3.1 is deployed; an older engine never emits them.
- */
-export const engineV31EventsAbi = [
-  {
-    type: "event",
-    name: "PositionIncreased",
-    inputs: [
-      { name: "key", type: "bytes32", indexed: true },
-      { name: "trader", type: "address", indexed: true },
-      { name: "priceId", type: "bytes32", indexed: true },
-      { name: "isLong", type: "bool", indexed: false },
-      { name: "addedMargin", type: "uint256", indexed: false },
-      { name: "addedSize", type: "uint256", indexed: false },
-      { name: "price", type: "uint256", indexed: false },
-      { name: "fee", type: "uint256", indexed: false },
-      { name: "newMargin", type: "uint256", indexed: false },
-      { name: "newSize", type: "uint256", indexed: false },
-      { name: "newEntryPrice", type: "uint256", indexed: false },
-    ],
-    anonymous: false,
-  },
-  {
-    type: "event",
-    name: "PositionDecreased",
-    inputs: [
-      { name: "key", type: "bytes32", indexed: true },
-      { name: "trader", type: "address", indexed: true },
-      { name: "priceId", type: "bytes32", indexed: true },
-      { name: "exitPrice", type: "uint256", indexed: false },
-      { name: "closedSize", type: "uint256", indexed: false },
-      { name: "releasedMargin", type: "uint256", indexed: false },
-      { name: "pnl", type: "int256", indexed: false },
-      { name: "fee", type: "uint256", indexed: false },
-      { name: "payout", type: "uint256", indexed: false },
-    ],
-    anonymous: false,
-  },
-  {
-    type: "event",
-    name: "MarginAdded",
-    inputs: [
-      { name: "key", type: "bytes32", indexed: true },
-      { name: "trader", type: "address", indexed: true },
-      { name: "amount", type: "uint256", indexed: false },
-      { name: "newMargin", type: "uint256", indexed: false },
-    ],
-    anonymous: false,
-  },
-] as const;
-
 /** Custom errors Pyth can raise while the engine forwards a price update. */
 export const pythErrorsAbi = [
   { type: "error", name: "InsufficientFee", inputs: [] },

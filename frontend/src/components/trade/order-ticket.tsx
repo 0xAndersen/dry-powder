@@ -19,12 +19,12 @@ import { UserFacingError } from "@/lib/errors";
 import { closeFlow, openFlow, waitFor } from "@/lib/flows";
 import { PRICE_DECIMALS, USDC_DECIMALS, fmtAge, fmtPercent, fmtPrice, fmtQty, fmtUsdc, numToPrice, parseAmount, toInputString } from "@/lib/format";
 import { isExpired, isSettled, type Instrument } from "@/lib/instruments";
-import { BPS, DIRECT_MAX_LEVERAGE, ONE, absDiff, baseFee, ceilDiv, liquidationPrice, maxOpenFee, needsKeeperOrders, notionalOf, pricePnl, profitCapPrice, ratio, unitsOf } from "@/lib/math";
+import { BPS, DIRECT_MAX_LEVERAGE, ONE, absDiff, baseFee, ceilDiv, liquidationPrice, maxOpenFee, mergedPosition, needsKeeperOrders, notionalOf, pricePnl, profitCapPrice, ratio, unitsOf } from "@/lib/math";
 import { valuePosition } from "@/lib/position";
 import { prefs } from "@/lib/prefs";
 import { MAX_SLIPPAGE_BPS, tradeSettings } from "@/lib/storage";
 
-type OrderKind = "market" | "limit";
+type OrderKind = "market" | "limit" | "stop";
 type QtyMode = "notional" | "margin" | "contracts" | "risk";
 type TpUnit = "price" | "pct" | "roe" | "r";
 type SlUnit = "price" | "pct" | "roe";
@@ -234,13 +234,17 @@ export const OrderTicket = forwardRef<
 
   // ── Entry reference ──
   const reference = price.reference;
+  // The limit price, or a stop order's trigger: both are typed in the same field.
   const limitPrice = parseAmount(limitText, PRICE_DECIMALS);
   const marketEntry = reference ? (isLong ? reference.ask : reference.bid) : null;
   const limitFillsNow = kind === "limit" && limitPrice && marketEntry ? (isLong ? marketEntry <= limitPrice : marketEntry >= limitPrice) : false;
-  const entry: bigint | null = kind === "market" ? marketEntry : limitPrice && limitPrice > 0n ? (limitFillsNow && marketEntry ? marketEntry : limitPrice) : null;
+  // A stop entry fills once a long's ask is at or above the trigger (a short's bid at or below it).
+  const stopFillsNow = kind === "stop" && limitPrice && marketEntry ? (isLong ? marketEntry >= limitPrice : marketEntry <= limitPrice) : false;
+  const fillsNow = limitFillsNow || stopFillsNow;
+  const entry: bigint | null = kind === "market" ? marketEntry : limitPrice && limitPrice > 0n ? (fillsNow && marketEntry ? marketEntry : limitPrice) : null;
   /** Price the engine validates brackets against when the order is created. */
   const bracketRef: bigint | null =
-    kind === "limit" ? (limitPrice && limitPrice > 0n ? limitPrice : null) : reference ? (publisher ? marketableTrigger(reference, isLong, settings.slippageBps) : marketEntry) : null;
+    kind !== "market" ? (limitPrice && limitPrice > 0n ? limitPrice : null) : reference ? (publisher ? marketableTrigger(reference, isLong, settings.slippageBps) : marketEntry) : null;
 
   // ── Stop-loss (resolved first: risk sizing and R-multiples depend on it) ──
   const slRaw = slText.trim();
@@ -369,7 +373,7 @@ export const OrderTicket = forwardRef<
     query: { enabled: feeQuote.isError && size !== null && size > 0n, refetchInterval: 3_000, placeholderData: keepPreviousData },
   });
   const highLeverage = size !== null && margin !== null && margin > 0n && needsKeeperOrders(size, margin);
-  const keeperOrder = kind === "limit" || publisher || highLeverage;
+  const keeperOrder = kind !== "market" || publisher || highLeverage;
   const feeCeiling = params && size !== null && margin !== null ? maxOpenFee(size, params.baseFeeBps, params.maxSkewFeeBps, margin) : null;
   const feeBase = params && size !== null && margin !== null ? baseFee(size, params.baseFeeBps, margin) : null;
   const openFee = size !== null && size > 0n ? (feeQuote.data ?? legacyFeeQuote.data ?? null) : null;
@@ -422,11 +426,13 @@ export const OrderTicket = forwardRef<
           ? `Your own cap is ${maxLeverage}x (Settings)`
           : `${instrument.symbol} allows up to ${maxLeverage}x`
         : null;
-  const limitError = kind !== "limit" || limitText.trim() === "" ? null : !limitPrice ? "Enter a price greater than zero" : null;
+  const limitError = kind === "market" || limitText.trim() === "" ? null : !limitPrice ? "Enter a price greater than zero" : null;
 
   const refLabel =
     kind === "limit"
       ? "your limit price"
+      : kind === "stop"
+        ? "your stop price"
       : publisher
         ? `${fmtPrice(bracketRef ?? 0n, dp)} (the ${isLong ? "ask" : "bid"} plus your ${(settings.slippageBps / 100).toFixed(2)}% slippage allowance, where the order rests)`
         : `the current ${isLong ? "ask" : "bid"}`;
@@ -450,7 +456,7 @@ export const OrderTicket = forwardRef<
         : stopLoss === null || stopLoss === 0n
           ? "That stop is out of range"
           : bracketRef && (isLong ? stopLoss >= bracketRef : stopLoss <= bracketRef)
-            ? `Stop-loss must be ${isLong ? "below" : "above"} ${kind === "limit" ? "your limit price" : `the ${isLong ? "ask" : "bid"}`}`
+            ? `Stop-loss must be ${isLong ? "below" : "above"} ${kind === "limit" ? "your limit price" : kind === "stop" ? "your stop price" : `the ${isLong ? "ask" : "bid"}`}`
             : entry && (isLong ? stopLoss >= entry : stopLoss <= entry)
               ? `Stop-loss must be ${isLong ? "below" : "above"} the entry price`
               : null;
@@ -471,11 +477,20 @@ export const OrderTicket = forwardRef<
     return null;
   })();
 
-  const restingOpen = account?.orders.find((o) => o.order.orderType === 0 && o.order.priceId.toLowerCase() === instrument.id);
+  // One position per market: an open on the side held adds to it (v3.1); the other side cannot fill while it is open.
+  const sameSide = position ? position.position.isLong === isLong : false;
+  const oppositeSide = position ? position.position.isLong !== isLong : false;
+  const restingOpposite = account?.orders.find(
+    (o) => (o.order.orderType === 0 || o.order.orderType === 4) && o.order.priceId.toLowerCase() === instrument.id && o.order.isLong !== isLong,
+  );
+  const merged =
+    sameSide && position && entry && size !== null && margin !== null && size > 0n ? mergedPosition(position.position, size, margin, entry) : null;
+  const mergedLiq = merged ? liquidationPrice(merged.entryPrice, merged.margin, merged.size, isLong, position?.fundingOwed ?? 0n) : null;
+  const mergedLiqDistance = merged && mergedLiq !== null && mergedLiq > 0n && price.mark ? ratio(absDiff(price.mark, mergedLiq), price.mark) : null;
 
   const blocking: string | null = (() => {
     if (view.watching) return "Watching: trading is off";
-    if (lossLimitReached && !position) return lossLimitReached;
+    if (lossLimitReached && (!position || sameSide)) return lossLimitReached;
     if (paramsError) return "Could not read the engine. Check the RPC";
     if (!params) return "Loading market";
     if (params.paused) return "Trading is paused";
@@ -486,6 +501,7 @@ export const OrderTicket = forwardRef<
     if (kind === "market" && !publisher && price.status !== "live") return "Market closed: the price is stale";
     if (qtyMode === "risk" ? riskText.trim() === "" : qtyText.trim() === "") return qtyMode === "risk" ? "Enter how much to risk" : "Enter a size";
     if (kind === "limit" && limitText.trim() === "") return "Enter a limit price";
+    if (kind === "stop" && limitText.trim() === "") return "Enter a stop price";
     if (limitError) return limitError;
     if (qtyError) return qtyError;
     if (size === null || margin === null) return qtyMode === "risk" ? "Enter a stop-loss to size by risk" : "Enter a size";
@@ -493,7 +509,7 @@ export const OrderTicket = forwardRef<
     if (size < margin) return "Size cannot be smaller than margin";
     if (tpError) return tpError;
     if (slError) return slError;
-    if (position && kind === "market") return "Close or reverse your open position first";
+    if (oppositeSide && kind === "market") return `You hold a ${position!.position.isLong ? "long" : "short"}: close it or reverse`;
     if (capProblem) return capProblem;
     if (balance !== undefined && required !== null && required > balance) return `Not enough ${sym}: ${fmtUsdc(required)} needed`;
     if (view.canTrade && balance === undefined) return "Loading balance";
@@ -501,7 +517,7 @@ export const OrderTicket = forwardRef<
   })();
 
   // ── Chart draft lines ──
-  const draftLimit = kind === "limit" && limitPrice ? Number(limitPrice) / 1e18 : null;
+  const draftLimit = kind !== "market" && limitPrice ? Number(limitPrice) / 1e18 : null;
   const draftTp = takeProfit && !tpError ? Number(takeProfit) / 1e18 : null;
   const draftSl = stopLoss && !slError ? Number(stopLoss) / 1e18 : null;
   useEffect(() => {
@@ -589,7 +605,7 @@ export const OrderTicket = forwardRef<
     if (ok) {
       setTpText("");
       setSlText("");
-      if (kind === "limit") setLimitText("");
+      if (kind !== "market") setLimitText("");
       onSubmitted?.();
     }
   };
@@ -681,12 +697,15 @@ export const OrderTicket = forwardRef<
   const confirmLines: ConfirmLine[] = useMemo(() => {
     if (confirming === "open") {
       return [
-        { label: "Order", value: `${kind === "market" ? (publisher ? "Market (keeper-filled)" : "Market") : "Limit"} ${sideWord} ${instrument.symbol}` },
+        { label: "Order", value: `${kind === "market" ? (publisher ? "Market (keeper-filled)" : "Market") : kind === "stop" ? "Stop entry" : "Limit"} ${sideWord} ${instrument.symbol}` },
+        ...(merged ? [{ label: "Adds to your position", value: `${fmtUsdc(position!.position.size)} → ${fmtUsdc(merged.size)} ${sym}, average entry ${fmtPrice(merged.entryPrice, dp)}` }] : []),
         { label: "Size", value: size !== null ? `${fmtUsdc(size)} ${sym}${units !== null ? ` (${fmtQty(units)} ${instrument.unitLabel})` : ""}` : "—" },
         { label: "Margin and leverage", value: margin !== null ? `${fmtUsdc(margin)} ${sym} at ${leverage.toFixed(1)}x` : "—" },
-        { label: kind === "limit" ? "Limit price" : "Entry estimate", value: entry ? fmtPrice(entry, dp) : "—" },
+        { label: kind === "limit" ? "Limit price" : kind === "stop" ? "Stop price" : "Entry estimate", value: entry ? fmtPrice(entry, dp) : "—" },
         ...(kind === "market" && publisher && bracketRef ? [{ label: "Worst fill accepted", value: fmtPrice(bracketRef, dp) }] : []),
-        { label: "Liquidation price", value: liq === null ? "—" : liq === 0n ? "None" : `${fmtPrice(liq, dp)}${liqDistance !== null ? ` (${fmtPercent(liqDistance, liqDistance < 0.01 ? 2 : 1)} move)` : ""}` },
+        merged
+          ? { label: "Liquidation price after", value: mergedLiq === null ? "—" : mergedLiq === 0n ? "None" : `${fmtPrice(mergedLiq, dp)}${mergedLiqDistance !== null ? ` (${fmtPercent(mergedLiqDistance, mergedLiqDistance < 0.01 ? 2 : 1)} from the mark)` : ""}` }
+          : { label: "Liquidation price", value: liq === null ? "—" : liq === 0n ? "None" : `${fmtPrice(liq, dp)}${liqDistance !== null ? ` (${fmtPercent(liqDistance, liqDistance < 0.01 ? 2 : 1)} move)` : ""}` },
         { label: "Most you can lose", value: maxLoss !== null ? `${fmtUsdc(maxLoss)} ${sym}` : "—" },
         ...(takeProfit ? [{ label: "Take-profit", value: fmtPrice(takeProfit, dp) }] : []),
         ...(stopLoss ? [{ label: "Stop-loss", value: fmtPrice(stopLoss, dp) }] : []),
@@ -694,7 +713,7 @@ export const OrderTicket = forwardRef<
       ];
     }
     return [];
-  }, [confirming, kind, publisher, sideWord, instrument.symbol, instrument.unitLabel, size, units, margin, leverage, entry, bracketRef, liq, liqDistance, maxLoss, takeProfit, stopLoss, required, sym, dp, view.instant]);
+  }, [confirming, kind, publisher, sideWord, instrument.symbol, instrument.unitLabel, size, units, margin, leverage, entry, bracketRef, liq, liqDistance, maxLoss, takeProfit, stopLoss, required, sym, dp, view.instant, merged, mergedLiq, mergedLiqDistance, position]);
 
   // ── Primary button ──
   let button: React.ReactNode;
@@ -718,7 +737,14 @@ export const OrderTicket = forwardRef<
       </button>
     );
   } else {
-    const action = kind === "limit" ? `Place limit ${sideWord}` : `${isLong ? "Buy / Long" : "Sell / Short"} ${instrument.symbol}`;
+    const action =
+      kind === "limit"
+        ? `Place limit ${sideWord}`
+        : kind === "stop"
+          ? `Place stop ${sideWord}`
+          : sameSide
+            ? `Add to ${sideWord}`
+            : `${isLong ? "Buy / Long" : "Sell / Short"} ${instrument.symbol}`;
     button = (
       <button
         type="submit"
@@ -746,9 +772,9 @@ export const OrderTicket = forwardRef<
     <section className="panel" aria-label={`Order ticket for ${instrument.symbol}`}>
       <div className="flex items-center justify-between border-b border-line pr-2">
         <div role="tablist" aria-label="Order type" className="tabs border-b-0">
-          {(["market", "limit"] as const).map((k) => (
-            <button key={k} type="button" role="tab" aria-selected={kind === k} className="tab" onClick={() => setKind(k)}>
-              {k === "market" ? "Market" : "Limit"}
+          {(["market", "limit", "stop"] as const).map((k) => (
+            <button key={k} type="button" role="tab" aria-selected={kind === k} className="tab" onClick={() => setKind(k)} data-testid={`kind-${k}`}>
+              {k === "market" ? "Market" : k === "limit" ? "Limit" : "Stop"}
             </button>
           ))}
         </div>
@@ -870,14 +896,16 @@ export const OrderTicket = forwardRef<
             ? publisher
               ? "Market (keeper-filled, ~1-2 s): a keeper fills your order at the next oracle price."
               : "Market: opens in one transaction at the current Pyth price."
-            : `Limit: a keeper fills it when the ${isLong ? "ask falls to" : "bid rises to"} your price.`}
+            : kind === "stop"
+              ? `Stop entry: a keeper fills it once the ${isLong ? "ask rises to" : "bid falls to"} your price (a breakout ${sideWord}).`
+              : `Limit: a keeper fills it when the ${isLong ? "ask falls to" : "bid rises to"} your price.`}
         </p>
 
-        {kind === "limit" ? (
+        {kind !== "market" ? (
           <div>
             <div className="flex items-baseline justify-between">
               <label className="field-label" htmlFor={`${ids}-limit`}>
-                Limit price
+                {kind === "stop" ? "Stop price" : "Limit price"}
               </label>
               <span className="flex items-center gap-2 text-xs">
                 <button type="button" className="link" onClick={() => onPickRequest("limit")}>
@@ -893,9 +921,10 @@ export const OrderTicket = forwardRef<
               <span className="field-unit">{instrument.quote}</span>
             </div>
             {limitError ? <p className="mt-1 text-xs text-short">{limitError}</p> : null}
-            {limitFillsNow ? (
+            {fillsNow ? (
               <p className="mt-1 text-xs text-warn">
-                The market is already {isLong ? "at or below" : "at or above"} this price, so a keeper fills it right away at about {marketEntry ? fmtPrice(marketEntry, dp) : "market"}.
+                The market is already {kind === "stop" ? (isLong ? "at or above" : "at or below") : isLong ? "at or below" : "at or above"} this price, so a keeper fills it right away at about{" "}
+                {marketEntry ? fmtPrice(marketEntry, dp) : "market"}.
               </p>
             ) : null}
           </div>
@@ -1129,7 +1158,7 @@ export const OrderTicket = forwardRef<
 
         <dl className="grid gap-1.5 text-[0.8125rem]">
           <Row
-            label={kind === "limit" ? "Entry" : "Entry estimate"}
+            label={kind !== "market" ? "Entry" : "Entry estimate"}
             hint={kind === "market" ? "Buys fill at the oracle ask, sells at the bid. The fill is the price a keeper executes against, at most your slippage tolerance away." : undefined}
             value={entry ? fmtPrice(entry, dp) : "—"}
           />
@@ -1196,14 +1225,32 @@ export const OrderTicket = forwardRef<
             Awaiting an on-chain price{price.age !== null ? ` (last one is ${fmtAge(price.age)} old)` : ""}. You can still place the order: a keeper fills it once prices resume, within your slippage of the tape price shown.
           </p>
         ) : null}
-        {position && kind === "limit" ? (
+        {merged ? (
+          <div className="notice" data-testid="adds-to-position">
+            <p className="text-[0.8125rem] text-text">Adds to your {sideWord}</p>
+            <dl className="mt-1.5 grid gap-1 text-xs">
+              <Row label="Size" value={`${fmtUsdc(position!.position.size)} → ${fmtUsdc(merged.size)} ${sym}`} />
+              <Row label="Margin" value={`${fmtUsdc(position!.position.margin)} → ${fmtUsdc(merged.margin)} ${sym} (${ratio(merged.size, merged.margin).toFixed(1)}x)`} />
+              <Row label="Average entry" value={fmtPrice(merged.entryPrice, dp)} />
+              <Row
+                label="Liquidation after"
+                value={mergedLiq === null ? "—" : mergedLiq === 0n ? "None" : `${fmtPrice(mergedLiq, dp)}${mergedLiqDistance !== null ? ` · ${fmtPercent(mergedLiqDistance, mergedLiqDistance < 0.01 ? 2 : 1)} from the mark` : ""}`}
+                tone={mergedLiqDistance !== null && mergedLiqDistance < 0.01 ? "short" : undefined}
+              />
+            </dl>
+            {(takeProfit || stopLoss) && (position!.position.tpOrderId !== 0n || position!.position.slOrderId !== 0n) ? (
+              <p className="mt-1.5 text-xs text-faint">The take-profit / stop-loss set here replace the position&rsquo;s current ones (their execution fee is refunded).</p>
+            ) : null}
+          </div>
+        ) : null}
+        {oppositeSide && kind !== "market" ? (
           <p className="notice" data-tone="warn">
-            You have a position in this market. One position per market: this limit order can only fill after that position is closed.
+            You hold a {position!.position.isLong ? "long" : "short"} here. One position per market: this order can only fill after that position is closed.
           </p>
         ) : null}
-        {restingOpen && !position ? (
+        {restingOpposite && !position ? (
           <p className="notice">
-            Order #{restingOpen.id.toString()} is already resting in this market. Only one position can exist per market, so a second order would stay unfilled once the first one fills.
+            Order #{restingOpposite.id.toString()} on the other side is already resting in this market. One position per market: whichever fills first blocks the other.
           </p>
         ) : null}
 
@@ -1214,7 +1261,7 @@ export const OrderTicket = forwardRef<
 
       {confirming === "open" ? (
         <ConfirmDialog
-          title={`Confirm ${kind === "limit" ? "limit" : "market"} ${sideWord}`}
+          title={`Confirm ${kind === "limit" ? "limit" : kind === "stop" ? "stop" : merged ? "addition to your" : "market"} ${sideWord}`}
           lines={confirmLines}
           note={
             highLeverage
@@ -1223,7 +1270,7 @@ export const OrderTicket = forwardRef<
                 ? "A keeper fills this at the next oracle price, usually within 1-2 seconds. If the price runs past your worst fill, the order rests until it comes back or you cancel it."
                 : undefined
           }
-          confirmLabel={kind === "limit" ? `Place limit ${sideWord}` : `${isLong ? "Buy / Long" : "Sell / Short"}`}
+          confirmLabel={kind === "limit" ? `Place limit ${sideWord}` : kind === "stop" ? `Place stop ${sideWord}` : merged ? `Add to ${sideWord}` : `${isLong ? "Buy / Long" : "Sell / Short"}`}
           tone={isLong ? "long" : "short"}
           allowSkip={!highLeverage}
           onSkipChange={(skip) => setSettings((s) => ({ ...s, oneClick: skip }))}

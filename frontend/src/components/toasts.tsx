@@ -1,6 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import { AppLink } from "@/components/app-link";
 import { emptyToasts, toastStore } from "@/lib/toasts";
 
 export function Toasts() {
@@ -17,6 +18,11 @@ export function Toasts() {
           <div className="min-w-0 flex-1">
             <p className="font-semibold text-text">{t.title}</p>
             {t.body ? <p className="num mt-0.5 text-[0.8125rem] text-muted">{t.body}</p> : null}
+            {t.action ? (
+              <AppLink route={t.action.route} params={t.action.params} className="mt-1 inline-block text-[0.8125rem] text-accent hover:underline" onClick={() => toastStore.dismiss(t.id)}>
+                {t.action.label}
+              </AppLink>
+            ) : null}
           </div>
           <button type="button" className="text-muted hover:text-text" aria-label="Dismiss notification" onClick={() => toastStore.dismiss(t.id)}>
             {"✕"}

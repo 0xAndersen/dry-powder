@@ -346,7 +346,7 @@ export function ActivityScreen() {
                           {orderTypeLabel(e.orderType)} placed <span className={e.isLong ? "text-long" : "text-short"}>{e.isLong ? "long" : "short"}</span>
                         </span>
                       );
-                      size = e.orderType === 0 ? fmtUsdc(e.size, 0) : "—";
+                      size = e.orderType === 0 || e.orderType === 4 || e.size > 0n ? fmtUsdc(e.size, 0) : "—";
                       price = e.triggerPrice === 0n ? "—" : fmtPrice(e.triggerPrice, dp);
                     } else if (e.type === "orderCancelled") {
                       label = <span className="text-muted">Order #{e.orderId.toString()} cancelled</span>;

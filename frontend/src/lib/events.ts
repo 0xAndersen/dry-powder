@@ -1,9 +1,8 @@
 import { encodeEventTopics, numberToHex, pad, parseEventLogs, type Address, type Hex, type PublicClient, type RpcLog } from "viem";
 import { perpEngineAbi } from "./abi";
-import { engineV31EventsAbi } from "./abis-extra";
 
-/** The generated engine ABI plus the v3.1 events (increase, partial close, margin top-up). */
-const ENGINE_EVENTS_ABI = [...perpEngineAbi, ...engineV31EventsAbi] as const;
+/** The generated engine ABI (v3.1: with the increase, partial-close and margin top-up events). */
+const ENGINE_EVENTS_ABI = perpEngineAbi;
 
 /** Engine event log reader: bounded-range `eth_getLogs` back-fill plus a live tail. */
 
@@ -542,7 +541,10 @@ function lower(id: Hex): Hex {
   return id.toLowerCase() as Hex;
 }
 
-export const ORDER_TYPE_LABELS = ["Limit open", "Take-profit", "Stop-loss", "Close"] as const;
+export const ORDER_TYPE_LABELS = ["Limit open", "Take-profit", "Stop-loss", "Close", "Stop entry"] as const;
+
+/** Orders that escrow margin and open (or add to) a position: limit and stop-entry. */
+export const isOpenOrder = (orderType: number) => orderType === 0 || orderType === 4;
 
 export function orderTypeLabel(orderType: number): string {
   return ORDER_TYPE_LABELS[orderType] ?? "Order";

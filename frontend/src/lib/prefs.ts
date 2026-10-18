@@ -10,6 +10,8 @@ export type Prefs = {
   haptics: boolean;
   /** Price and PnL in the browser tab title. */
   titleTicker: boolean;
+  /** Alert when a trader you follow opens, adds to, closes or is liquidated on a position. */
+  followAlerts: boolean;
   /** Stop opening new positions after losing this much (whole collateral units) since 00:00 UTC. Null: no limit. */
   dailyLossLimit: number | null;
   /** Personal leverage cap, below the market maximum. Null: the market's own maximum. */
@@ -21,6 +23,7 @@ export const DEFAULT_PREFS: Prefs = {
   fillNotifications: true,
   haptics: true,
   titleTicker: true,
+  followAlerts: true,
   dailyLossLimit: null,
   maxLeverage: null,
 };
@@ -37,6 +40,7 @@ export const prefs = createLocalStore<Prefs>("dp:prefs:v1", DEFAULT_PREFS, (stor
     fillNotifications: s.fillNotifications !== false,
     haptics: s.haptics !== false,
     titleTicker: s.titleTicker !== false,
+    followAlerts: s.followAlerts !== false,
     dailyLossLimit: positive(s.dailyLossLimit, 1e12),
     maxLeverage: positive(s.maxLeverage, 1000),
   };

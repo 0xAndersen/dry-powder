@@ -1,6 +1,6 @@
 import type { Config } from "wagmi";
 import { readContract, simulateContract, writeContract } from "wagmi/actions";
-import { maxUint256, parseEventLogs, type Address, type Hex, type TransactionReceipt } from "viem";
+import { encodeFunctionData, maxUint256, parseEventLogs, type Address, type Hex, type TransactionReceipt } from "viem";
 import { agentAccountAbi, perpEngineAbi, testUSDCAbi } from "./abi";
 import { erc20Abi, pythAbi } from "./abis-extra";
 import type { RuntimeConfig } from "./config";
@@ -34,7 +34,7 @@ export type ActionContext = {
 /** AgentAccount forwarders plus the engine's errors, so reverts from the engine decode with their names. */
 const ACCOUNT_CALL_ABI = [...agentAccountAbi, ...perpEngineAbi.filter((item) => item.type === "error")] as const;
 
-type EngineFn = "openPosition" | "createLimitOrder" | "closePosition" | "setTriggerOrder" | "cancelOrder" | "claim";
+type EngineFn = "openPosition" | "createLimitOrder" | "closePosition" | "setTriggerOrder" | "cancelOrder" | "claim" | "addMargin";
 
 /**
  * Sends a trading call: straight to the engine from the wallet, or through the AgentAccount from the session key.
@@ -70,7 +70,7 @@ async function sendEngine(ctx: ActionContext, label: string, functionName: Engin
   });
 }
 
-export const ORDER_TYPE = { LimitOpen: 0, TakeProfit: 1, StopLoss: 2, Close: 3 } as const;
+export const ORDER_TYPE = { LimitOpen: 0, TakeProfit: 1, StopLoss: 2, Close: 3, StopOpen: 4 } as const;
 
 /** Makes sure `spender` may pull `amount` of the collateral token, approving when the allowance is short. */
 export async function ensureAllowance(ctx: ActionContext, spender: Address, amount: bigint): Promise<void> {
@@ -149,8 +149,9 @@ export type OpenRequest = {
   isLong: boolean;
   margin: bigint;
   size: bigint;
-  /** "market" uses the venue's market path; "limit" rests at `limitPrice`. */
-  type: "market" | "limit";
+  /** "market" uses the venue's market path; "limit" rests at `limitPrice`; "stop" is a breakout entry at it. */
+  type: "market" | "limit" | "stop";
+  /** The limit price, or the stop-entry trigger. */
   limitPrice: bigint;
   /** Price reference the slippage bound is measured from (market orders). */
   reference: Quote | null;
@@ -178,14 +179,14 @@ export async function submitOpen(ctx: ActionContext, req: OpenRequest, label: st
   const { instrument, isLong, margin, size, takeProfit, stopLoss } = req;
 
   // Above 100x the engine refuses direct opens (they would read a stored price); always use a keeper order.
-  if (req.type === "limit" || cfg.oracleMode === "publisher" || needsKeeperOrders(size, margin)) {
+  if (req.type !== "market" || cfg.oracleMode === "publisher" || needsKeeperOrders(size, margin)) {
     let triggerPrice = req.limitPrice;
     if (req.type === "market") {
       if (!req.reference) throw new UserFacingError("No price is available to anchor the order to yet.");
       triggerPrice = marketableTrigger(req.reference, isLong, req.slippageBps);
     }
     if (triggerPrice === 0n) throw new UserFacingError("Enter a price greater than zero.");
-    const receipt = await sendEngine(ctx, label, "createLimitOrder", [{ priceId: instrument.id, isLong, margin, size, triggerPrice, takeProfit, stopLoss }]);
+    const receipt = await sendEngine(ctx, label, "createLimitOrder", [{ priceId: instrument.id, isLong, margin, size, triggerPrice, takeProfit, stopLoss, stopEntry: req.type === "stop" }]);
     return { receipt, orderId: orderIdFrom(receipt, "OrderCreated"), trigger: triggerPrice };
   }
 
@@ -218,6 +219,8 @@ export type CloseRequest = {
   direct?: boolean;
   /** Leverage above 100x: the engine accepts only keeper-executed closes. */
   highLeverage?: boolean;
+  /** Notional to close; 0 or omitted closes everything (the engine closes everything when the rest would be too small). */
+  size?: bigint;
 };
 
 export type CloseResult = { receipt: TransactionReceipt; orderId: bigint | null; direct: boolean };
@@ -229,9 +232,10 @@ export type CloseResult = { receipt: TransactionReceipt; orderId: bigint | null;
 export async function submitClose(ctx: ActionContext, req: CloseRequest, label: string): Promise<CloseResult> {
   const { cfg, api } = ctx;
   const { instrument, isLong } = req;
+  const size = req.size ?? 0n;
 
   if (instrument.settlementPrice !== 0n) {
-    const receipt = await sendEngine(ctx, label, "closePosition", [instrument.id, 0n, []]);
+    const receipt = await sendEngine(ctx, label, "closePosition", [instrument.id, size, 0n, []]);
     return { receipt, orderId: null, direct: true };
   }
 
@@ -250,23 +254,26 @@ export async function submitClose(ctx: ActionContext, req: CloseRequest, label: 
 
   if (cfg.oracleMode === "publisher" && req.direct) {
     // No update data: this only succeeds while the on-chain price is fresh (the publisher posts about once a second).
-    const receipt = await sendEngine(ctx, label, "closePosition", [instrument.id, worst, []]);
+    const receipt = await sendEngine(ctx, label, "closePosition", [instrument.id, size, worst, []]);
     return { receipt, orderId: null, direct: true };
   }
 
   if (cfg.oracleMode === "publisher" || req.highLeverage) {
     await ensureAllowance(ctx, cfg.perpEngine, req.executionFee);
-    const receipt = await sendEngine(ctx, label, "setTriggerOrder", [instrument.id, ORDER_TYPE.Close, worst]);
+    const receipt = await sendEngine(ctx, label, "setTriggerOrder", [instrument.id, ORDER_TYPE.Close, worst, size]);
     return { receipt, orderId: orderIdFrom(receipt, "OrderCreated") ?? orderIdFrom(receipt, "OrderUpdated"), direct: false };
   }
 
   api.preparing(`Fetching the latest ${instrument.symbol} price`);
   const oracle = await freshOracleUpdate(ctx, instrument);
-  const receipt = await sendEngine(ctx, label, "closePosition", [instrument.id, worst, oracle.updateData], oracle.fee);
+  const receipt = await sendEngine(ctx, label, "closePosition", [instrument.id, size, worst, oracle.updateData], oracle.fee);
   return { receipt, orderId: null, direct: true };
 }
 
-/** Sets or moves a take-profit / stop-loss on the caller's position. Creating one escrows the execution fee. */
+/**
+ * Sets or moves a take-profit / stop-loss on the caller's position. Creating one escrows the execution fee.
+ * `size` is the notional it closes when it fires (0: the whole position).
+ */
 export async function submitTrigger(
   ctx: ActionContext,
   marketId: Hex,
@@ -274,9 +281,39 @@ export async function submitTrigger(
   triggerPrice: bigint,
   executionFee: bigint,
   label: string,
+  size = 0n,
 ): Promise<TransactionReceipt> {
   await ensureAllowance(ctx, ctx.cfg.perpEngine, executionFee);
-  return sendEngine(ctx, label, "setTriggerOrder", [marketId, orderType, triggerPrice]);
+  return sendEngine(ctx, label, "setTriggerOrder", [marketId, orderType, triggerPrice, size]);
+}
+
+/** Adds margin to the caller's position (refused by the engine while it is in profit). */
+export async function submitAddMargin(ctx: ActionContext, marketId: Hex, amount: bigint, label: string): Promise<TransactionReceipt> {
+  await ensureAllowance(ctx, ctx.cfg.perpEngine, amount);
+  return sendEngine(ctx, label, "addMargin", [marketId, amount]);
+}
+
+export type BatchCall = { functionName: EngineFn; args: readonly unknown[]; label: string };
+
+/**
+ * Several trading calls. With instant trading they go out as one atomic transaction (the AgentAccount's
+ * multicall: all or nothing, no pop-up); from a wallet, one transaction each, in order.
+ */
+export async function submitBatch(ctx: ActionContext, label: string, calls: readonly BatchCall[]): Promise<TransactionReceipt[]> {
+  if (calls.length === 0) return [];
+  const { api, session } = ctx;
+  if (session && calls.length > 1) {
+    const data = calls.map((c) => encodeFunctionData({ abi: agentAccountAbi, functionName: c.functionName, args: c.args } as never));
+    const receipt = await api.send(label, async () => {
+      const { client } = session;
+      const { request } = await client.simulateContract({ address: session.account, abi: ACCOUNT_CALL_ABI, functionName: "multicall", args: [data], account: client.account } as never);
+      return client.writeContract({ ...(request as object), ...(await arcFees(client)) } as never);
+    });
+    return [receipt];
+  }
+  const out: TransactionReceipt[] = [];
+  for (const c of calls) out.push(await sendEngine(ctx, c.label, c.functionName, c.args));
+  return out;
 }
 
 export async function submitCancel(ctx: ActionContext, orderId: bigint, label: string): Promise<TransactionReceipt> {

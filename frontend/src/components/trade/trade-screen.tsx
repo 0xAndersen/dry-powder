@@ -17,6 +17,7 @@ import { useChainNow, useMarketData, useMarketPrice } from "@/hooks/use-market-d
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useAccountView } from "@/hooks/use-wallet";
 import { fmtNum, fmtPercent, fmtPrice, fmtUsdc, priceToNum } from "@/lib/format";
+import { isOpenOrder } from "@/lib/events";
 import { findBySlug, groupInstruments, marketSlug, type Instrument } from "@/lib/instruments";
 import { orderTracker } from "@/lib/order-tracker";
 import { valuePosition } from "@/lib/position";
@@ -224,8 +225,8 @@ export function TradeScreen() {
       }
     }
     for (const row of orders) {
-      if (row.order.orderType !== 0 || row.order.priceId.toLowerCase() !== instrument.id) continue;
-      out.push({ key: `order-${row.id}`, price: priceToNum(row.order.triggerPrice), title: `Limit ${row.order.isLong ? "long" : "short"} #${row.id}`, tone: "order" });
+      if (!isOpenOrder(row.order.orderType) || row.order.priceId.toLowerCase() !== instrument.id) continue;
+      out.push({ key: `order-${row.id}`, price: priceToNum(row.order.triggerPrice), title: `${row.order.orderType === 4 ? "Stop" : "Limit"} ${row.order.isLong ? "long" : "short"} #${row.id}`, tone: "order" });
     }
     if (draft.limit !== null) out.push({ key: "draft-limit", price: draft.limit, title: `Draft limit ${draft.isLong ? "long" : "short"}`, tone: "draft" });
     if (!position) {

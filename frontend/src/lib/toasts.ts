@@ -1,8 +1,14 @@
+import type { Route } from "./nav";
+
+/** A link the toast offers, e.g. to the profile of a trader you follow. */
+export type ToastAction = { label: string; route: Route; params?: Record<string, string | null> };
+
 export type Toast = {
   id: number;
   tone: "info" | "ok" | "warn" | "error";
   title: string;
   body?: string;
+  action?: ToastAction;
   /** Unix ms after which it disappears. */
   expires: number;
 };
@@ -32,9 +38,9 @@ export const toastStore = {
 const EMPTY: Toast[] = [];
 export const emptyToasts = (): Toast[] => EMPTY;
 
-export function toast(tone: Toast["tone"], title: string, body?: string, ttlMs = 7_000): void {
+export function toast(tone: Toast["tone"], title: string, body?: string, ttlMs = 7_000, action?: ToastAction): void {
   const id = nextId++;
-  toasts = [...toasts.slice(-4), { id, tone, title, body, expires: Date.now() + ttlMs }];
+  toasts = [...toasts.slice(-4), { id, tone, title, body, action, expires: Date.now() + ttlMs }];
   emit();
   setTimeout(() => toastStore.dismiss(id), ttlMs);
 }

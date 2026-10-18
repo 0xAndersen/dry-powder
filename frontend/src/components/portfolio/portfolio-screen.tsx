@@ -7,17 +7,22 @@ import { PnlCalendar } from "@/components/portfolio/pnl-calendar";
 import { PnlCurve } from "@/components/portfolio/pnl-curve";
 import { Journal } from "@/components/portfolio/journal";
 import { useApp } from "@/components/providers";
+import { ShareSheet } from "@/components/social/share-sheet";
 import { Tip } from "@/components/tip";
 import { useAccountData } from "@/hooks/use-account-data";
 import { useLogFeed } from "@/hooks/use-log-feed";
 import { useChainNow, useMarketData } from "@/hooks/use-market-data";
 import { useTradingAccount } from "@/hooks/use-trading-account";
+import { useLocalStore } from "@/hooks/use-local-store";
 import { useAccountView, useWallet } from "@/hooks/use-wallet";
 import { accountTotals } from "@/lib/account-totals";
 import { closedTrades } from "@/lib/aggregate";
 import { USDC_DECIMALS, fmtAge, fmtCompact, fmtDateTime, fmtDuration, fmtPercent, fmtPrice, fmtUsdc, shortAddress, usdcToNum } from "@/lib/format";
 import { valuePosition } from "@/lib/position";
 import { RISK_TEXT, riskTone } from "@/lib/risk-tone";
+import type { ShareCard } from "@/lib/share-card";
+import { closedTradeCard, openPositionCard, profileCard, profileLink, shareText, type CardContext } from "@/lib/share-data";
+import { follows, nicknameOf } from "@/lib/social";
 import { tradeStats } from "@/lib/trade-stats";
 
 const DAY = 86_400;
@@ -64,6 +69,8 @@ export function PortfolioScreen() {
   const address: Address | undefined = canSwitch ? (showingWallet ? wallet.address : tradingAccount) : view.address;
 
   const [period, setPeriod] = useState<PeriodKey>("7d");
+  const [share, setShare] = useState<{ card: ShareCard; title: string } | null>(null);
+  const [followList] = useLocalStore(follows);
   const since = cfg.overrides.includes("engine") ? null : cfg.deployedAt;
   // Stable per account: changing it would restart the feed. The first read covers a day at most.
   const lookback = useMemo(() => {
@@ -107,6 +114,15 @@ export function PortfolioScreen() {
       return { view: p, inst, value: valuePosition(p, prices.get(id)?.mark ?? null, params.maxProfitMultiple) };
     });
   }, [account.data, params, prices, byId]);
+
+  const periodLabel = period === "all" ? "All time" : `Last ${PERIODS.find((p) => p.key === period)!.label}`;
+  const cardContext = (who: Address): CardContext => ({
+    market: (id) => byId.get(id.toLowerCase()),
+    unit: sym,
+    chainId: cfg.chainId,
+    trader: nicknameOf(followList, who) ?? shortAddress(who),
+    href: typeof window === "undefined" ? "" : window.location.href,
+  });
 
   if (!address) {
     return (
@@ -152,6 +168,16 @@ export function PortfolioScreen() {
           <AppLink route="trader" params={{ address }} className="num text-[0.8125rem] text-muted hover:text-accent" title="Public profile">
             {shortAddress(address)}
           </AppLink>
+          {stats.trades > 0 ? (
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              onClick={() => setShare({ card: profileCard(stats, periodLabel, cardContext(address)), title: "Share your results" })}
+              data-testid="share-results"
+            >
+              Share results
+            </button>
+          ) : null}
         </div>
       </Heading>
 
@@ -267,6 +293,9 @@ export function PortfolioScreen() {
                     <th className="r">Margin</th>
                     <th className="r">PnL</th>
                     <th className="r">To liquidation</th>
+                    <th className="r">
+                      <span className="sr-only">Share</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -291,6 +320,22 @@ export function PortfolioScreen() {
                         <td className={`r num ${t ? RISK_TEXT[t] : ""}`}>
                           {value.liquidatableNow ? "now" : value.liquidationDistance !== null ? `${fmtPercent(value.liquidationDistance, 2)} move` : "none"}
                           {value.liquidationPrice !== null && inst ? <span className="block text-2xs text-faint">at {fmtPrice(value.liquidationPrice, inst.priceDecimals)}</span> : null}
+                        </td>
+                        <td className="r">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-ghost"
+                            disabled={value.pnl === null}
+                            onClick={() =>
+                              setShare({
+                                card: openPositionCard(p, value, prices.get(p.position.priceId.toLowerCase())?.mark ?? null, chainNow, cardContext(address)),
+                                title: "Share this position",
+                              })
+                            }
+                            data-testid="position-share"
+                          >
+                            Share
+                          </button>
                         </td>
                       </tr>
                     );
@@ -342,7 +387,9 @@ export function PortfolioScreen() {
         </section>
       </div>
 
-      <Journal trades={trades} readOnly={view.watching} />
+      <Journal trades={trades} readOnly={view.watching} onShare={(t) => setShare({ card: closedTradeCard(t, cardContext(address)), title: "Share this trade" })} />
+
+      {share ? <ShareSheet card={share.card} title={share.title} text={shareText(share.card)} link={profileLink(address)} onClose={() => setShare(null)} /> : null}
 
       {status.loadedFromTime > 0 && !covered && status.pending === 0 ? (
         <p className="px-1 text-center text-xs text-faint">

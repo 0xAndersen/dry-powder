@@ -1,6 +1,6 @@
 import type { Hex } from "viem";
 import type { EngineEvent } from "./events";
-import { orderTypeLabel } from "./events";
+import { isOpenOrder, orderTypeLabel } from "./events";
 import { formatUnits } from "viem";
 import { fmtUsdc } from "./format";
 
@@ -46,7 +46,7 @@ export function buildHistory(events: readonly EngineEvent[]): { rows: HistoryRow
         rows.push({
           id: e.id, time: e.time, tx: e.tx, marketId: e.marketId, action: "Order placed",
           via: `${orderTypeLabel(e.orderType)} #${e.orderId}`,
-          isLong: e.isLong, size: e.orderType === 0 ? e.size : null, price: e.triggerPrice === 0n ? null : e.triggerPrice,
+          isLong: e.isLong, size: isOpenOrder(e.orderType) || e.size > 0n ? e.size : null, price: e.triggerPrice === 0n ? null : e.triggerPrice,
           pnl: null, fee: null, payout: null, minor: true,
         });
         break;
