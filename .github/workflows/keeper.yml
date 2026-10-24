@@ -1,0 +1,50 @@
+name: Keeper (Arc Testnet)
+
+# Price publisher + keeper for the deployment in deployments/arc-testnet.json. Each run lasts ~5h50m and the
+# schedule starts a new one every 5 hours; a new run cancels the old one, so there is always one keeper.
+on:
+  schedule:
+    - cron: "17 */5 * * *"
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      DEPLOYER_KEY:
+        required: true
+
+concurrency:
+  group: keeper-arc-testnet
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  keeper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 358
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Deployment present?
+        id: dep
+        run: |
+          if test -f deployments/arc-testnet.json; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "No deployment yet."; fi
+      - uses: actions/setup-node@v4
+        if: steps.dep.outputs.ok == 'true'
+        with:
+          node-version: 22
+      - name: Run
+        if: steps.dep.outputs.ok == 'true'
+        working-directory: keeper
+        env:
+          DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}
+          DEPLOYMENT: ../deployments/arc-testnet.json
+          RUN_SECONDS: "20900"
+          HEARTBEAT_SECONDS: ${{ vars.KEEPER_HEARTBEAT_SECONDS || '60' }}
+          MOVE_BPS: ${{ vars.KEEPER_MOVE_BPS || '15' }}
+          PORT: "8080"
+        run: |
+          npm ci
+          ../.github/scripts/keeper-status.sh &
+          node src/main.mjs

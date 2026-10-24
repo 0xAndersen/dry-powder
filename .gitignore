@@ -1,0 +1,16 @@
+.env
+node_modules/
+.next/
+dist/
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/deployments/31337.json
+*.tsbuildinfo
+!ops/dist/
+ops/.env.testnet
+ops/.profile/
+ops/output-testnet/
+frontend/out/
+frontend/e2e/out/
+.status-branch/
