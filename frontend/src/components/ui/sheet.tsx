@@ -3,6 +3,10 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
+/** Open sheets, oldest first. Only the newest one answers Escape and traps Tab, so closing an approval opened over
+ *  another sheet leaves the one underneath open. */
+const openSheets: symbol[] = [];
+
 /**
  * A modal surface: a bottom sheet on phones (thumb-reachable, slides up, respects the home indicator) and a centred
  * dialog from the `sm` breakpoint up. Escape and the backdrop close it; focus moves in and stays in while open.
@@ -37,7 +41,10 @@ export function Sheet({
     (first ?? panel)?.focus();
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    const token = Symbol("sheet");
+    openSheets.push(token);
     const onKey = (event: KeyboardEvent) => {
+      if (openSheets[openSheets.length - 1] !== token) return;
       if (event.key === "Escape") {
         event.preventDefault();
         onCloseRef.current();
@@ -59,6 +66,8 @@ export function Sheet({
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
+      const at = openSheets.indexOf(token);
+      if (at !== -1) openSheets.splice(at, 1);
       document.body.style.overflow = overflow;
       previous?.focus?.();
     };

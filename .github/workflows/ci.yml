@@ -44,7 +44,7 @@ jobs:
         run: for f in *.mjs; do node --check "$f"; done
       - name: Frontend
         working-directory: frontend
-        run: npm ci && npm run typecheck && npm run build:static
+        run: npm ci && npm run typecheck && npm test && npm run build:static
 
   whole-system:
     # Local chain + contracts + mock Kraken + scripted traders, with the production keeper publishing and

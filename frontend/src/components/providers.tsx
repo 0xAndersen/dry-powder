@@ -7,7 +7,10 @@ import type { Chain } from "viem";
 import type { RuntimeConfig } from "@/lib/config";
 import { buildChain } from "@/lib/chain";
 import { KrakenStore } from "@/lib/kraken";
+import { passkeyDescriber } from "@/lib/passkey-describe";
+import { passkeyConnector } from "@/lib/passkey-wallet";
 import { HermesStore } from "@/lib/pyth";
+import { PasskeyApprovals } from "@/components/onboarding/passkey-approvals";
 import { MarketDataProvider } from "@/hooks/use-market-data";
 
 type AppContextValue = {
@@ -59,7 +62,9 @@ export function Providers({ config, children }: { config: RuntimeConfig; childre
   const [wagmiConfig] = useState(() =>
     createConfig({
       chains: [chain],
-      connectors: [injected({ shimDisconnect: true })],
+      // The browser wallet stays first (screens that "connect a wallet" use connectors[0]); the passkey wallet is
+      // reached through the sign-in sheet.
+      connectors: [injected({ shimDisconnect: true }), passkeyConnector({ describe: passkeyDescriber(config) })],
       // Reads issued in the same tick travel in one JSON-RPC batch; no Multicall deployment is assumed.
       // The configured RPC first; on Arc Testnet the other public providers take over if it fails.
       transports: {
@@ -103,6 +108,7 @@ export function Providers({ config, children }: { config: RuntimeConfig; childre
       <QueryClientProvider client={queryClient}>
         <AppContext.Provider value={value}>
           <MarketDataProvider>{children}</MarketDataProvider>
+          <PasskeyApprovals />
         </AppContext.Provider>
       </QueryClientProvider>
     </WagmiProvider>

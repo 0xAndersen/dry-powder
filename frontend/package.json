@@ -8,6 +8,7 @@
     "build:static": "BUILD_TARGET=static next build && node scripts/postexport.mjs",
     "start": "next start",
     "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs",
     "e2e:stack": "node e2e/stack.mjs",
     "e2e": "node e2e/run.mjs",
     "e2e:record": "node e2e/record.mjs"
