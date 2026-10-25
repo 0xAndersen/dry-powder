@@ -37,7 +37,7 @@ How Dry Powder works, in more depth than the README. Addresses: `deployments/arc
 
 ## What v3.2 added (2026-10-25)
 
-- **Turbo markets.** A per-market fee mode. Upside markets (BTC, ETH and EUR to 5000x, gold to 2500x) charge no
+- **Turbo markets.** A per-market fee mode. Upside markets (EUR to 5000x, gold to 2500x, BTC and ETH to 1000x) charge no
   fee unless you win, fill both ways at the oracle mid, and take keeper orders only, so every fill uses a price
   published after the order. The house keeps 20% of a winning close's profit.
 - **Exposure, not notional.** At 5000x notional is thousands of times margin, while the vault can lose at most

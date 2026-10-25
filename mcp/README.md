@@ -2,8 +2,8 @@
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server (stdio) that lets AI agents read Dry Powder
 markets and trade **for one account, with guardrails**. Ported from Project Nexus's MCP server (caps, allowed
-markets, price band, two-step confirmation) onto Dry Powder's on-chain engine; protocol v3.2: Turbo markets to
-5000x (no fee unless you win), good-til-time orders, margin removal, referrals and on-chain strategies.
+markets, price band, two-step confirmation) onto Dry Powder's on-chain engine; protocol v3.2: Turbo markets (no
+fee unless you win, up to 5000x on the euro), good-til-time orders, margin removal, referrals and on-chain strategies.
 
 The safe way to run it is with an **agent account**: an `AgentAccount` contract owned by your wallet, holding the
 trading funds, with this server's key approved as an agent. The agent key can open, add to, close (all or part),
@@ -44,7 +44,7 @@ With `DP_REQUIRE_CONFIRM=true` (default) the first call to `dp_open`, `dp_limit`
 preview and a single-use `confirmToken`, valid for 120 s and only for exactly the same arguments. Pausing a
 strategy needs no confirmation: it only ever reduces risk.
 
-**Turbo markets** (`BTC-USD-TURBO`, `ETH-USD-TURBO`, `EUR-USD-TURBO` to 5000x, `XAU-USD-TURBO` to 2500x) charge
+**Turbo markets** (`BTC-USD-TURBO` and `ETH-USD-TURBO` to 1000x, `EUR-USD-TURBO` to 5000x, `XAU-USD-TURBO` to 2500x) charge
 no fee unless you win: nothing to open or close, fills at the mid, and a winning close pays the house a share of
 its profit (20%; 19% with a referrer). Every quote and preview states the share. At 5000x a 0.018% move
 liquidates; a stop past the liquidation price is refused. `DP_MAX_LEVERAGE` (default 20) still caps them: raise

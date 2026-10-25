@@ -1,7 +1,7 @@
 // Deploys the protocol to the local anvil exactly as on testnet: PublisherOracle in place of Pyth, TestUSDC as
 // collateral, vault/token/engine at addresses predicted from the deployer nonce (the engine is its extension plus
 // the contract that forwards to it), then the lens and the launch markets (perps, a cross, an inverted FX pair, a
-// dated future and the Turbo markets: Upside fee mode, up to 5000x).
+// dated future and the Turbo markets: Upside fee mode, BTC and ETH to 1000x, EUR to 5000x, gold to 2500x).
 import { getContractAddress, keccak256, parseUnits, toHex, zeroHash } from "viem";
 import { BOT, DEPLOYER, FEEDS, UI_TRADER, artifact, log, publicClient, walletClient } from "./lib.mjs";
 
@@ -58,8 +58,8 @@ export async function deploy({ lockSeconds, epochSeconds, streamSeconds, expiryS
     { symbol: "ETH-BTC", marketId: id("ETH-BTC"), feedId: FEEDS.ETH.id, quoteFeedId: FEEDS.BTC.id, invert: false, maxLeverage: 100, expiry: 0 },
     { symbol: datedSymbol, marketId: id(datedSymbol), feedId: FEEDS.BTC.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 250, expiry },
     // Turbo: no fee unless you win, mid-price keeper fills, notional far above margin (see Deploy.s.sol).
-    { symbol: "BTC-USD-TURBO", marketId: id("BTC-USD-TURBO"), feedId: FEEDS.BTC.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 5000, expiry: 0, turbo: true },
-    { symbol: "ETH-USD-TURBO", marketId: id("ETH-USD-TURBO"), feedId: FEEDS.ETH.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 5000, expiry: 0, turbo: true },
+    { symbol: "BTC-USD-TURBO", marketId: id("BTC-USD-TURBO"), feedId: FEEDS.BTC.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 1000, expiry: 0, turbo: true },
+    { symbol: "ETH-USD-TURBO", marketId: id("ETH-USD-TURBO"), feedId: FEEDS.ETH.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 1000, expiry: 0, turbo: true },
     { symbol: "EUR-USD-TURBO", marketId: id("EUR-USD-TURBO"), feedId: FEEDS.EUR.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 5000, expiry: 0, turbo: true },
     { symbol: "XAU-USD-TURBO", marketId: id("XAU-USD-TURBO"), feedId: FEEDS.XAU.id, quoteFeedId: zeroHash, invert: false, maxLeverage: 2500, expiry: 0, turbo: true },
   ];

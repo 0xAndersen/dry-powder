@@ -1,6 +1,6 @@
 // End-to-end check of the SDK against the local stack (frontend/e2e/with-keeper.sh starts chain + keeper):
 //   cd sdk && npm run build && node test/smoke.mjs
-// A wallet trades 1000x BTC through keeper orders with a stop, then Turbo at 5000x (no fee unless you win) with
+// A wallet trades 1000x BTC through keeper orders with a stop, then euro Turbo at 5000x (no fee unless you win) with
 // a stop and an expiry, takes margin out of a position and sets a referrer. Then an owner creates an agent
 // account, approves an agent key with a daily budget; the agent trades 500x from it, runs into the budget,
 // lets an order expire, and starts a strategy the owner approved; the owner lists the account in the registry.
@@ -63,14 +63,14 @@ assert.equal(await dp.waitForFill(closed.orderId, 60_000), "done");
 assert.equal(await posIn(dp, btc), undefined, "the close order closed the position");
 step("closed through the keeper");
 
-// 2. Turbo at 5000x: no fee to open or close, mid fills, a stop inside the 0.018% liquidation distance, and an
-// order that cannot fill after 60 s.
-const turbo = await dp.market("BTC-TURBO");
+// 2. Turbo at 5000x (the euro; BTC and ETH Turbo stop at 1000x): no fee to open or close, mid fills, a stop inside
+// the 0.018% liquidation distance, and an order that cannot fill after 60 s.
+const turbo = await dp.market("EUR-TURBO");
 assert.equal(turbo.feeModel, "upside");
 assert.equal(turbo.maxLeverage, 5000);
 const mid = (turbo.price ?? turbo.lastPrice).mid;
 const tStop = (mid * 99_990n) / 100_000n;
-const tq = await dp.quote({ market: "BTC-TURBO", side: "long", margin: usd(10), leverage: 5000, stopLoss: tStop, expiresIn: 60 });
+const tq = await dp.quote({ market: "EUR-TURBO", side: "long", margin: usd(10), leverage: 5000, stopLoss: tStop, expiresIn: 60 });
 assert.equal(tq.openFee, 0n);
 assert.equal(tq.required, usd(10) + 2n * 100_000n, "margin and two keeper fees (order and stop), no fee budget");
 assert.equal(tq.risk.maxProfit, usd(80), "10x margin less the 20% share");
@@ -79,7 +79,7 @@ assert.match(tq.feeNote, /No fee unless you win/);
 assert.ok(tq.expiresAt > 0);
 step(`turbo quote: ${tq.feeNote}`);
 const before = await dp.balance();
-const t = await dp.open({ market: "BTC-TURBO", side: "long", margin: usd(10), leverage: 5000, stopLoss: tStop, expiresIn: 60 });
+const t = await dp.open({ market: "EUR-TURBO", side: "long", margin: usd(10), leverage: 5000, stopLoss: tStop, expiresIn: 60 });
 const tOrder = (await dp.orders()).find((o) => o.id === t.orderId);
 if (tOrder) assert.equal(tOrder.expiresAt, t.quote.expiresAt, "the order carries its expiry");
 if ((await dp.waitForFill(t.orderId, 60_000)) === "resting") {
@@ -87,7 +87,7 @@ if ((await dp.waitForFill(t.orderId, 60_000)) === "resting") {
   step("turbo order left resting (price ran through the stop); cancelled");
 } else if (await posIn(dp, turbo)) {
   try {
-    const c = await dp.close("BTC-TURBO");
+    const c = await dp.close("EUR-TURBO");
     assert.ok(c.orderId, "Turbo closes through a keeper order");
     await dp.waitForFill(c.orderId, 60_000);
     step(`turbo position opened and closed: ${fromUsd((await dp.balance()) - before)} net`);

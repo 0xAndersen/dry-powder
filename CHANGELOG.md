@@ -6,7 +6,10 @@
 - A fee mode per market. Upside (Turbo) markets charge nothing to open or close and keep `profitShareBps` (20%) of
   a winning close's profit, rounded up; they fill both ways at the oracle mid and take keeper orders only
   (`OrdersOnly`), so every fill uses a price published after the order. The mode can change only while a market
-  has no open interest. Launch set: BTC, ETH and EUR Turbo to 5000x, gold Turbo to 2500x (`MAX_LEVERAGE` 5000).
+  has no open interest. Launch set: EUR Turbo to 5000x, gold Turbo to 2500x, BTC and ETH Turbo to 1000x
+  (`MAX_LEVERAGE` 5000). BTC and ETH stop at 1000x because of what the simulation found: at a ~3 s keeper tick the
+  price runs past a 5000x liquidation by about half a margin, and a hedged pair on two accounts keeps that on its
+  winning leg while the liquidated leg loses only its margin (SECURITY.md).
 - The vault's risk in exposure, not notional: a side's exposure is its open interest, at most its margin times
   the profit cap. The vault cap, the withdrawal reserve and the mark use it, and the mark holds each side between
   losing its margin and winning its cap (N-03 fixed: an uncollectable loss no longer hides a winner).

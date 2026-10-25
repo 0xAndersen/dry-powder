@@ -1,7 +1,7 @@
 # @dry-powder/sdk
 
 TypeScript SDK for [Dry Powder](https://0xandersen.github.io/dry-powder/trade/), the open, risk-first perps venue
-on Arc (USDC gas). Markets, worst-case quotes, keeper-filled orders up to 5000x on the Turbo markets (no fee
+on Arc (USDC gas). Markets, worst-case quotes, keeper-filled orders up to 5000x on euro Turbo (no fee
 unless you win), stops, good-til-time orders, on-chain strategies, and agent accounts that let a bot trade but
 never withdraw. Built on [viem](https://viem.sh). Version 0.4 targets protocol v3.2 deployments.
 
@@ -29,13 +29,13 @@ await dp.close("BTC"); // above 100x this is a keeper Close order
 
 ## Turbo: up to 5000x, no fee unless you win
 
-`BTC-USD-TURBO`, `ETH-USD-TURBO`, `EUR-USD-TURBO` (5000x) and `XAU-USD-TURBO` (2500x) charge nothing to open or
+`BTC-USD-TURBO`, `ETH-USD-TURBO` (1000x), `EUR-USD-TURBO` (5000x) and `XAU-USD-TURBO` (2500x) charge nothing to open or
 close and fill at the oracle mid. A winning close pays the house a share of its profit (`profitShareBps`, 20%;
 19% with a referrer); a loss costs the margin and nothing more. They trade through keeper orders only, which
 `open()` and `close()` place.
 
 ```ts
-const q = await dp.quote({ market: "BTC-TURBO", side: "long", margin: usd(10), leverage: 5000 });
+const q = await dp.quote({ market: "EUR-TURBO", side: "long", margin: usd(10), leverage: 5000 });
 q.feeModel;          // "upside"
 q.openFee;           // 0n; q.required is margin + keeper fees
 q.risk.maxLoss;      // margin + keeper fees
@@ -44,7 +44,7 @@ q.risk.liquidationMove; // 0.018%: same liquidation and profit-cap prices as any
 
 // A stop inside the liquidation distance, and an order that cannot fill after 30 s.
 const stop = (q.entry * 99_990n) / 100_000n;
-const o = await dp.open({ market: "BTC-TURBO", side: "long", margin: usd(10), leverage: 5000, stopLoss: stop, expiresIn: 30 });
+const o = await dp.open({ market: "EUR-TURBO", side: "long", margin: usd(10), leverage: 5000, stopLoss: stop, expiresIn: 30 });
 ```
 
 `settle({ pnl, margin, feeModel })` is the engine's settlement as a pure function (close fee or profit share,
@@ -100,7 +100,7 @@ await dp.rebates();                 // DRY minted on net losses only: { dry, net
 
 | Rule | Value |
 | --- | --- |
-| Leverage | BTC, ETH 1000x; SOL, EUR, gold 500x; BTC future 250x; JPY, ETH-BTC 100x; Turbo BTC, ETH, EUR 5000x, gold 2500x |
+| Leverage | BTC, ETH 1000x; SOL, EUR, gold 500x; BTC future 250x; JPY, ETH-BTC 100x; Turbo EUR 5000x, gold 2500x, BTC and ETH 1000x |
 | Keeper orders | Above 100x and in every Turbo market; they always fill at a price published after the order |
 | Liquidation | When losses plus funding reach 90% of margin. You can never lose more than margin plus fees |
 | Fees | Standard: 5 bp of size plus a skew surcharge, capped at 10% of margin per side. Turbo: none; a share of a win |

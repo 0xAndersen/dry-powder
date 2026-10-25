@@ -221,8 +221,13 @@ contract Deploy is Script {
             MarketConfig(futureSymbol, BTC_USD, 0, false, 250, d.futureExpiry, MAX_OI_PER_SIDE, SKEW_SCALE)
         );
         // Turbo markets: Upside fee mode (no fee unless you win, mid-price fills, keeper orders only).
-        _listTurbo(d, 8, "BTC-USD-TURBO", BTC_USD, 5000);
-        _listTurbo(d, 9, "ETH-USD-TURBO", ETH_USD, 5000);
+        // Leverage per market is set by how far the price can run past a liquidation between two keeper ticks. With
+        // no spread and no fee, a hedged pair on two accounts keeps that overshoot on its winning leg while the
+        // liquidated leg loses only its margin: at the keeper's ~3 s tick it pays on BTC and ETH above about 1000x,
+        // and stays a loss for the pair on EUR at 5000x and gold at 2500x even on a day twice as volatile
+        // (the v3.2 simulation; SECURITY.md). A one-second keeper would allow 2000x on BTC and ETH.
+        _listTurbo(d, 8, "BTC-USD-TURBO", BTC_USD, 1000);
+        _listTurbo(d, 9, "ETH-USD-TURBO", ETH_USD, 1000);
         _listTurbo(d, 10, "EUR-USD-TURBO", EUR_USD, 5000);
         _listTurbo(d, 11, "XAU-USD-TURBO", XAU_USD, 2500);
     }

@@ -6,8 +6,9 @@
 //   MARKET=ETH-TURBO SIDE=short LEVERAGE=1000 STOP_BPS=5 HOLD_SECONDS=60 KEY=0x… node turbo-stop.mjs
 //
 // Turbo markets charge no fee to open or close and fill at the oracle mid; a winning close pays the house a share
-// of its profit, a loss costs the margin and nothing more. At 5000x a 0.018% move liquidates, so the stop has to
-// sit inside that: the script refuses a stop past the liquidation price.
+// of its profit, a loss costs the margin and nothing more. BTC and ETH Turbo go to 1000x, the euro to 5000x and gold
+// to 2500x. At 5000x a 0.018% move liquidates, so the stop has to sit inside that: the script refuses a stop past
+// the liquidation price.
 import { DryPowder, DryPowderError, fromPrice, fromUsd, pct, usd } from "@dry-powder/sdk";
 import { privateKeyToAccount } from "viem/accounts";
 

@@ -105,6 +105,17 @@ The engine no longer fits in one contract, so it is split in two.
   A liquidation always moves the whole margin to the vault, so at 5000x the risk is on the profit side, which the
   cap and keeper-only fills bound. Accepted: at 5000x the liquidation threshold is a 0.018% move, so the
   publisher's price noise decides most outcomes; on testnet the publisher is trusted (below).
+- **Turbo leverage is set by the keeper's tick.** Between two keeper ticks the price can run past a liquidation.
+  The liquidated position loses only its margin; a position on the other side keeps the whole move. In Standard
+  markets the spread and fees absorb this; Turbo markets have neither. The v3.2 simulation (a ~3 s keeper tick)
+  found that a hedged pair on two accounts, one leg liquidated and the other closed past it, takes money from the
+  vault on BTC and ETH above about 1000x: at 5000x the pair keeps about 0.12 of a margin per round on an ordinary
+  day and 0.57 on a day twice as volatile, which turned the simulated month from +$700k to -$210k when 5% of
+  accounts farmed it. EUR at 5000x and gold at 2500x stay a loss for the pair even on the volatile day. So the
+  launch lists BTC and ETH Turbo at 1000x, where the house keeps 0.16 to 0.18 of a margin per pair (0.06 to 0.11
+  on the volatile day); a one-second keeper would allow 2000x. Raising any Turbo cap needs the same check, and
+  `setMarket` can lower one. Tests: one basis point past the liquidation leaves a pair +0.9 on 20 of margin at
+  5000x and -2.3 at 1000x (`test_upside_hedgedPairKeepsTheOvershoot_at5000x`, `..._at1000x`).
 - **The mark holds each side between its margin and its capped profit** (fixes N-03). Unrealised losses beyond
   margin no longer offset winners in the vault's marked value, so an LP cannot leave ahead of a gap at an inflated
   price. Regression: `test_N03_markBoundsEachSideSoAnUncollectableLossNoLongerMasksAWinner`.
@@ -166,6 +177,10 @@ Found and fixed while testing v2:
 ## Open
 
 **Medium**
+- **Turbo's margin of safety depends on keeper speed and volatility.** The overshoot a hedged pair keeps grows with
+  leverage x volatility x the square root of the keeper's tick. At the launch caps it is a loss for the pair even on
+  a day twice as volatile as usual, but a keeper that falls behind or a much larger volatility spike can turn it.
+  Watch the keeper's tick, and lower the cap (`setMarket`) or pause before a known event.
 - **Hedged pairs can still buy DRY** (N-07, reduced in v3.2). Minting on net results with a 1%-of-notional cap
   and decay makes it about eight times dearer, but a pair on two accounts still mints on its losing account.
   LPs are not harmed; honest stakers are diluted.

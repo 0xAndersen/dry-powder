@@ -32,7 +32,7 @@ that liquidates you, and the most you can make.
 
 ![The trade screen: the risk card leads the ticket, the account bar shows the nearest liquidation](media/brand-trade.png)
 
-Markets: BTC, ETH and EUR Turbo (5000x), gold Turbo (2500x); BTC, ETH (1000x); SOL, EUR, gold (500x); a dated
+Markets: EUR Turbo (5000x), gold Turbo (2500x), BTC and ETH Turbo (1000x); BTC, ETH (1000x); SOL, EUR, gold (500x); a dated
 BTC future (250x); JPY, ETH-BTC (100x).
 
 ## Start here

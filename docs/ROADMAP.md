@@ -191,7 +191,8 @@ in `SECURITY.md`), and takes the rest as the list below.
 
 Shipped in v3.2 on top of the list:
 
-- **Turbo markets**: BTC, ETH and EUR to 5000x, gold to 2500x; no fee unless you win, mid-price keeper fills.
+- **Turbo markets**: EUR to 5000x, gold to 2500x, BTC and ETH to 1000x; no fee unless you win, mid-price keeper
+  fills.
 - **Simple and Advanced**: two apps in one. Simple is a tile per market, up or down, and one sheet with what you
   can win and lose; Advanced is the terminal.
 - **Agent Studio**: build, replay on past prices, launch and manage trend, mean-reversion and copy strategies

@@ -220,6 +220,35 @@ contract EngineV32Test is Base {
         _assertEngineSolvent();
     }
 
+    /// Why BTC and ETH Turbo launch at 1000x. Between two keeper ticks the price can run past a liquidation: the
+    /// liquidated leg of a hedged pair loses only its margin while the other leg keeps the whole move, and Turbo has no
+    /// spread or fee to absorb it. One basis point past the liquidation price (about what a ~3 s keeper tick adds on
+    /// bitcoin) is half a margin at 5000x, so the pair ends ahead even after the 20% share; at 1000x it is a tenth of
+    /// a margin and the pair loses.
+    function test_upside_hedgedPairKeepsTheOvershoot_at5000x() public {
+        assertEq(_hedgedPairResult(5000), 0.9e6); // +14 on the short, less 2.8 of share, less 0.3 of keeper fees
+    }
+
+    function test_upside_hedgedPairLosesTheOvershoot_at1000x() public {
+        assertEq(_hedgedPairResult(1000), -2.3e6); // +10 on the short, less 2 of share, less 0.3 of keeper fees
+    }
+
+    /// @dev Alice long and bob short, 10 of margin each at `lev`; bitcoin falls through alice's liquidation price and
+    ///      one basis point beyond; alice is liquidated there and bob closes there. The pair's net, in USDC.
+    function _hedgedPairResult(uint256 lev) internal returns (int256 net) {
+        uint256 before = _bal(alice) + _bal(bob);
+        uint256 size = 10e6 * lev;
+        bytes32 longKey = _turbo(alice, true, 10e6, size, 100_000, 0);
+        _turbo(bob, false, 10e6, size, 100_000, 0);
+        uint256 low = 100_000 - (100_000 * 9) / (lev * 10) - 10; // 90% of margin, then one basis point more
+        _setPrice(BTC, int64(uint64(low * 1e8)), 0, -8);
+        vm.prank(keeper);
+        engine.liquidateBatch(_keys(longKey), _noBytes());
+        _closeVia(bob, TURBO, low, 0);
+        net = int256(_bal(alice) + _bal(bob)) - int256(before);
+        _assertEngineSolvent();
+    }
+
     /// The vault cap is measured in exposure: a 5000x position counts for its capped profit, so 5M of notional
     /// fits a 1M vault whose notional cap would have been 3M.
     function test_exposure_letsHighLeverageFitTheVaultCap() public {

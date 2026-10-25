@@ -9,12 +9,12 @@ linked from there (`appUrl`). The engine is one address (`engine`); everything e
 - A USDC vault takes the other side of every trade at the oracle price. No order book: any size up to a market's
   open-interest cap and the vault's exposure cap fills.
 - Two fee models. Standard markets fill at the bid (sells) or ask (buys) and charge a fee on notional plus a skew
-  surcharge at open and at close, each capped at 10% of margin. Turbo markets (`BTC-USD-TURBO`, `ETH-USD-TURBO`,
-  `EUR-USD-TURBO` 5000x, `XAU-USD-TURBO` 2500x; `feeMode` 1, Upside) charge no fee unless you win: they fill at
+  surcharge at open and at close, each capped at 10% of margin. Turbo markets (`BTC-USD-TURBO` and `ETH-USD-TURBO`
+  1000x, `EUR-USD-TURBO` 5000x, `XAU-USD-TURBO` 2500x; `feeMode` 1, Upside) charge no fee unless you win: they fill at
   the mid, nothing to open or close, and a winning close pays the house `profitShareBps` (20%) of its profit.
 - Positions are sized in USDC notional; margin = size / leverage; one position per market per trader. An open
   on the side you hold adds to it (entry blended, rounded against you); the other side reverts `PositionExists`.
-- Leverage up to each market's maximum (BTC and ETH 1000x, Turbo 5000x). Above 100x, and always in Turbo,
+- Leverage up to each market's maximum (BTC and ETH 1000x, euro Turbo 5000x). Above 100x, and always in Turbo,
   open and close only through keeper orders (`createLimitOrder`, `setTriggerOrder(…, 3, …, size)`); direct
   `openPosition`/`closePosition` revert `HighLeverageNeedsOrder` (Turbo: `OrdersOnly`).
 - Liquidation when losses reach 90% of margin (a 0.09% move at 1000x, 0.018% at 5000x); profit per position

@@ -26,6 +26,7 @@ const show = async (market, leverages) => {
 await show("BTC-USD", [5, 25, 100, 250, 1000]);
 // Turbo: no fee to open or close, mid-price fills; a winning close pays the house a share of its profit.
 if (markets.some((m) => m.symbol === "BTC-USD-TURBO")) {
-  await show("BTC-USD-TURBO", [100, 1000, 2500, 5000]);
+  await show("BTC-USD-TURBO", [100, 250, 500, 1000]);
+  if (markets.some((m) => m.symbol === "EUR-USD-TURBO")) await show("EUR-USD-TURBO", [500, 1000, 2500, 5000]);
   console.log(`\n${(await dp.quote({ market: "BTC-USD-TURBO", side: "long", margin: usd(10), leverage: 1000 })).feeNote}`);
 }

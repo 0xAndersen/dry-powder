@@ -127,8 +127,8 @@ contract DeployTest is Test {
         _assertMarket(d, 5, XAU, "XAU-USD", XAU, 0, false, 500, 0);
         _assertMarket(d, 6, keccak256("ETH-BTC"), "ETH-BTC", ETH, BTC, false, 100, 0);
         _assertMarket(d, 7, keccak256(bytes(futureSymbol)), futureSymbol, BTC, 0, false, 250, expiry);
-        _assertTurbo(d, 8, "BTC-USD-TURBO", BTC, 5000);
-        _assertTurbo(d, 9, "ETH-USD-TURBO", ETH, 5000);
+        _assertTurbo(d, 8, "BTC-USD-TURBO", BTC, 1000);
+        _assertTurbo(d, 9, "ETH-USD-TURBO", ETH, 1000);
         _assertTurbo(d, 10, "EUR-USD-TURBO", EUR, 5000);
         _assertTurbo(d, 11, "XAU-USD-TURBO", XAU, 2500);
     }
