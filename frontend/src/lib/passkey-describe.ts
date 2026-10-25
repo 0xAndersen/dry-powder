@@ -1,7 +1,19 @@
 // Plain-language descriptions of what a passkey-wallet request does, for the app's approval step: which contract,
 // which action, what it sends and the most it can cost in gas.
 import { decodeFunctionData, formatEther, formatUnits, type Abi, type Address } from "viem";
-import { agentAccountAbi, agentAccountFactoryAbi, houseVaultAbi, perpEngineAbi, rewardTokenAbi, testUSDCAbi, trailingStopsAbi, twapOrdersAbi } from "./abi";
+import {
+  agentAccountAbi,
+  agentAccountFactoryAbi,
+  agentRegistryAbi,
+  houseVaultAbi,
+  perpEngineAbi,
+  prizeDistributorAbi,
+  rewardTokenAbi,
+  strategiesAbi,
+  testUSDCAbi,
+  trailingStopsAbi,
+  twapOrdersAbi,
+} from "./abi";
 import { CCTP } from "./cctp-core";
 import type { RuntimeConfig } from "./config";
 import { shortAddress } from "./format";
@@ -23,6 +35,9 @@ const ABIS: readonly Abi[] = [
   rewardTokenAbi,
   trailingStopsAbi,
   twapOrdersAbi,
+  strategiesAbi,
+  agentRegistryAbi,
+  prizeDistributorAbi,
   CCTP_RECEIVE_ABI,
   GATEWAY_MINT_ABI,
 ] as unknown as readonly Abi[];
@@ -50,6 +65,22 @@ const ACTIONS: Record<string, string> = {
   setTriggerOrder: "Set a take-profit, stop-loss or close order",
   cancelOrder: "Cancel an order",
   addMargin: "Add margin",
+  removeMargin: "Take margin out of a position",
+  createLimitOrderUntil: "Place an order with an expiry",
+  setOrderExpiry: "Change when an order expires",
+  cancelExpired: "Remove expired orders",
+  setReferrer: "Record who referred you (once)",
+  claim: "Collect USDC owed to you",
+  multicall: "Run several actions on your trading account at once",
+  setAgentBudget: "Set a trading key's daily budget",
+  setMarketAllowed: "Choose which markets a trading key may trade",
+  create: "Launch a strategy",
+  pause: "Pause a strategy",
+  resume: "Resume a strategy",
+  stop: "Stop a strategy for good",
+  register: "List your trading account as an agent",
+  update: "Update your agent listing",
+  unregister: "Remove your agent listing",
   receiveMessage: "Receive USDC sent with CCTP",
   gatewayMint: "Receive USDC from your Gateway balance",
 };
@@ -63,6 +94,9 @@ function contractNames(cfg: RuntimeConfig): Map<string, string> {
     [cfg.agentFactory, "Trading account factory"],
     [cfg.trailingStops, "Trailing stops"],
     [cfg.twapOrders, "TWAP orders"],
+    [cfg.strategies, "Strategies"],
+    [cfg.agentRegistry, "Agent registry"],
+    [cfg.prizeDistributor, "Season prizes"],
     [CCTP.messageTransmitter, "CCTP message transmitter"],
   ];
   return new Map(entries.filter((e): e is [string, string] => e[0] !== null).map(([a, n]) => [a.toLowerCase(), n]));
@@ -92,7 +126,7 @@ export function passkeyDescriber(cfg: RuntimeConfig): Describer {
     transaction(tx: TxPreview) {
       const call = decode(tx.data);
       const lines: ApprovalLine[] = [];
-      const target = call && /^(setAgent|revokeAgent|withdraw|multicall)$/.test(call.name) && !names.has(tx.to?.toLowerCase() ?? "") ? "Your trading account" : nameOf(tx.to);
+      const target = call && /^(setAgent|revokeAgent|withdraw|multicall|setAgentBudget|setMarketAllowed)$/.test(call.name) && !names.has(tx.to?.toLowerCase() ?? "") ? "Your trading account" : nameOf(tx.to);
       lines.push({ label: "With", value: target });
       if (call) {
         // The title names the action; functions without a plain-language name show theirs here.
