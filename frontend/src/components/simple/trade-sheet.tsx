@@ -20,7 +20,7 @@ import { perpEngineAbi } from "@/lib/abi";
 import { TEST_MINT_AMOUNT, submitTestMint } from "@/lib/actions";
 import { UserFacingError } from "@/lib/errors";
 import { openFlow } from "@/lib/flows";
-import { USDC_DECIMALS, fmtNum, fmtPrice, fmtUsdc, parseAmount } from "@/lib/format";
+import { USDC_DECIMALS, fmtBps, fmtNum, fmtPrice, fmtUsdc, parseAmount } from "@/lib/format";
 import { isExpired, isSettled, type Instrument } from "@/lib/instruments";
 import { BPS, DIRECT_MAX_LEVERAGE, absDiff, baseFee, liquidationPrice, maxOpenFee, needsKeeperOrders, ratio } from "@/lib/math";
 import { prefs } from "@/lib/prefs";
@@ -77,18 +77,24 @@ export function TradeSheet({
   const [protect, setProtect] = useState(true);
 
   const isLong = dir !== "down";
+  // Turbo (Upside fee mode): no fee to open or close, fills at the mid, keeper orders only, and the house keeps a
+  // share of a winning close's profit.
+  const upside = instrument.upside;
+  const shareBps = upside ? (params?.profitShareBps ?? 2_000n) : 0n;
+  const afterShare = (gain: bigint) => (upside ? gain - (gain * shareBps) / BPS : gain);
   const margin = amountPick === "other" ? (parseAmount(otherText, USDC_DECIMALS) ?? 0n) : BigInt(amountPick) * UNIT;
   const size = margin * BigInt(lev);
   const reference = price.reference;
-  const entry = reference ? (isLong ? reference.ask : reference.bid) : null;
+  const entry = reference ? (upside ? reference.mid : isLong ? reference.ask : reference.bid) : null;
   const balance = account.data?.balance;
 
   // The fuse: how far the price can move against the trade before it closes on its own.
   const liq = entry && size > 0n ? liquidationPrice(entry, margin, size, isLong) : null;
   const liqMove = entry && liq !== null ? (liq === 0n ? null : ratio(absDiff(entry, liq), entry)) : null;
-  const perPercent = size / 100n;
-  const maxWin = params ? margin * params.maxProfitMultiple : null;
-  const capMove = maxWin !== null && size > 0n ? ratio(maxWin, size) : null;
+  const perPercent = afterShare(size / 100n);
+  const maxWinGross = params ? margin * params.maxProfitMultiple : null;
+  const maxWin = maxWinGross !== null ? afterShare(maxWinGross) : null;
+  const capMove = maxWinGross !== null && size > 0n ? ratio(maxWinGross, size) : null;
 
   // "Stop at half": close once the trade has lost about half of what was put in. Offered up to 100x, where the
   // stop has room to sit inside the fuse.
@@ -107,14 +113,17 @@ export function TradeSheet({
     chainId: cfg.chainId,
     functionName: "quoteOpenFee",
     args: [instrument.id, size, isLong, margin],
-    query: { enabled: size > 0n && margin > 0n, refetchInterval: 5_000, placeholderData: keepPreviousData },
+    query: { enabled: !upside && size > 0n && margin > 0n, refetchInterval: 5_000, placeholderData: keepPreviousData },
   });
-  const keeperOrder = cfg.oracleMode === "publisher" || (size > 0n && needsKeeperOrders(size, margin));
+  const keeperOrder = upside || cfg.oracleMode === "publisher" || (size > 0n && needsKeeperOrders(size, margin));
   const executions = (keeperOrder ? 1 : 0) + (stopLoss ? 1 : 0);
   const executionFees = params ? params.executionFee * BigInt(executions) : null;
-  const openFee = feeQuote.data ?? (params && size > 0n ? baseFee(size, params.baseFeeBps, margin) : null);
-  const required = params && executionFees !== null && size > 0n ? margin + maxOpenFee(size, params.baseFeeBps, params.maxSkewFeeBps, margin) + executionFees : null;
+  const openFee = upside ? 0n : (feeQuote.data ?? (params && size > 0n ? baseFee(size, params.baseFeeBps, margin) : null));
+  const feeEscrow = upside || !params ? 0n : maxOpenFee(size, params.baseFeeBps, params.maxSkewFeeBps, margin);
+  const required = params && executionFees !== null && size > 0n ? margin + feeEscrow + executionFees : null;
   const fees = openFee !== null && executionFees !== null ? openFee + executionFees : null;
+  // A Turbo trade also closes through a keeper order: one more execution fee when you cash out.
+  const closeExecution = upside && params ? params.executionFee : 0n;
 
   const expired = isExpired(instrument, chainNow);
   const settled = isSettled(instrument);
@@ -218,7 +227,7 @@ export function TradeSheet({
   return (
     <Sheet
       title={name}
-      description={`${instrument.symbol}, up to ${instrument.maxLeverage}x`}
+      description={upside ? `Up to ${instrument.maxLeverage}x. No trading fee unless you win.` : `${instrument.symbol}, up to ${instrument.maxLeverage}x`}
       onClose={onClose}
       testId="simple-trade"
       footer={
@@ -322,13 +331,29 @@ export function TradeSheet({
             </div>
             <div className="flex justify-between gap-3">
               <dt className="text-muted">Most you can lose</dt>
-              <dd className="s-num text-short">{fmtUsdc(margin + (fees ?? 0n))} {sym}</dd>
+              <dd className="s-num text-short">{fmtUsdc(margin + (fees ?? 0n) + closeExecution)} {sym}</dd>
             </div>
-            <div className="flex justify-between gap-3">
-              <dt className="text-muted">Fees</dt>
-              <dd className="s-num">{fees !== null ? `about ${fmtUsdc(fees)} ${sym}` : "—"}</dd>
-            </div>
+            {upside ? (
+              <>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-muted">Trading fee</dt>
+                  <dd className="s-num text-right" data-testid="simple-turbo-fee">
+                    None unless you win, then {fmtBps(shareBps)} of the profit
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-muted">Keeper orders</dt>
+                  <dd className="s-num text-right">{params ? `${fmtUsdc(params.executionFee)} ${sym} each, in and out` : "—"}</dd>
+                </div>
+              </>
+            ) : (
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted">Fees</dt>
+                <dd className="s-num">{fees !== null ? `about ${fmtUsdc(fees)} ${sym}` : "—"}</dd>
+              </div>
+            )}
           </dl>
+          {upside ? <p className="mt-2 text-xs text-muted">Wins are shown after the house&apos;s {fmtBps(shareBps)} share. Turbo fills at the mid price, both ways.</p> : null}
         </div>
 
         {protectable ? (

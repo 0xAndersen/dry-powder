@@ -7,7 +7,7 @@ import type { PositionView } from "@/hooks/use-account-data";
 import { useMarketData, type MarketPrice } from "@/hooks/use-market-data";
 import { USDC_DECIMALS, fmtPercent, fmtPrice, fmtUsdc, parseAmount, toInputString } from "@/lib/format";
 import type { Instrument } from "@/lib/instruments";
-import { absDiff, baseFee, liquidationPrice, needsKeeperOrders, partialRelease, pricePnl, ratio } from "@/lib/math";
+import { DIRECT_MAX_LEVERAGE, absDiff, baseFee, ceilDiv, liquidationPrice, needsKeeperOrders, partialRelease, pricePnl, ratio } from "@/lib/math";
 import { valuePosition } from "@/lib/position";
 
 const PARTS = [25, 50, 75, 100] as const;
@@ -167,7 +167,26 @@ export function ClosePositionSheet({
   );
 }
 
-/** Add margin: lower leverage, liquidation further away. The engine refuses it while the position is in profit. */
+/**
+ * Most margin that can come out of `view` now (v3.2 PerpEngineExt.removeMargin): what stays must hold the minimum
+ * margin, keep the position within the market's leverage and 100x, and cover any loss at the exit price plus the
+ * initial margin at that leverage. Unrealised profit never counts. Null without an exit price.
+ */
+export function removableMargin(view: PositionView, instrument: Instrument, exit: bigint | null, minMargin: bigint): bigint | null {
+  const pos = view.position;
+  if (exit === null || exit === 0n) return null;
+  const maxLev = BigInt(Math.min(instrument.maxLeverage, DIRECT_MAX_LEVERAGE));
+  const initial = ceilDiv(pos.size, maxLev);
+  const pnl = pricePnl(pos.size, pos.entryPrice, exit, pos.isLong) - view.fundingOwed;
+  const loss = pnl < 0n ? -pnl : 0n;
+  const keep = [minMargin, initial, loss + initial].reduce((a, b) => (a > b ? a : b));
+  return pos.margin > keep ? pos.margin - keep : 0n;
+}
+
+/**
+ * Margin in or out. Adding lowers leverage and moves liquidation away (refused by the engine while the position
+ * is in profit). Taking out (v3.2) raises leverage within the limits of {@link removableMargin}.
+ */
 export function AddMarginSheet({
   view,
   instrument,
@@ -183,7 +202,7 @@ export function AddMarginSheet({
   balance: bigint | undefined;
   busy: boolean;
   onClose: () => void;
-  onConfirm: (amount: bigint) => void;
+  onConfirm: (amount: bigint, mode: "add" | "remove") => void;
 }) {
   const { config: cfg } = useApp();
   const { params } = useMarketData();
@@ -192,13 +211,20 @@ export function AddMarginSheet({
   const sym = cfg.collateralSymbol;
   const dp = instrument.priceDecimals;
   const [text, setText] = useState("");
+  // Taking margin out needs a v3.2 engine (it also has the Upside profit share).
+  const canRemove = params?.profitShareBps !== null && params?.profitShareBps !== undefined && !params?.paused;
+  const [mode, setMode] = useState<"add" | "remove">("add");
+  const removing = mode === "remove" && canRemove;
   const amount = parseAmount(text, USDC_DECIMALS);
   const mark = price?.mark ?? null;
   const value = valuePosition(view, mark, params?.maxProfitMultiple ?? 10n);
   const inProfit = value.pnl !== null && value.pnl > 0n;
   const room = pos.size > pos.margin ? pos.size - pos.margin : 0n;
-  const newMargin = amount !== null ? pos.margin + amount : pos.margin;
-  const liqAfter = amount !== null && amount > 0n ? liquidationPrice(pos.entryPrice, newMargin, pos.size, pos.isLong, view.fundingOwed) : null;
+  // The engine checks a removal at the exit price: the bid for a long, the ask for a short.
+  const exit = price?.exec ? (pos.isLong ? price.exec.bid : price.exec.ask) : null;
+  const removable = params ? removableMargin(view, instrument, exit, params.minMargin) : null;
+  const newMargin = amount !== null ? (removing ? (pos.margin > amount ? pos.margin - amount : 0n) : pos.margin + amount) : pos.margin;
+  const liqAfter = amount !== null && amount > 0n && newMargin > 0n ? liquidationPrice(pos.entryPrice, newMargin, pos.size, pos.isLong, view.fundingOwed) : null;
   const distance = (liq: bigint | null) => (liq !== null && liq > 0n && mark !== null && mark > 0n ? ratio(absDiff(mark, liq), mark) : null);
   const before = distance(value.liquidationPrice);
   const after = distance(liqAfter);
@@ -206,6 +232,14 @@ export function AddMarginSheet({
   const error = (() => {
     if (text.trim() === "") return null;
     if (amount === null || amount <= 0n) return "Enter an amount greater than zero";
+    if (removing) {
+      if (removable === null) return "Waiting for a usable price to check the removal against";
+      if (amount > removable)
+        return removable === 0n
+          ? "Nothing can come out now: the position is at its leverage limit, or its loss uses the margin"
+          : `At most ${fmtUsdc(removable)} ${sym} now: what stays must cover any loss plus the margin for ${Math.min(instrument.maxLeverage, DIRECT_MAX_LEVERAGE)}x`;
+      return null;
+    }
     if (amount > room) return `At most ${fmtUsdc(room)} ${sym}: leverage cannot go below 1x`;
     if (balance !== undefined && amount > balance) return `Not enough ${sym}: ${fmtUsdc(balance)} available`;
     return null;
@@ -214,30 +248,50 @@ export function AddMarginSheet({
   /** Margin that brings the position to `x` leverage. */
   const toLeverage = (x: number) => {
     const target = (pos.size * 100n) / BigInt(Math.round(x * 100));
-    return target > pos.margin ? target - pos.margin : 0n;
+    return removing ? (pos.margin > target ? pos.margin - target : 0n) : target > pos.margin ? target - pos.margin : 0n;
   };
-  const presets = [50, 20, 10, 5].map((x) => ({ x, add: toLeverage(x) })).filter((p) => p.add > 0n && p.add <= room);
+  const presets = removing
+    ? [10, 25, 50, 100]
+        .filter((x) => x <= Math.min(instrument.maxLeverage, DIRECT_MAX_LEVERAGE))
+        .map((x) => ({ x, add: toLeverage(x) }))
+        .filter((p) => p.add > 0n && removable !== null && p.add <= removable)
+    : [50, 20, 10, 5].map((x) => ({ x, add: toLeverage(x) })).filter((p) => p.add > 0n && p.add <= room);
+  const blocked = removing ? false : inProfit;
 
   return (
     <Sheet
-      title={`Add margin to ${instrument.symbol} ${pos.isLong ? "long" : "short"}`}
-      description="More collateral behind the same position: lower leverage, liquidation further away. Size and entry do not change."
+      title={`${removing ? "Take margin out of" : "Add margin to"} ${instrument.symbol} ${pos.isLong ? "long" : "short"}`}
+      description={
+        removing
+          ? "Less collateral behind the same position: margin comes back to you, leverage goes up, liquidation comes closer. Size and entry do not change."
+          : "More collateral behind the same position: lower leverage, liquidation further away. Size and entry do not change."
+      }
       onClose={onClose}
       testId="margin-sheet"
       footer={
         <button
           type="button"
           className="btn btn-primary btn-lg w-full"
-          disabled={busy || inProfit || amount === null || amount <= 0n || error !== null}
-          onClick={() => amount !== null && onConfirm(amount)}
+          disabled={busy || blocked || amount === null || amount <= 0n || error !== null}
+          onClick={() => amount !== null && onConfirm(amount, removing ? "remove" : "add")}
           data-testid="margin-confirm"
         >
-          {amount !== null && amount > 0n ? `Add ${fmtUsdc(amount)} ${sym}` : "Add margin"}
+          {amount !== null && amount > 0n ? `${removing ? "Take out" : "Add"} ${fmtUsdc(amount)} ${sym}` : removing ? "Take margin out" : "Add margin"}
         </button>
       }
     >
       <div className="grid gap-3">
-        {inProfit ? (
+        {canRemove ? (
+          <div className="flex gap-1.5" role="group" aria-label="Add or take out">
+            <button type="button" className="chip" aria-pressed={!removing} onClick={() => { setMode("add"); setText(""); }} data-testid="margin-mode-add">
+              Add
+            </button>
+            <button type="button" className="chip" aria-pressed={removing} onClick={() => { setMode("remove"); setText(""); }} data-testid="margin-mode-remove">
+              Take out
+            </button>
+          </div>
+        ) : null}
+        {blocked ? (
           <p className="notice" data-tone="warn">
             The position is in profit. Margin cannot be added to a winning position: it would raise its profit cap. Take profit on part of it instead, or add margin if it
             turns.
@@ -252,11 +306,17 @@ export function AddMarginSheet({
             <span className="field-unit">{sym}</span>
           </div>
           {error ? <p className="mt-1 text-xs text-short">{error}</p> : null}
+          {removing && removable !== null && removable > 0n ? (
+            <button type="button" className="link mt-1 text-xs" onClick={() => setText(toInputString(removable, USDC_DECIMALS, 2))} data-testid="margin-max">
+              Most that can come out: {fmtUsdc(removable)} {sym}
+            </button>
+          ) : null}
           {presets.length > 0 ? (
             <div className="mt-1.5 flex flex-wrap gap-1.5">
               {presets.map((p) => (
                 <button key={p.x} type="button" className="chip" onClick={() => setText(toInputString(p.add, USDC_DECIMALS, 2))}>
-                  To {p.x}x (+{fmtUsdc(p.add, 2)})
+                  To {p.x}x ({removing ? "−" : "+"}
+                  {fmtUsdc(p.add, 2)})
                 </button>
               ))}
             </div>
@@ -272,7 +332,7 @@ export function AddMarginSheet({
           <div className="kv">
             <dt>Leverage</dt>
             <dd className="num">
-              {ratio(pos.size, pos.margin).toFixed(1)}x{amount !== null && amount > 0n && !error ? ` → ${ratio(pos.size, newMargin).toFixed(1)}x` : ""}
+              {ratio(pos.size, pos.margin).toFixed(1)}x{amount !== null && amount > 0n && !error && newMargin > 0n ? ` → ${ratio(pos.size, newMargin).toFixed(1)}x` : ""}
             </dd>
           </div>
           <div className="kv">
@@ -288,7 +348,11 @@ export function AddMarginSheet({
             </dd>
           </div>
         </dl>
-        <p className="text-xs text-faint">Most you can lose on this position grows by the margin you add: liquidation takes the whole margin.</p>
+        <p className="text-xs text-faint">
+          {removing
+            ? "What comes out is margin, never profit: profit is paid when you close. The profit cap is ten times the margin that stays."
+            : "Most you can lose on this position grows by the margin you add: liquidation takes the whole margin."}
+        </p>
       </div>
     </Sheet>
   );

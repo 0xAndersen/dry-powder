@@ -20,7 +20,7 @@ import { perpEngineAbi } from "@/lib/abi";
 import { marketableTrigger, type OpenRequest } from "@/lib/actions";
 import { UserFacingError } from "@/lib/errors";
 import { closeFlow, openFlow, waitFor } from "@/lib/flows";
-import { PRICE_DECIMALS, USDC_DECIMALS, fmtAge, fmtPercent, fmtPrice, fmtQty, fmtUsdc, numToPrice, parseAmount, toInputString } from "@/lib/format";
+import { PRICE_DECIMALS, USDC_DECIMALS, fmtAge, fmtBps, fmtPercent, fmtPrice, fmtQty, fmtUsdc, numToPrice, parseAmount, toInputString } from "@/lib/format";
 import { isExpired, isSettled, type Instrument } from "@/lib/instruments";
 import { BPS, DIRECT_MAX_LEVERAGE, ONE, absDiff, baseFee, ceilDiv, ladderFill, ladderPrices, liquidationPrice, maxOpenFee, mergedPosition, needsKeeperOrders, notionalOf, pricePnl, profitCapPrice, ratio, unitsOf } from "@/lib/math";
 import { valuePosition } from "@/lib/position";
@@ -46,6 +46,15 @@ export type TicketHandle = {
   /** Closes the position in this market, through the confirmation step unless one-click trading is on. */
   close: () => void;
 };
+
+/** Good-til-time choices for resting orders (v3.2 engines). */
+const EXPIRY_CHOICES = [
+  { key: "gtc", label: "Cancelled", seconds: 0 },
+  { key: "1h", label: "1 hour", seconds: 3_600 },
+  { key: "1d", label: "1 day", seconds: 86_400 },
+  { key: "1w", label: "1 week", seconds: 604_800 },
+] as const;
+type ExpiryKey = (typeof EXPIRY_CHOICES)[number]["key"];
 
 /** Kept back when "Max" is used, so later execution fees stay covered. */
 const SLIPPAGE_PRESETS = [10, 30, 100] as const;
@@ -190,6 +199,7 @@ export const OrderTicket = forwardRef<
   const [levX10, setLevX10] = useState(50);
   const [levText, setLevText] = useState("5");
   const [limitText, setLimitText] = useState("");
+  const [expiryKey, setExpiryKey] = useState<ExpiryKey>("gtc");
   // Scale: a ladder of equal limit orders from the limit price to `scaleToText`.
   const [scaleOn, setScaleOn] = useState(false);
   const [scaleToText, setScaleToText] = useState("");
@@ -250,7 +260,9 @@ export const OrderTicket = forwardRef<
   const reference = price.reference;
   // The limit price, or a stop order's trigger: both are typed in the same field.
   const limitPrice = parseAmount(limitText, PRICE_DECIMALS);
-  const marketEntry = reference ? (isLong ? reference.ask : reference.bid) : null;
+  // Upside (Turbo) markets fill at the mid; the others on the adverse side of the band.
+  const upside = instrument.upside;
+  const marketEntry = reference ? (upside ? reference.mid : isLong ? reference.ask : reference.bid) : null;
   const limitFillsNow = kind === "limit" && limitPrice && marketEntry ? (isLong ? marketEntry <= limitPrice : marketEntry >= limitPrice) : false;
   // A stop entry fills once a long's ask is at or above the trigger (a short's bid at or below it).
   const stopFillsNow = kind === "stop" && limitPrice && marketEntry ? (isLong ? marketEntry >= limitPrice : marketEntry <= limitPrice) : false;
@@ -272,7 +284,7 @@ export const OrderTicket = forwardRef<
     ladderEntry ?? (kind === "market" ? marketEntry : limitPrice && limitPrice > 0n ? (fillsNow && marketEntry ? marketEntry : limitPrice) : null);
   /** Price the engine validates brackets against when the order is created. */
   const bracketRef: bigint | null =
-    kind !== "market" ? (limitPrice && limitPrice > 0n ? limitPrice : null) : reference ? (publisher ? marketableTrigger(reference, isLong, settings.slippageBps) : marketEntry) : null;
+    kind !== "market" ? (limitPrice && limitPrice > 0n ? limitPrice : null) : reference ? (publisher || upside ? marketableTrigger(reference, isLong, settings.slippageBps, upside) : marketEntry) : null;
 
   // ── Stop-loss (resolved first: risk sizing and R-multiples depend on it) ──
   const slRaw = slText.trim();
@@ -422,21 +434,24 @@ export const OrderTicket = forwardRef<
     query: { enabled: feeQuote.isError && size !== null && size > 0n, refetchInterval: 3_000, placeholderData: keepPreviousData },
   });
   const highLeverage = size !== null && margin !== null && margin > 0n && needsKeeperOrders(size, margin);
-  const keeperOrder = kind !== "market" || publisher || highLeverage;
-  const feeCeiling = params && size !== null && margin !== null ? maxOpenFee(size, params.baseFeeBps, params.maxSkewFeeBps, margin) : null;
-  const feeBase = params && size !== null && margin !== null ? baseFee(size, params.baseFeeBps, margin) : null;
-  const openFee = size !== null && size > 0n ? (feeQuote.data ?? legacyFeeQuote.data ?? null) : null;
+  // Upside markets trade through keeper orders only.
+  const keeperOrder = kind !== "market" || publisher || highLeverage || upside;
+  // Upside markets charge no fee at open or close: the house keeps a share of a winning close's profit instead.
+  const feeCeiling = upside ? 0n : params && size !== null && margin !== null ? maxOpenFee(size, params.baseFeeBps, params.maxSkewFeeBps, margin) : null;
+  const feeBase = upside ? 0n : params && size !== null && margin !== null ? baseFee(size, params.baseFeeBps, margin) : null;
+  const openFee = size !== null && size > 0n ? (upside ? 0n : (feeQuote.data ?? legacyFeeQuote.data ?? null)) : null;
+  const profitShareBps = upside ? (params?.profitShareBps ?? 2_000n) : 0n;
   const skewFee = openFee !== null && feeBase !== null && openFee > feeBase ? openFee - feeBase : 0n;
   // A ladder escrows every order's fees; fills after the first move the brackets and refund theirs.
   const executionCount = twapPlan ? twapPlan.slices : (brackets + (keeperOrder ? 1 : 0)) * (scalePlan ? scalePlan.length : 1);
   const executionFees = params ? params.executionFee * BigInt(executionCount) : null;
   /** What the engine pulls now. Keeper orders escrow the fee ceiling and refund the difference on fill. */
+  const escrowFor = (sizeOf: bigint, marginOf: bigint) => (upside || !params ? 0n : maxOpenFee(sizeOf, params.baseFeeBps, params.maxSkewFeeBps, marginOf));
   const required =
     twapPlan && params
-      ? BigInt(twapPlan.slices) *
-        (twapPlan.sliceMargin + maxOpenFee(twapPlan.sliceSize, params.baseFeeBps, params.maxSkewFeeBps, twapPlan.sliceMargin) + params.executionFee)
+      ? BigInt(twapPlan.slices) * (twapPlan.sliceMargin + escrowFor(twapPlan.sliceSize, twapPlan.sliceMargin) + params.executionFee)
       : scalePlan && params && executionFees !== null
-      ? scalePlan.reduce((sum, o) => sum + o.margin + maxOpenFee(o.size, params.baseFeeBps, params.maxSkewFeeBps, o.margin), 0n) + executionFees
+      ? scalePlan.reduce((sum, o) => sum + o.margin + escrowFor(o.size, o.margin), 0n) + executionFees
       : margin !== null && feeCeiling !== null && executionFees !== null
         ? margin + feeCeiling + executionFees
         : null;
@@ -445,6 +460,8 @@ export const OrderTicket = forwardRef<
   const liq = entry && margin !== null && size !== null && size > 0n ? liquidationPrice(entry, margin, size, isLong) : null;
   const capPrice = entry && margin !== null && size !== null && size > 0n && params ? profitCapPrice(entry, margin, size, isLong, params.maxProfitMultiple) : null;
   const maxProfit = margin !== null && params ? margin * params.maxProfitMultiple : null;
+  /** In an Upside market, what a win at the cap pays after the house's share. */
+  const maxProfitNet = maxProfit !== null && upside ? maxProfit - (maxProfit * profitShareBps) / BPS : maxProfit;
   const closeFeeEst = feeBase;
   const tpPnl = entry && takeProfit && size ? pricePnl(size, entry, takeProfit, isLong) : null;
   const slPnl = entry && stopLoss && size ? pricePnl(size, entry, stopLoss, isLong) : null;
@@ -485,6 +502,10 @@ export const OrderTicket = forwardRef<
           : `${instrument.symbol} allows up to ${maxLeverage}x`
         : null;
   const limitError = kind === "market" || limitText.trim() === "" ? null : !limitPrice ? "Enter a price greater than zero" : null;
+  // Order expiry needs a v3.2 engine (which also has the Upside profit share).
+  const expirySupported = params?.profitShareBps !== null && params?.profitShareBps !== undefined;
+  const expirySeconds = EXPIRY_CHOICES.find((c) => c.key === expiryKey)?.seconds ?? 0;
+  const expiresAt = kind !== "market" && expirySupported && expirySeconds > 0 ? chainNow + expirySeconds : undefined;
 
   // The engine checks each order's brackets against its own price: with a ladder, against every rung.
   const tpRef = ladder ? (isLong ? ladderHigh : ladderLow) : bracketRef;
@@ -672,6 +693,7 @@ export const OrderTicket = forwardRef<
       takeProfit,
       stopLoss,
       required,
+      ...(expiresAt ? { expiresAt } : {}),
     };
   };
 
@@ -726,7 +748,7 @@ export const OrderTicket = forwardRef<
         60_000,
         "The close order has not been executed yet. It is still resting; open the opposite side once it fills.",
       );
-      const feeBudget = maxOpenFee(pos.size, params.baseFeeBps, params.maxSkewFeeBps, pos.margin);
+      const feeBudget = upside ? 0n : maxOpenFee(pos.size, params.baseFeeBps, params.maxSkewFeeBps, pos.margin);
       return openFlow(ctx, {
         instrument,
         isLong: !pos.isLong,
@@ -738,7 +760,7 @@ export const OrderTicket = forwardRef<
         slippageBps: settings.slippageBps,
         takeProfit: 0n,
         stopLoss: 0n,
-        required: pos.margin + feeBudget + (publisher ? params.executionFee : 0n),
+        required: pos.margin + feeBudget + (publisher || upside ? params.executionFee : 0n),
       });
     });
   };
@@ -1096,7 +1118,7 @@ export const OrderTicket = forwardRef<
                   Pick on chart
                 </button>
                 <button type="button" className="num text-muted hover:text-text" disabled={!marketEntry} onClick={() => marketEntry && setLimitText(priceInput(marketEntry, dp))}>
-                  {marketEntry ? `${isLong ? "Ask" : "Bid"} ${fmtPrice(marketEntry, dp)}` : "No price"}
+                  {marketEntry ? `${upside ? "Mid" : isLong ? "Ask" : "Bid"} ${fmtPrice(marketEntry, dp)}` : "No price"}
                 </button>
               </span>
             </div>
@@ -1110,6 +1132,18 @@ export const OrderTicket = forwardRef<
                 The market is already {kind === "stop" ? (isLong ? "at or above" : "at or below") : isLong ? "at or below" : "at or above"} this price, so a keeper fills it right away at about{" "}
                 {marketEntry ? fmtPrice(marketEntry, dp) : "market"}.
               </p>
+            ) : null}
+            {expirySupported ? (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs" role="group" aria-label="Order expiry">
+                <span className="text-muted" title="A resting order stops being executable at this time; a keeper then removes it and refunds the escrow (one execution fee is its pay).">
+                  Good until
+                </span>
+                {EXPIRY_CHOICES.map((c) => (
+                  <button key={c.key} type="button" className="chip" aria-pressed={expiryKey === c.key} onClick={() => setExpiryKey(c.key)} data-testid={`expiry-${c.key}`}>
+                    {c.label}
+                  </button>
+                ))}
+              </div>
             ) : null}
             {kind === "limit" ? (
               <div className="mt-2">
@@ -1402,7 +1436,13 @@ export const OrderTicket = forwardRef<
         <dl className="grid gap-1.5 text-[0.8125rem]">
           <Row
             label={scalePlan ? "Average entry if all fill" : kind !== "market" ? "Entry" : "Entry estimate"}
-            hint={kind === "market" ? "Buys fill at the oracle ask, sells at the bid. The fill is the price a keeper executes against, at most your slippage tolerance away." : undefined}
+            hint={
+              kind === "market"
+                ? upside
+                  ? "Turbo markets fill at the oracle mid price, both ways. A keeper executes against the next price, at most your slippage tolerance away."
+                  : "Buys fill at the oracle ask, sells at the bid. The fill is the price a keeper executes against, at most your slippage tolerance away."
+                : undefined
+            }
             value={entry ? fmtPrice(entry, dp) : "—"}
           />
           <Row
@@ -1410,11 +1450,20 @@ export const OrderTicket = forwardRef<
             hint="The oracle mid price at which losses plus funding reach 90% of margin. Past it, anyone can liquidate the position and the margin is lost."
             value={liq === null ? "—" : liq === 0n ? "None" : fmtPrice(liq, dp)}
           />
-          <Row
-            label="Fees to open"
-            hint="Open fee plus execution fees. The breakdown is under Details."
-            value={openFee !== null && executionFees !== null ? `${fmtUsdc(openFee + executionFees, 2)} ${sym}` : size !== null && size > 0n ? "…" : "—"}
-          />
+          {upside ? (
+            <Row
+              label="Fee"
+              hint={`No fee to open or to close. If you close in profit the house keeps ${fmtBps(profitShareBps)} of the profit; a loss costs nothing beyond the loss. Keeper orders cost ${fmtUsdc(params?.executionFee ?? 0n, 2)} ${sym} each.`}
+              value={`None unless you win: ${fmtBps(profitShareBps)} of profit`}
+              tone="long"
+            />
+          ) : (
+            <Row
+              label="Fees to open"
+              hint="Open fee plus execution fees. The breakdown is under Details."
+              value={openFee !== null && executionFees !== null ? `${fmtUsdc(openFee + executionFees, 2)} ${sym}` : size !== null && size > 0n ? "…" : "—"}
+            />
+          )}
           <Row
             label={twapPlan ? "Total over the TWAP" : "Total required"}
             strong
@@ -1448,7 +1497,10 @@ export const OrderTicket = forwardRef<
             {keeperOrder && required !== null && expectedCost !== null && required > expectedCost ? (
               <Row label="Fee escrow, refunded on fill" hint="Keeper-filled orders set aside the highest possible open fee; the unused part comes back when the order fills." value={`${fmtUsdc(required - expectedCost, 4)} ${sym}`} />
             ) : null}
-            <Row label="Close fee, later" value={closeFeeEst !== null && size ? `${fmtUsdc(closeFeeEst, 4)} ${sym}` : "—"} />
+            <Row
+              label={upside ? "On a winning close" : "Close fee, later"}
+              value={upside ? `${fmtBps(profitShareBps)} of the profit` : closeFeeEst !== null && size ? `${fmtUsdc(closeFeeEst, 4)} ${sym}` : "—"}
+            />
             <Row
               label="Funding per hour"
               hint="Paid or received continuously while the position is open, at the current rate. The rate moves with the long/short balance."
@@ -1457,8 +1509,8 @@ export const OrderTicket = forwardRef<
             />
             <Row
               label="Max profit"
-              hint={`Profit on a position is capped at ${params?.maxProfitMultiple.toString() ?? "10"} times its margin.`}
-              value={maxProfit !== null && margin ? `${fmtUsdc(maxProfit)} ${sym}${capPrice ? ` at ${fmtPrice(capPrice, dp)}` : ""}` : "—"}
+              hint={`Profit on a position is capped at ${params?.maxProfitMultiple.toString() ?? "10"} times its margin.${upside ? ` In a Turbo market the house keeps ${fmtBps(profitShareBps)} of it.` : ""}`}
+              value={maxProfitNet !== null && margin ? `${fmtUsdc(maxProfitNet)} ${sym}${capPrice ? ` at ${fmtPrice(capPrice, dp)}` : ""}` : "—"}
             />
           </dl>
           <CostBySize instrument={instrument} enabled={settings.ticketDetails} />

@@ -28,7 +28,7 @@ import { useAccountView } from "@/hooks/use-wallet";
 import { TEST_MINT_AMOUNT, submitTestMint } from "@/lib/actions";
 import { UserFacingError } from "@/lib/errors";
 import { closeFlow } from "@/lib/flows";
-import { fmtNum, fmtUsdc, shortAddress } from "@/lib/format";
+import { fmtBps, fmtNum, fmtUsdc, shortAddress } from "@/lib/format";
 import { findBySlug, isExpired, isSettled, marketSlug, type Instrument } from "@/lib/instruments";
 import { valuePosition } from "@/lib/position";
 import type { TradeCard } from "@/lib/share-card";
@@ -184,6 +184,7 @@ export function SimpleScreen() {
                       instrument={instrument}
                       price={price}
                       sym={sym}
+                      shareBps={params?.profitShareBps ?? null}
                       busy={tx.busy}
                       canTrade={view.canTrade}
                       onCashOut={() => cashOut(p.key, false)}
@@ -219,6 +220,13 @@ export function SimpleScreen() {
               </button>
             ))}
           </div>
+          {category === "turbo" && shown.length > 0 ? (
+            <p className="mb-3 max-w-[62ch] text-[0.8125rem] text-muted" data-testid="simple-turbo-note">
+              <span className="font-semibold text-text">Turbo</span> markets go up to {Math.max(...shown.filter((i) => i.upside).map((i) => i.maxLeverage), 0)}x with no trading fee unless you
+              win; then the house keeps {params?.profitShareBps !== null && params?.profitShareBps !== undefined ? fmtBps(params.profitShareBps) : "a share"} of the profit. Keepers fill
+              every Turbo order at the mid price for {params ? `${fmtUsdc(params.executionFee)} ${sym}` : "a small fee"}.
+            </p>
+          ) : null}
           {error && instruments.length === 0 ? (
             <p className="rounded-[14px] border border-line bg-panel px-4 py-10 text-center text-muted">Can&rsquo;t reach the venue right now. Retrying.</p>
           ) : loading && instruments.length === 0 ? (
@@ -238,7 +246,7 @@ export function SimpleScreen() {
                   <button key={i.id} type="button" className="s-tile" onClick={() => setOpen(i)} data-testid={`simple-tile-${marketSlug(i)}`}>
                     <span className="flex items-baseline justify-between gap-2">
                       <span className="s-name truncate text-[0.9375rem]">{simpleName(i)}</span>
-                      <span className="s-num shrink-0 text-2xs text-muted">{i.maxLeverage}x</span>
+                      <span className={`s-num shrink-0 text-2xs ${i.upside ? "s-turbo" : "text-muted"}`}>{i.maxLeverage}x</span>
                     </span>
                     {(() => {
                       const text = price?.display !== null && price?.display !== undefined ? fmtNum(price.display, i.priceDecimals) : "—";

@@ -62,6 +62,12 @@ export function fmtPercent(fraction: number, dp = 2, sign = false): string {
 }
 
 /** A float price with a fixed number of decimals and separators (tape, chart legend). */
+/** Basis points as a percentage: 2000n -> "20%", 1250n -> "12.5%". */
+export function fmtBps(bps: bigint | number): string {
+  const pct = Number(bps) / 100;
+  return `${Number.isInteger(pct) ? pct.toFixed(0) : pct.toFixed(pct * 10 === Math.round(pct * 10) ? 1 : 2)}%`;
+}
+
 export function fmtNum(value: number | null | undefined, dp: number): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "—";
   return value.toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
