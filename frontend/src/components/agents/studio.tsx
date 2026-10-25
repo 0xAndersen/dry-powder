@@ -1,7 +1,7 @@
 "use client";
 
 import { useDeferredValue, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { useConfig, useReadContract, useReadContracts } from "wagmi";
+import { useConfig, useReadContracts } from "wagmi";
 import { getAddress, isAddress, type Address } from "viem";
 import { AppLink } from "@/components/app-link";
 import { useApp } from "@/components/providers";
@@ -12,7 +12,7 @@ import { useChainNow, useMarketData } from "@/hooks/use-market-data";
 import { useAccountStrategies, useMarketAllowed, useStrategyCandles } from "@/hooks/use-strategies";
 import { useTx } from "@/hooks/use-tx";
 import { useWallet } from "@/hooks/use-wallet";
-import { perpEngineAbi, testUSDCAbi } from "@/lib/abi";
+import { testUSDCAbi } from "@/lib/abi";
 import { runBacktest, type BtConfig, type BtFees } from "@/lib/backtest";
 import { USDC_DECIMALS, fmtPercent, fmtUsdc, parseAmount, priceToNum, shortAddress, toInputString, usdcToNum } from "@/lib/format";
 import { groupInstruments } from "@/lib/instruments";
@@ -27,7 +27,6 @@ import {
   everyText,
   liquidationMove,
   planPolicy,
-  templateOf,
   validateDraft,
   warmupReadings,
   type DraftField,
@@ -305,7 +304,6 @@ export function AgentStudio({ account, accountKnown, prefill }: { account: Addre
 
   // ── Replay ──
   const candles = useStrategyCandles(kind === "copy" ? undefined : instrument, draft?.interval ?? 900);
-  const profitShare = useReadContract({ address: cfg.perpEngine, abi: perpEngineAbi, functionName: "profitShareBps", chainId: cfg.chainId, query: { staleTime: 300_000 } });
   const price = instrument ? prices.get(instrument.id) : undefined;
   const quote = price?.exec ?? price?.reference ?? null;
   const spreadBps = quote && quote.mid > 0n ? Math.max(0, priceToNum(((quote.ask - quote.bid) * 10_000n * 10n ** 18n) / quote.mid)) : 2;
@@ -315,7 +313,7 @@ export function AgentStudio({ account, accountKnown, prefill }: { account: Addre
     feeCapBps: 1_000,
     spreadBps: Math.min(spreadBps, 500),
     executionFee: params ? usdcToNum(params.executionFee) : 0.1,
-    profitShareBps: Number((profitShare.data as bigint | undefined) ?? 2_000n),
+    profitShareBps: Number(params?.profitShareBps ?? 2_000n),
     maxProfitMultiple: Number(params?.maxProfitMultiple ?? 10n),
   };
   const btConfig: BtConfig | null =
