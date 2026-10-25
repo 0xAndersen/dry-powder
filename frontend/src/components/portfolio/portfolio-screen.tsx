@@ -396,8 +396,6 @@ export function PortfolioScreen() {
         </section>
       </div>
 
-      <PrizeCard address={address} watching={view.watching} />
-
       {!view.watching ? (
         <Challenges
           address={address}
@@ -412,6 +410,8 @@ export function PortfolioScreen() {
       ) : null}
 
       {!view.watching ? <ReferralCard /> : null}
+
+      <PrizeCard address={address} watching={view.watching} />
 
       <Journal trades={trades} readOnly={view.watching} onShare={(t) => setShare({ card: closedTradeCard(t, cardContext(address)), title: "Share this trade" })} />
 
