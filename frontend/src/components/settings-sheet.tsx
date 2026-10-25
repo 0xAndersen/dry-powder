@@ -1,12 +1,30 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useApp } from "@/components/providers";
 import { Sheet } from "@/components/ui/sheet";
 import { useInstallPrompt } from "@/hooks/use-install-prompt";
 import { useLocalStore } from "@/hooks/use-local-store";
+import { useTradingAccount } from "@/hooks/use-trading-account";
+import { useWallet } from "@/hooks/use-wallet";
+import { IS_STATIC_BUILD } from "@/lib/config";
+import { shortAddress } from "@/lib/format";
+import { staticBaseUrl } from "@/lib/nav";
 import { enableSystemNotifications } from "@/lib/notify";
 import { prefs, type Prefs } from "@/lib/prefs";
+import {
+  currentSubscription,
+  optionalSettingsQuery,
+  pushAccounts,
+  pushSupported,
+  readPushRecord,
+  subscribePush,
+  unsubscribePush,
+  writePushRecord,
+  type PushRecord,
+  type PushTopic,
+} from "@/lib/push";
 import { MAX_SLIPPAGE_BPS, tradeSettings } from "@/lib/storage";
 
 const SLIPPAGE = [10, 30, 50, 100] as const;
@@ -131,6 +149,7 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
               </button>
             )}
           </div>
+          <PushSetting liqWarn={p.liqWarn} fills={p.fillNotifications} />
           <Toggle label="Notify on fills, take-profits and stop-losses" checked={p.fillNotifications} onChange={(v) => set({ fillNotifications: v })} />
           <Toggle label="Vibrate on fills and warnings" hint="Phones only." checked={p.haptics} onChange={(v) => set({ haptics: v })} />
           <Toggle label="Price and PnL in the tab title" checked={p.titleTicker} onChange={(v) => set({ titleTicker: v })} />
@@ -156,6 +175,119 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
         ) : null}
       </div>
     </Sheet>
+  );
+}
+
+const appBase = () => (IS_STATIC_BUILD ? staticBaseUrl(window.location) : `${window.location.origin}/`);
+
+/**
+ * Notifications while the app is closed (roadmap 50), through the push relay (keeper/src/push.mjs). Shown only when
+ * the deployment names one (`pushRelayUrl` in config.json). Watches the wallet and its trading account; follows the
+ * liquidation warning and fill choices above.
+ */
+function PushSetting({ liqWarn, fills }: { liqWarn: Prefs["liqWarn"]; fills: boolean }) {
+  const wallet = useWallet();
+  const trading = useTradingAccount();
+  const settings = useQuery(optionalSettingsQuery(typeof window === "undefined" ? "" : appBase(), IS_STATIC_BUILD));
+  const relay = settings.data?.pushRelayUrl ?? null;
+  const [record, setRecord] = useState<PushRecord | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Subscribed: this browser has a subscription and it was registered with this relay.
+  useEffect(() => {
+    if (!relay) return;
+    let live = true;
+    void currentSubscription(appBase())
+      .then((sub) => {
+        const saved = readPushRecord();
+        if (live) setRecord(sub && saved && saved.relay === relay && saved.endpoint === sub.endpoint ? saved : null);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [relay]);
+
+  const accounts = pushAccounts([wallet.address, trading.account]);
+  const topics: PushTopic[] = fills ? ["liquidation", "fill", "close"] : ["liquidation"];
+  const changed = record !== null && (record.accounts.length !== accounts.length || record.accounts.some((a) => !accounts.includes(a)));
+
+  const run = async (job: () => Promise<PushRecord | null>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await job();
+      writePushRecord(next);
+      setRecord(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const subscribe = (watch: string[]) =>
+    run(async () => {
+      const sub = await subscribePush({ relay: relay!, base: appBase(), accounts: watch, topics, liqWarn });
+      return { relay: relay!, endpoint: sub.endpoint, accounts: watch, topics, liqWarn };
+    });
+  const unsubscribe = () =>
+    run(async () => {
+      await unsubscribePush({ relay: relay!, base: appBase() });
+      return null;
+    });
+
+  // The warning level and the fill choice above apply to pushes too: re-register when they change.
+  const stale = record !== null && (record.liqWarn !== liqWarn || (record.topics ?? []).join() !== topics.join());
+  useEffect(() => {
+    if (stale && !busy && record && relay) void subscribe(record.accounts);
+  }, [stale]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!relay) return null;
+  if (!pushSupported()) {
+    return (
+      <p className="mt-2 text-xs text-faint" data-testid="push-unsupported">
+        Notifications while the app is closed need a browser with push support. On iPhone and iPad, install the app first.
+      </p>
+    );
+  }
+  return (
+    <div className="mt-2" data-testid="push-setting">
+      <Toggle
+        label="Notify me while the app is closed"
+        hint={
+          accounts.length === 0
+            ? "Connect a wallet first: the relay watches your wallet and its trading account."
+            : "Liquidation warnings, and fills and closes when they are on below, through this deployment's push relay."
+        }
+        checked={record !== null}
+        onChange={(v) => {
+          if (busy || accounts.length === 0) return;
+          void (v ? subscribe(accounts) : unsubscribe());
+        }}
+        testId="push-toggle"
+      />
+      <p className="text-xs text-faint" role="status" aria-live="polite" data-testid="push-status">
+        {busy
+          ? "Working…"
+          : record
+            ? `Watching ${record.accounts.map(shortAddress).join(" and ")}.`
+            : ""}
+        {record && changed && !busy ? (
+          <>
+            {" "}
+            <button type="button" className="link" onClick={() => void subscribe(accounts)}>
+              Watch {accounts.map(shortAddress).join(" and ")} instead
+            </button>
+          </>
+        ) : null}
+      </p>
+      {error ? (
+        <p className="text-xs text-warn" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
