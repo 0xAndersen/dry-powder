@@ -20,8 +20,8 @@ trap cleanup EXIT
 for _ in $(seq 1 60); do grep -q "ready:" "$LOGS/stack.log" && break; sleep 2; done
 grep -q "ready:" "$LOGS/stack.log" || { cat "$LOGS/stack.log"; exit 1; }
 
-( cd ../keeper && DEPLOYMENT=../frontend/e2e/.state/addresses.json RPC_URL=http://127.0.0.1:8645 CHAIN_ID=31337 \
-  KRAKEN_URL=http://127.0.0.1:8647 PUBLISHER_KEY=$BOT_KEY KEEPER_KEY=$BOT_KEY MIN_FEE_GWEI=2 STALE_FEED_MS=4000 \
+( cd ../keeper && DEPLOYMENT=../frontend/e2e/.state/addresses.json RPC_URL=http://127.0.0.1:${ANVIL_PORT:-8645} CHAIN_ID=31337 \
+  KRAKEN_URL=http://127.0.0.1:${KRAKEN_PORT:-8647} PUBLISHER_KEY=$BOT_KEY KEEPER_KEY=$BOT_KEY MIN_FEE_GWEI=2 STALE_FEED_MS=4000 \
   HEARTBEAT_SECONDS=60 SETTLE_EPOCHS=0 SETTLE_MARKET_DELAY_SECONDS=20 exec node src/main.mjs ) > "$LOGS/keeper.log" 2>&1 &
 KEEPER=$!
 sleep 30
@@ -34,7 +34,7 @@ if [ -n "${GITHUB_ACTIONS:-}" ]; then
 fi
 [ "$status" -eq 0 ] || exit "$status"
 # The SDK: 1000x through keeper orders with a stop, then an agent account trading 500x.
-if [ -d ../sdk/node_modules ]; then (cd ../sdk && npm run build >/dev/null && node test/smoke.mjs 2>&1 | tail -60) || { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error::SDK smoke test failed"; exit 1; }; fi
+if [ -d ../sdk/node_modules ]; then (cd ../sdk && npm run build >/dev/null && RPC_URL=http://127.0.0.1:${ANVIL_PORT:-8645} node test/smoke.mjs 2>&1 | tail -60) || { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error::SDK smoke test failed"; exit 1; }; fi
 # The MCP server, driven through a real MCP client from an agent account on the same chain.
-if [ -d ../mcp/node_modules ]; then (cd ../mcp && node test/smoke.mjs 2>&1 | tail -40) || { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error::MCP smoke test failed"; exit 1; }; fi
+if [ -d ../mcp/node_modules ]; then (cd ../mcp && RPC_URL=http://127.0.0.1:${ANVIL_PORT:-8645} KRAKEN_URL=http://127.0.0.1:${KRAKEN_PORT:-8647} node test/smoke.mjs 2>&1 | tail -40) || { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error::MCP smoke test failed"; exit 1; }; fi
 grep -q '"errors":{}' <(tail -1 "$LOGS/keeper.log") || echo "keeper reported errors: $(tail -1 "$LOGS/keeper.log")"

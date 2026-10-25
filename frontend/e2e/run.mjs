@@ -5,8 +5,9 @@
 //   node e2e/run.mjs trade,house     # only some sections: trade, positions, instruments, watch, activity, portfolio, settle, house, extras, agents, pro, phone, instant, responsive
 //
 // Exits non-zero if any step fails. Screenshots land in e2e/out/shots/.
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { DEPLOYER, FIRST_SCRIPTED_TRADER, HERE, KRAKEN_URL, RPC_URL, UI_TRADER, WEB_URL, account, artifact, log, publicClient, readAddresses, sleep } from "./lib.mjs";
 import { launch, newPage } from "./browser.mjs";
 
@@ -1208,6 +1209,20 @@ if (want("responsive")) {
     await bad.getByText(/PERP_ENGINE_ADDRESS is not a valid address/).waitFor();
     await context.close();
   });
+}
+
+// Feature step modules (e2e/steps/*.mjs) run after the sections above, in file-name order. Each exports `section`
+// (its E2E_ONLY name) and a default async function that receives the shared helpers.
+const stepDir = join(HERE, "steps");
+if (existsSync(stepDir)) {
+  for (const file of readdirSync(stepDir).filter((f) => f.endsWith(".mjs")).sort()) {
+    const mod = await import(pathToFileURL(join(stepDir, file)).href);
+    if (!want(mod.section ?? file.replace(/\.mjs$/, ""))) continue;
+    await mod.default({
+      step, page, t, read, shot, num, price, addresses, pub, browser, newPage, ensureWallet, selectMarket, submitTicket, waitFilled,
+      waitPosition, WEB_URL, KRAKEN_URL, RPC_URL, UI_TRADER, DEPLOYER, artifact, sleep, log,
+    });
+  }
 }
 
 await browser.close();
