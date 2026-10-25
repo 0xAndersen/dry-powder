@@ -28,6 +28,7 @@ export function startStaticServer(addresses) {
     ...(addresses.twapOrders ? { twapOrdersAddress: addresses.twapOrders } : {}),
     ...(addresses.strategies ? { strategiesAddress: addresses.strategies } : {}),
     ...(addresses.agentRegistry ? { agentRegistryAddress: addresses.agentRegistry } : {}),
+    ...(addresses.prizeDistributor ? { prizeDistributorAddress: addresses.prizeDistributor } : {}),
     usdcAddress: addresses.usdc,
     rpcUrl: RPC_URL,
     chainId: 31337,

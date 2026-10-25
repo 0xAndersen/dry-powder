@@ -22,6 +22,11 @@ export type Instrument = {
   /** 18 decimals; 0n until a dated market has settled. */
   settlementPrice: bigint;
   enabled: boolean;
+  /**
+   * Upside fee mode ("no fee unless you win"): no fee at open or close, fills at the mid price, keeper orders only,
+   * and the house keeps `profitShareBps` of a winning close's profit. The Turbo markets.
+   */
+  upside: boolean;
   maxLeverage: number;
   maxOiPerSide: bigint;
   skewScale: bigint;
@@ -42,9 +47,9 @@ export type Instrument = {
   quoteFeed: FeedMeta | undefined;
 };
 
-export type InstrumentKindKey = "perp" | "cross" | "fx" | "dated";
+export type InstrumentKindKey = "turbo" | "perp" | "cross" | "fx" | "dated";
 
-type KindInput = { expiry: number; quoteFeedId: Hex | null; invert: boolean; feed: FeedMeta | undefined };
+type KindInput = { expiry: number; quoteFeedId: Hex | null; invert: boolean; feed: FeedMeta | undefined; upside: boolean };
 
 /**
  * Instrument types. To add one: add a key above, an entry here (`match` is tried in array order, the
@@ -62,6 +67,14 @@ export const INSTRUMENT_KINDS: readonly {
   blurb: string;
   match: (m: KindInput) => boolean;
 }[] = [
+  {
+    key: "turbo",
+    label: "Turbo",
+    singular: "Turbo market",
+    order: -1,
+    blurb: "Up to 5000x. No fee unless you win: the house keeps a share of the profit. Filled by keepers at the mid price.",
+    match: (m) => m.upside,
+  },
   {
     key: "dated",
     label: "Dated futures",
@@ -133,6 +146,10 @@ export type RawMarketView = {
     shortOi: bigint;
     longUnits: bigint;
     shortUnits: bigint;
+    /** v3.2; absent on older deployments. 0 Standard, 1 Upside. */
+    feeMode?: number;
+    longMargin?: bigint;
+    shortMargin?: bigint;
     fundingIndex: bigint;
     settlementPrice: bigint;
     symbol: string;
@@ -148,7 +165,8 @@ export function toInstrument(view: RawMarketView): Instrument {
   const quoteFeedId = m.quoteFeedId.toLowerCase() === ZERO_ID ? null : (m.quoteFeedId.toLowerCase() as Hex);
   const quoteFeed = feedMeta(quoteFeedId);
   const expiry = Number(m.expiry);
-  const kindInput: KindInput = { expiry, quoteFeedId, invert: m.invert, feed };
+  const upside = Number(m.feeMode ?? 0) === 1;
+  const kindInput: KindInput = { expiry, quoteFeedId, invert: m.invert, feed, upside };
   const kind = (INSTRUMENT_KINDS.find((k) => k.match(kindInput)) ?? INSTRUMENT_KINDS[INSTRUMENT_KINDS.length - 1]!).key;
   const symbol = m.symbol || `${view.id.slice(0, 10)}…`;
   const { base, quote } = parseSymbol(m.symbol, feed, quoteFeed, m.invert);
@@ -164,6 +182,7 @@ export function toInstrument(view: RawMarketView): Instrument {
   else if (quoteFeedId !== null) name = `${assetName(base)} priced in ${assetName(quote)}`;
   else if (m.invert) name = `${assetName(base)} (inverse of ${feed ? `${feed.base}/${feed.quote}` : "the feed"})`;
   else name = feed?.name ?? assetName(base);
+  if (upside) name = `${name} Turbo`;
 
   return {
     id: view.id.toLowerCase() as Hex,
@@ -178,6 +197,7 @@ export function toInstrument(view: RawMarketView): Instrument {
     expiry,
     settlementPrice: m.settlementPrice,
     enabled: m.enabled,
+    upside,
     maxLeverage: m.maxLeverage,
     maxOiPerSide: m.maxOiPerSide,
     skewScale: m.skewScale,
