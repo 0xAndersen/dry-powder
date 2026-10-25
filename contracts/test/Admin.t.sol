@@ -5,6 +5,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PerpEngineBase} from "../src/PerpEngineBase.sol";
 import {Market, MarketConfig} from "../src/Types.sol";
 import {Base} from "./Base.t.sol";
 
@@ -47,9 +48,9 @@ contract AdminTest is Base {
 
     function test_addMarket() public {
         vm.expectEmit(address(engine));
-        emit PerpEngine.MarketListed(SOL, "SOL-USD", SOL, bytes32(0), true, 0);
+        emit PerpEngineBase.MarketListed(SOL, "SOL-USD", SOL, bytes32(0), true, 0);
         vm.expectEmit(address(engine));
-        emit PerpEngine.MarketConfigured(SOL, true, true, 50, 123e6, 456e6);
+        emit PerpEngineBase.MarketConfigured(SOL, true, true, 50, 123e6, 456e6);
         vm.prank(owner);
         engine.addMarket(SOL, _sol(true, 50, 123e6, 456e6));
 
@@ -77,7 +78,7 @@ contract AdminTest is Base {
         bytes32 id = keccak256("SOL-BTC-DATED");
         MarketConfig memory cfg = _cfg("SOL-BTC-DATED", SOL, BTC, true, uint64(vm.getBlockTimestamp() + 1));
         vm.expectEmit(address(engine));
-        emit PerpEngine.MarketListed(id, "SOL-BTC-DATED", SOL, BTC, true, uint64(vm.getBlockTimestamp() + 1));
+        emit PerpEngineBase.MarketListed(id, "SOL-BTC-DATED", SOL, BTC, true, uint64(vm.getBlockTimestamp() + 1));
         vm.prank(owner);
         engine.addMarket(id, cfg);
         Market memory m = engine.getMarket(id);
@@ -96,31 +97,31 @@ contract AdminTest is Base {
 
     function test_addMarket_validations() public {
         vm.startPrank(owner);
-        vm.expectRevert(PerpEngine.MarketExists.selector);
+        vm.expectRevert(PerpEngineBase.MarketExists.selector);
         engine.addMarket(BTC, _sol(false, 50, 1e12, 1e12));
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.addMarket(bytes32(0), _sol(false, 50, 1e12, 1e12));
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.addMarket(SOL, _sol(false, 0, 1e12, 1e12));
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
-        engine.addMarket(SOL, _sol(false, 1001, 1e12, 1e12));
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
+        engine.addMarket(SOL, _sol(false, 5001, 1e12, 1e12));
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.addMarket(SOL, _sol(false, 50, 1e12, 0));
 
         // A market needs a feed, and a cross needs two different ones.
         MarketConfig memory cfg = _sol(false, 50, 1e12, 1e12);
         cfg.feedId = bytes32(0);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.addMarket(SOL, cfg);
         cfg.feedId = SOL;
         cfg.quoteFeedId = SOL;
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.addMarket(SOL, cfg);
 
         // A dated market must expire in the future.
         cfg = _sol(false, 50, 1e12, 1e12);
         cfg.expiry = uint64(vm.getBlockTimestamp());
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.addMarket(SOL, cfg);
         cfg.expiry = uint64(vm.getBlockTimestamp() + 1);
         engine.addMarket(SOL, cfg);
@@ -133,7 +134,7 @@ contract AdminTest is Base {
             engine.addMarket(bytes32(i + 1000), _sol(false, 50, 1e12, 1e12));
         }
         assertEq(engine.getMarketIds().length, 64); // MAX_MARKETS
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.addMarket(SOL, _sol(false, 50, 1e12, 1e12));
         vm.stopPrank();
     }
@@ -187,17 +188,17 @@ contract AdminTest is Base {
 
     function test_setMarket() public {
         vm.startPrank(owner);
-        vm.expectRevert(PerpEngine.MarketNotFound.selector);
+        vm.expectRevert(PerpEngineBase.MarketNotFound.selector);
         engine.setMarket(SOL, true, 50, 1e12, 1e12);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
-        engine.setMarket(BTC, true, 1001, 1e12, 1e12);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
+        engine.setMarket(BTC, true, 5001, 1e12, 1e12);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setMarket(BTC, true, 0, 1e12, 1e12);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setMarket(BTC, true, 50, 1e12, 0);
 
         vm.expectEmit(address(engine));
-        emit PerpEngine.MarketConfigured(JPY, false, true, 25, 7e6, 8e6);
+        emit PerpEngineBase.MarketConfigured(JPY, false, true, 25, 7e6, 8e6);
         engine.setMarket(JPY, false, 25, 7e6, 8e6);
         vm.stopPrank();
 
@@ -212,17 +213,17 @@ contract AdminTest is Base {
 
     function test_setFeeParams() public {
         vm.startPrank(owner);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setFeeParams(51, 0, 0, 0);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setFeeParams(0, 101, 0, 0);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setFeeParams(0, 0, 317_097_919_838, 0);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setFeeParams(0, 0, 0, 10e6 + 1);
 
         vm.expectEmit(address(engine));
-        emit PerpEngine.FeeParamsSet(50, 100, 317_097_919_837, 10e6);
+        emit PerpEngineBase.FeeParamsSet(50, 100, 317_097_919_837, 10e6);
         engine.setFeeParams(50, 100, 317_097_919_837, 10e6);
         vm.stopPrank();
         assertEq(engine.baseFeeBps(), 50);
@@ -233,23 +234,23 @@ contract AdminTest is Base {
 
     function test_setRiskParams() public {
         vm.startPrank(owner);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setRiskParams(0, 50, 30_000, 5e6);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setRiskParams(61, 50, 30_000, 5e6);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setRiskParams(3, 0, 30_000, 5e6);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setRiskParams(3, 501, 30_000, 5e6);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setRiskParams(3, 50, 5_000 - 1, 5e6);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setRiskParams(3, 50, 100_000 + 1, 5e6);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setRiskParams(3, 50, 30_000, 0);
 
         vm.expectEmit(address(engine));
-        emit PerpEngine.RiskParamsSet(60, 500, 10_000, 1e6);
+        emit PerpEngineBase.RiskParamsSet(60, 500, 10_000, 1e6);
         engine.setRiskParams(60, 500, 10_000, 1e6);
         vm.stopPrank();
         assertEq(engine.maxPriceAge(), 60);
@@ -261,12 +262,12 @@ contract AdminTest is Base {
     function test_setMaxProfitMultiple() public {
         assertEq(engine.maxProfitMultiple(), 10);
         vm.startPrank(owner);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setMaxProfitMultiple(0);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setMaxProfitMultiple(101);
         vm.expectEmit(address(engine));
-        emit PerpEngine.MaxProfitMultipleSet(1);
+        emit PerpEngineBase.MaxProfitMultipleSet(1);
         engine.setMaxProfitMultiple(1);
         assertEq(engine.maxProfitMultiple(), 1);
         engine.setMaxProfitMultiple(100);
@@ -296,7 +297,7 @@ contract AdminTest is Base {
         engine.setRiskParams(3, 50, 10_000, 5e6);
         assertEq(engine.reservedLiquidity(), 500_000e6);
         vm.prank(bob);
-        vm.expectRevert(PerpEngine.VaultOiCapExceeded.selector);
+        vm.expectRevert(PerpEngineBase.VaultOiCapExceeded.selector);
         engine.openPosition(_params(ETH, true, 60_000e6, 600_000e6), _noBytes());
     }
 

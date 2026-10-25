@@ -6,6 +6,8 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 import {EngineLens} from "../src/EngineLens.sol";
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PerpEngineExt} from "../src/PerpEngineExt.sol";
+import {PerpEngineBase} from "../src/PerpEngineBase.sol";
 import {PythOracle} from "../src/PythOracle.sol";
 import {OpenParams, Position, PositionView} from "../src/Types.sol";
 import {IHouseVault} from "../src/interfaces/IHouseVault.sol";
@@ -25,10 +27,15 @@ contract PerpEngineTest is Base {
         assertEq(address(engine.rewardToken()), address(house));
         assertEq(engine.owner(), owner);
         assertEq(usdc.allowance(address(engine), address(vault)), type(uint256).max);
-        assertEq(engine.MAX_LEVERAGE(), 1000);
+        assertEq(engine.MAX_LEVERAGE(), 5000);
         assertEq(engine.DIRECT_MAX_LEVERAGE(), 100);
         assertEq(engine.LIQUIDATION_THRESHOLD_BPS(), 9_000);
-                bytes32[] memory ids = engine.getMarketIds();
+        assertEq(engine.REBATE_NOTIONAL_BPS(), 100);
+        assertEq(engine.profitShareBps(), 2_000);
+        assertEq(engine.referralShareBps(), 1_000);
+        assertEq(engine.referralDiscountBps(), 500);
+        assertTrue(engine.extension() != address(0));
+        bytes32[] memory ids = engine.getMarketIds();
         assertEq(ids.length, 6);
         assertEq(ids[0], BTC);
         assertEq(ids[3], JPY);
@@ -42,14 +49,58 @@ contract PerpEngineTest is Base {
         PythOracle p = oracle;
         IHouseVault v = IHouseVault(address(vault));
         IRewardToken r = IRewardToken(address(house));
-        vm.expectRevert(PerpEngine.ZeroAddress.selector);
-        new PerpEngine(IERC20(address(0)), p, v, r, owner);
-        vm.expectRevert(PerpEngine.ZeroAddress.selector);
-        new PerpEngine(u, PythOracle(address(0)), v, r, owner);
-        vm.expectRevert(PerpEngine.ZeroAddress.selector);
-        new PerpEngine(u, p, IHouseVault(address(0)), r, owner);
-        vm.expectRevert(PerpEngine.ZeroAddress.selector);
-        new PerpEngine(u, p, v, IRewardToken(address(0)), owner);
+        PerpEngineExt ext = new PerpEngineExt(u, p, v, r);
+        vm.expectRevert(PerpEngineBase.ZeroAddress.selector);
+        new PerpEngine(IERC20(address(0)), p, v, r, owner, ext);
+        vm.expectRevert(PerpEngineBase.ZeroAddress.selector);
+        new PerpEngine(u, PythOracle(address(0)), v, r, owner, ext);
+        vm.expectRevert(PerpEngineBase.ZeroAddress.selector);
+        new PerpEngine(u, p, IHouseVault(address(0)), r, owner, ext);
+        vm.expectRevert(PerpEngineBase.ZeroAddress.selector);
+        new PerpEngine(u, p, v, IRewardToken(address(0)), owner, ext);
+        vm.expectRevert(PerpEngineBase.ZeroAddress.selector);
+        new PerpEngine(u, p, v, r, owner, PerpEngineExt(address(0)));
+        vm.expectRevert(PerpEngineBase.ZeroAddress.selector);
+        new PerpEngineExt(u, p, v, IRewardToken(address(0)));
+    }
+
+    /// The extension runs on the engine's storage with its own immutables, so they must be the engine's.
+    function test_constructor_rejectsAnExtensionBuiltForOtherContracts() public {
+        IERC20 u = IERC20(address(usdc));
+        IHouseVault v = IHouseVault(address(vault));
+        IRewardToken r = IRewardToken(address(house));
+        PerpEngineExt otherVault = new PerpEngineExt(u, oracle, IHouseVault(makeAddr("vault2")), r);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
+        new PerpEngine(u, oracle, v, r, owner, otherVault);
+        PerpEngineExt otherToken = new PerpEngineExt(u, oracle, v, IRewardToken(makeAddr("token2")));
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
+        new PerpEngine(u, oracle, v, r, owner, otherToken);
+        PerpEngineExt otherUsdc = new PerpEngineExt(IERC20(makeAddr("usdc2")), oracle, v, r);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
+        new PerpEngine(u, oracle, v, r, owner, otherUsdc);
+    }
+
+    /// Called at its own address the extension refuses: its code is only meant to run on the engine's storage.
+    function test_extension_refusesDirectCalls() public {
+        PerpEngineExt ext = PerpEngineExt(PerpEngine(payable(address(engine))).extension());
+        vm.expectRevert(PerpEngineExt.NotDelegated.selector);
+        ext.getMarketIds();
+        vm.expectRevert(PerpEngineExt.NotDelegated.selector);
+        ext.claim();
+        vm.prank(owner);
+        vm.expectRevert(PerpEngineExt.NotDelegated.selector);
+        ext.pause();
+        // Through the engine the same calls run on the engine's state.
+        assertEq(engine.getMarketIds().length, 6);
+    }
+
+    /// Unknown selectors and plain value transfers are refused.
+    function test_engine_refusesUnknownCallsAndValue() public {
+        (bool ok,) = address(engine).call(abi.encodeWithSignature("nope()"));
+        assertFalse(ok);
+        (ok,) = address(engine).call{value: 1}("");
+        assertFalse(ok);
+        assertEq(address(engine).balance, 0);
     }
 
     // ───────────────────────────── Open ─────────────────────────────
@@ -62,7 +113,7 @@ contract PerpEngineTest is Base {
         assertEq(engine.quoteOpenFee(BTC, 10_000e6, true, type(uint256).max / 1e5), fee);
 
         vm.expectEmit(address(engine));
-        emit PerpEngine.PositionOpened(key, alice, BTC, true, 1_000e6, 10_000e6, P100K, fee);
+        emit PerpEngineBase.PositionOpened(key, alice, BTC, true, 1_000e6, 10_000e6, P100K, fee);
         assertEq(_open(alice, BTC, true, 1_000e6, 10_000e6), key);
 
         Position memory pos = engine.getPosition(alice, BTC);
@@ -127,26 +178,26 @@ contract PerpEngineTest is Base {
     function test_open_validations() public {
         OpenParams memory p = _params(bytes32(uint256(1)), true, 1_000e6, 10_000e6);
         vm.startPrank(alice);
-        vm.expectRevert(PerpEngine.MarketNotFound.selector);
+        vm.expectRevert(PerpEngineBase.MarketNotFound.selector);
         engine.openPosition(p, _noBytes());
 
         p = _params(BTC, true, 5e6 - 1, 100e6);
-        vm.expectRevert(PerpEngine.MarginTooLow.selector);
+        vm.expectRevert(PerpEngineBase.MarginTooLow.selector);
         engine.openPosition(p, _noBytes());
 
         p = _params(BTC, true, 1_000e6, 1_000e6 - 1); // below 1x
-        vm.expectRevert(PerpEngine.LeverageOutOfRange.selector);
+        vm.expectRevert(PerpEngineBase.LeverageOutOfRange.selector);
         engine.openPosition(p, _noBytes());
 
         p = _params(BTC, true, 1_000e6, 100_000e6 + 1); // above 100x
-        vm.expectRevert(PerpEngine.LeverageOutOfRange.selector);
+        vm.expectRevert(PerpEngineBase.LeverageOutOfRange.selector);
         engine.openPosition(p, _noBytes());
 
         p = _params(BTC, true, 1_000e6, 10_000e6);
         engine.openPosition(p, _noBytes());
         // The other side of an open position is refused; the same side adds to it (PositionManagement.t.sol).
         p.isLong = false;
-        vm.expectRevert(PerpEngine.PositionExists.selector);
+        vm.expectRevert(PerpEngineBase.PositionExists.selector);
         engine.openPosition(p, _noBytes());
         vm.stopPrank();
     }
@@ -155,7 +206,7 @@ contract PerpEngineTest is Base {
         vm.prank(owner);
         engine.setMarket(EUR, true, 20, MAX_OI_PER_SIDE, SKEW_SCALE);
         vm.startPrank(alice);
-        vm.expectRevert(PerpEngine.LeverageOutOfRange.selector);
+        vm.expectRevert(PerpEngineBase.LeverageOutOfRange.selector);
         engine.openPosition(_params(EUR, true, 1_000e6, 20_000e6 + 1), _noBytes());
         engine.openPosition(_params(EUR, true, 1_000e6, 20_000e6), _noBytes());
         vm.stopPrank();
@@ -165,7 +216,7 @@ contract PerpEngineTest is Base {
         vm.prank(owner);
         engine.setMarket(BTC, false, 100, MAX_OI_PER_SIDE, SKEW_SCALE);
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.MarketDisabled.selector);
+        vm.expectRevert(PerpEngineBase.MarketDisabled.selector);
         engine.openPosition(_params(BTC, true, 1_000e6, 10_000e6), _noBytes());
     }
 
@@ -182,12 +233,12 @@ contract PerpEngineTest is Base {
         engine.setMarket(BTC, true, 100, 50_000e6, SKEW_SCALE);
         _open(alice, BTC, true, 1_000e6, 50_000e6);
         vm.prank(bob);
-        vm.expectRevert(PerpEngine.MarketOiCapExceeded.selector);
+        vm.expectRevert(PerpEngineBase.MarketOiCapExceeded.selector);
         engine.openPosition(_params(BTC, true, 1_000e6, 1_000e6), _noBytes());
         // The cap is per side.
         _open(bob, BTC, false, 1_000e6, 50_000e6);
         vm.prank(carol);
-        vm.expectRevert(PerpEngine.MarketOiCapExceeded.selector);
+        vm.expectRevert(PerpEngineBase.MarketOiCapExceeded.selector);
         engine.openPosition(_params(BTC, false, 1_000e6, 1_000e6), _noBytes());
     }
 
@@ -195,7 +246,7 @@ contract PerpEngineTest is Base {
         // 3x of ~1m NAV across all markets.
         _open(alice, BTC, true, 200_000e6, 2_000_000e6);
         vm.prank(bob);
-        vm.expectRevert(PerpEngine.VaultOiCapExceeded.selector);
+        vm.expectRevert(PerpEngineBase.VaultOiCapExceeded.selector);
         engine.openPosition(_params(ETH, false, 200_000e6, 1_100_000e6), _noBytes());
         _open(bob, ETH, false, 200_000e6, 1_000_000e6);
         assertEq(engine.totalOpenInterest(), 3_000_000e6);
@@ -206,7 +257,7 @@ contract PerpEngineTest is Base {
         OpenParams memory p = _params(BTC, true, 1_000e6, 10_000e6);
         p.acceptablePrice = 100_050e18 - 1;
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.SlippageExceeded.selector);
+        vm.expectRevert(PerpEngineBase.SlippageExceeded.selector);
         engine.openPosition(p, _noBytes());
         p.acceptablePrice = 100_050e18;
         vm.prank(alice);
@@ -216,7 +267,7 @@ contract PerpEngineTest is Base {
         p = _params(BTC, false, 1_000e6, 10_000e6);
         p.acceptablePrice = 99_950e18 + 1;
         vm.prank(bob);
-        vm.expectRevert(PerpEngine.SlippageExceeded.selector);
+        vm.expectRevert(PerpEngineBase.SlippageExceeded.selector);
         engine.openPosition(p, _noBytes());
         p.acceptablePrice = 99_950e18;
         vm.prank(bob);
@@ -233,7 +284,7 @@ contract PerpEngineTest is Base {
         _setBtc(101_000); // +1% on 10k = +100
 
         vm.expectEmit(address(engine));
-        emit PerpEngine.PositionClosed(key, alice, BTC, 101_000e18, 100e6, 5e6, 1_095e6);
+        emit PerpEngineBase.PositionClosed(key, alice, BTC, 101_000e18, 100e6, 5e6, 1_095e6);
         _close(alice, BTC);
 
         assertEq(usdc.balanceOf(alice), afterOpen + 1_095e6);
@@ -253,13 +304,18 @@ contract PerpEngineTest is Base {
         _setBtc(99_500); // -0.5% on 10k = -50
 
         vm.expectEmit(address(engine));
-        emit PerpEngine.PositionClosed(key, alice, BTC, 99_500e18, -50e6, 5e6, 945e6);
+        emit PerpEngineBase.PositionClosed(key, alice, BTC, 99_500e18, -50e6, 5e6, 945e6);
         _close(alice, BTC);
 
         assertEq(usdc.balanceOf(alice), afterOpen + 945e6);
         assertEq(vault.totalTraderLosses(), 50e6);
         assertEq(vault.totalHouseBalance(), LP_SEED + 5e6 + 50e6 + 5e6);
-        assertEq(house.balanceOf(alice), 5_000e18); // 100 DRY per USDC lost
+        // 100 DRY per USDC lost at the start of the decay curve, priced at the loss's midpoint on it.
+        assertEq(house.balanceOf(alice), _rebateAfter(50e6, 0));
+        assertApproxEqRel(house.balanceOf(alice), 5_000e18, 1e14);
+        (int128 net, int128 low) = house.results(alice);
+        assertEq(net, -50e6);
+        assertEq(low, -50e6);
         _assertEngineSolvent();
     }
 
@@ -279,7 +335,7 @@ contract PerpEngineTest is Base {
         _setBtc(100_500);
         _close(alice, BTC);
         assertEq(usdc.balanceOf(alice), afterOpen + 1_000e6 - 50e6 - 5e6);
-        assertEq(house.balanceOf(alice), 5_000e18);
+        assertEq(house.balanceOf(alice), _rebateAfter(50e6, 0));
     }
 
     function test_close_flat_paysOnlyTheFee() public {
@@ -322,14 +378,14 @@ contract PerpEngineTest is Base {
 
     function test_close_reverts() public {
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.PositionNotFound.selector);
+        vm.expectRevert(PerpEngineBase.PositionNotFound.selector);
         engine.closePosition(BTC, 0, 0, _noBytes());
 
         _flatFees();
         _open(alice, BTC, true, 1_000e6, 100_000e6);
         _setBtc(99_100); // -0.9% at 100x = 90% of margin
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.PositionLiquidatable.selector);
+        vm.expectRevert(PerpEngineBase.PositionLiquidatable.selector);
         engine.closePosition(BTC, 0, 0, _noBytes());
     }
 
@@ -340,13 +396,13 @@ contract PerpEngineTest is Base {
         _setPrice(BTC, 100_000e8, 50e8, -8); // bid 99,950 / ask 100,050
 
         vm.startPrank(alice);
-        vm.expectRevert(PerpEngine.SlippageExceeded.selector);
+        vm.expectRevert(PerpEngineBase.SlippageExceeded.selector);
         engine.closePosition(BTC, 0, 99_950e18 + 1, _noBytes());
         engine.closePosition(BTC, 0, 99_950e18, _noBytes());
         vm.stopPrank();
 
         vm.startPrank(bob);
-        vm.expectRevert(PerpEngine.SlippageExceeded.selector);
+        vm.expectRevert(PerpEngineBase.SlippageExceeded.selector);
         engine.closePosition(BTC, 0, 100_050e18 - 1, _noBytes());
         engine.closePosition(BTC, 0, 100_050e18, _noBytes());
         vm.stopPrank();
@@ -362,7 +418,7 @@ contract PerpEngineTest is Base {
         assertEq(usdc.balanceOf(alice), afterOpen);
         assertEq(vault.totalTraderLosses(), 100e6);
         assertEq(vault.totalFeesCollected(), 5e6); // the open fee only; nothing was left for a close fee
-        assertEq(house.balanceOf(alice), 10_000e18);
+        assertEq(house.balanceOf(alice), _rebateAfter(100e6, 0));
         _assertEngineSolvent();
     }
 
@@ -445,7 +501,7 @@ contract PerpEngineTest is Base {
         assertEq(alicePaid, uint256(aliceOwed));
         assertGt(alicePaid, bobReceived);
         assertEq(vault.totalHouseBalance(), navBefore + alicePaid - bobReceived);
-        assertEq(house.balanceOf(alice), alicePaid * 100e12); // funding paid is a loss and earns the rebate
+        assertEq(house.balanceOf(alice), _rebateAfter(alicePaid, 0)); // funding paid is a loss and earns the rebate
     }
 
     function test_funding_signFollowsSkew() public {
@@ -555,13 +611,13 @@ contract PerpEngineTest is Base {
     }
 
     function test_views_unknownMarketReverts() public {
-        vm.expectRevert(PerpEngine.MarketNotFound.selector);
+        vm.expectRevert(PerpEngineBase.MarketNotFound.selector);
         engine.quoteOpenFee(bytes32(0), 1e6, true, type(uint256).max / 1e5);
-        vm.expectRevert(PerpEngine.MarketNotFound.selector);
+        vm.expectRevert(PerpEngineBase.MarketNotFound.selector);
         engine.fundingRate(bytes32(0));
-        vm.expectRevert(PerpEngine.MarketNotFound.selector);
+        vm.expectRevert(PerpEngineBase.MarketNotFound.selector);
         engine.currentFundingIndex(bytes32(0));
-        vm.expectRevert(PerpEngine.MarketNotFound.selector);
+        vm.expectRevert(PerpEngineBase.MarketNotFound.selector);
         engine.getPrice(bytes32(0));
     }
 

@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PerpEngineBase} from "../src/PerpEngineBase.sol";
 import {PositionView} from "../src/Types.sol";
 import {Base} from "./Base.t.sol";
 
@@ -49,7 +50,7 @@ contract ValuationTest is Base {
         _open(alice, BTC, true, 10_000e6, 100_000e6);
         _setBtc(103_000);
         skip(7 days);
-        vm.expectRevert(PerpEngine.OraclePriceStale.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceStale.selector);
         engine.getPrice(BTC);
         assertEq(engine.unrealizedTraderPnl(), 3_000e6);
         assertEq(vault.exitValue(), vault.totalHouseBalance() - 3_000e6);
@@ -97,10 +98,12 @@ contract ValuationTest is Base {
     /// @dev The estimate ignores that a loss stops at the margin and that a profit stops at the cap. Both
     ///      make it overstate what the house is owed, i.e. err on the high side for entry and (through the
     ///      cap) on the low side for exit.
-    function test_unrealizedTraderPnl_ignoresMarginFloorAndProfitCap() public {
+    /// Each side of a market is held between losing its margin and winning its capped profit (v3.2; v2 counted
+    /// both at face value).
+    function test_unrealizedTraderPnl_boundsEachSideByMarginAndProfitCap() public {
         bytes32 key = _open(alice, BTC, true, 100e6, 10_000e6); // 100x
         _setBtc(90_000);
-        assertEq(engine.unrealizedTraderPnl(), -1_000e6); // ten times her margin
+        assertEq(engine.unrealizedTraderPnl(), -100e6); // her margin, not the 1,000 a 10% drop would be
         vm.prank(keeper);
         _liquidate(alice);
         assertEq(engine.unrealizedTraderPnl(), 0);
@@ -109,7 +112,7 @@ contract ValuationTest is Base {
         _setBtc(100_000);
         _open(bob, BTC, true, 100e6, 10_000e6);
         _setBtc(200_000);
-        assertEq(engine.unrealizedTraderPnl(), 10_000e6); // ten times the 1,000 he can actually be paid
+        assertEq(engine.unrealizedTraderPnl(), 1_000e6); // the 1,000 he can actually be paid, not 10,000
     }
 
     function test_reservedLiquidity_isOnNetSkewPerMarket() public {
@@ -150,13 +153,15 @@ contract ValuationTest is Base {
         _publish(BTC, int64(uint64(btc)), 0, -8);
         _publish(ETH, int64(uint64(eth)), 0, -8);
 
+        // Every position on a side entered at the same price, so bounding each side bounds each position.
         int256 sum;
         PositionView[] memory ps = lens.getPositions(0, 10);
         assertEq(ps.length, 6);
         for (uint256 i; i < ps.length; ++i) {
             uint256 price = ps[i].position.priceId == BTC ? btc * 1e10 : eth * 1e10;
             (int256 pnl,,,) = lens.getPositionState(ps[i].key, price);
-            sum += pnl;
+            int256 margin = int256(ps[i].position.margin);
+            sum += pnl < -margin ? -margin : pnl > margin * 10 ? margin * 10 : pnl;
         }
         assertApproxEqAbs(engine.unrealizedTraderPnl(), sum, 12);
     }

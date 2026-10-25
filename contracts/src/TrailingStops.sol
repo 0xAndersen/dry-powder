@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {AgentAccount, AgentAccountFactory} from "./AgentAccount.sol";
-import {PerpEngine} from "./PerpEngine.sol";
+import {IEngine} from "./interfaces/IEngine.sol";
 import {Order, OrderType, OraclePrice, Position} from "./Types.sol";
 
 /// @title TrailingStops
@@ -48,7 +48,7 @@ contract TrailingStops {
     uint16 public constant MAX_DISTANCE_BPS = 5_000;
     uint256 private constant BPS = 10_000;
 
-    PerpEngine public immutable engine;
+    IEngine public immutable engine;
     /// @notice Only accounts this factory deployed can have trails (no spam from look-alike contracts).
     AgentAccountFactory public immutable factory;
 
@@ -72,7 +72,7 @@ contract TrailingStops {
     /// @notice The move ran out of gas: the poke as a whole is refused, so callers (and gas estimates) give it enough.
     error InsufficientGas();
 
-    constructor(PerpEngine engine_, AgentAccountFactory factory_) {
+    constructor(IEngine engine_, AgentAccountFactory factory_) {
         engine = engine_;
         factory = factory_;
     }

@@ -3,12 +3,16 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {MockPyth} from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 
 import {EngineLens} from "../src/EngineLens.sol";
 import {HouseVault} from "../src/HouseVault.sol";
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PerpEngineBase} from "../src/PerpEngineBase.sol";
+import {PerpEngineExt} from "../src/PerpEngineExt.sol";
+import {IEngine} from "../src/interfaces/IEngine.sol";
 import {PythOracle} from "../src/PythOracle.sol";
 import {RewardToken} from "../src/RewardToken.sol";
 import {IHouseVault} from "../src/interfaces/IHouseVault.sol";
@@ -54,7 +58,7 @@ abstract contract Base is Test {
     PythOracle internal oracle;
     HouseVault internal vault;
     RewardToken internal house;
-    PerpEngine internal engine;
+    IEngine internal engine;
     EngineLens internal lens;
 
     address internal owner = makeAddr("owner");
@@ -73,10 +77,11 @@ abstract contract Base is Test {
         uint256 nonce = vm.getNonce(address(this));
         address predictedVault = vm.computeCreateAddress(address(this), nonce);
         address predictedToken = vm.computeCreateAddress(address(this), nonce + 1);
-        address predictedEngine = vm.computeCreateAddress(address(this), nonce + 2);
+        // nonce + 2 is the engine's extension.
+        address predictedEngine = vm.computeCreateAddress(address(this), nonce + 3);
         vault = new HouseVault(IERC20(address(usdc)), predictedEngine, predictedToken, LOCK, EPOCH);
         house = new RewardToken(predictedVault, predictedEngine, STREAM);
-        engine = new PerpEngine(
+        engine = _deployEngine(
             IERC20(address(usdc)), oracle, IHouseVault(predictedVault), IRewardToken(predictedToken), owner
         );
         assertEq(address(vault), predictedVault);
@@ -107,6 +112,15 @@ abstract contract Base is Test {
         _setPrice(EUR, 110_000, 0, -5);
         _setPrice(JPY, 150_000, 0, -3);
         _refreshAll();
+    }
+
+    /// @dev The engine is two contracts: the extension (one creation) and the engine that forwards to it (the next).
+    function _deployEngine(IERC20 usdc_, PythOracle oracle_, IHouseVault vault_, IRewardToken token_, address owner_)
+        internal
+        returns (IEngine)
+    {
+        PerpEngineExt ext = new PerpEngineExt(usdc_, oracle_, vault_, token_);
+        return IEngine(address(new PerpEngine(usdc_, oracle_, vault_, token_, owner_, ext)));
     }
 
     function _cfg(string memory symbol, bytes32 feedId, bytes32 quoteFeedId, bool invert, uint64 expiry)
@@ -255,7 +269,7 @@ abstract contract Base is Test {
     }
 
     /// @dev Liquidates whatever of `who`'s positions qualifies at the prices on-chain; reverts with
-    ///      {PerpEngine.NothingToLiquidate} when none does.
+    ///      {PerpEngineBase.NothingToLiquidate} when none does.
     function _liquidate(address who) internal returns (uint256) {
         return engine.liquidateBatch(_traderKeys(who), _noBytes());
     }
@@ -282,12 +296,29 @@ abstract contract Base is Test {
         engine.setFeeParams(5, 0, 0, EXEC_FEE);
     }
 
-    /// @dev Mints DRY to `who` as the engine would for a loss, and stakes `amount` of it.
+    /// @dev Gives `who` `amount` DRY (as if earned) and stakes it.
     function _stake(address who, uint256 amount) internal {
-        vm.prank(address(engine));
-        house.mintLossRebate(who, amount / 100e12);
+        _giveDry(who, amount);
         vm.prank(who);
         house.stake(amount);
+    }
+
+    /// @dev Credits `amount` DRY to `who`, adjusting the supply, without touching the rebate ledger.
+    function _giveDry(address who, uint256 amount) internal {
+        deal(address(house), who, house.balanceOf(who) + amount, true);
+    }
+
+    /// @dev DRY a close reporting `loss` on a position of `size` mints right now (one new low, nothing else
+    ///      rebated in between): the loss capped at the engine's share of notional, priced on the decay curve.
+    function _rebate(uint256 loss, uint256 size) internal view returns (uint256) {
+        uint256 cap = (size * engine.REBATE_NOTIONAL_BPS()) / 10_000;
+        return house.rebateFor(loss < cap ? loss : cap);
+    }
+
+    /// @dev DRY for `base` of new net loss once `rebatedBefore` has been rebated in total (RewardToken's curve).
+    function _rebateAfter(uint256 base, uint256 rebatedBefore) internal view returns (uint256) {
+        uint256 h = house.HALVING_LOSS();
+        return Math.mulDiv(base * 100e12, h, h + rebatedBefore + base / 2);
     }
 
     /// @dev Books `amount` of fee income at the vault, as the engine would.

@@ -1,7 +1,8 @@
 name: Deploy to Arc Testnet (Forge)
 
 # The fast path: contracts/script/Deploy.s.sol deploys the whole venue (test collateral, publisher oracle,
-# vault, engine, lens, agent account factory, 8 markets up to 1000x, seeded vault) in one Forge broadcast,
+# vault, engine and its extension, lens, agent account factory, add-ons, 12 markets up to 5000x, seeded vault) in one
+# Forge broadcast,
 # commits deployments/arc-testnet.json straight away, then publishes the app and (re)starts the keeper.
 # The previous deployment is archived under deployments/history/.
 #
@@ -14,8 +15,8 @@ on:
         description: House vault seed, whole tUSDC
         default: "5000000"
       max_price_age:
-        description: Max price age, seconds
-        default: "30"
+        description: Max price age, seconds (direct trades only; keeper orders always fill at a newer price)
+        default: "10"
 
 permissions:
   contents: write

@@ -2,12 +2,14 @@
 pragma solidity 0.8.28;
 
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {IEngine} from "../src/interfaces/IEngine.sol";
+import {PerpEngineBase} from "../src/PerpEngineBase.sol";
 import {OpenParams, OraclePrice, PriceStatus} from "../src/Types.sol";
 import {Base} from "./Base.t.sol";
 
 /// @dev A caller that cannot receive native value, to exercise the refund failure path.
 contract NoReceive {
-    function open(PerpEngine engine, OpenParams calldata p, bytes[] calldata update) external payable {
+    function open(IEngine engine, OpenParams calldata p, bytes[] calldata update) external payable {
         engine.openPosition{value: msg.value}(p, update);
     }
 }
@@ -24,8 +26,8 @@ contract OracleTest is Base {
     function test_unavailable_feedNeverPublished() public {
         vm.prank(owner);
         engine.addMarket(NEW_FEED, _cfg("NEW-USD", NEW_FEED, bytes32(0), false, 0));
-        _expectOpenRevert(NEW_FEED, PerpEngine.OraclePriceUnavailable.selector);
-        vm.expectRevert(PerpEngine.OraclePriceUnavailable.selector);
+        _expectOpenRevert(NEW_FEED, PerpEngineBase.OraclePriceUnavailable.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceUnavailable.selector);
         engine.getPrice(NEW_FEED);
     }
 
@@ -33,9 +35,9 @@ contract OracleTest is Base {
         skip(3);
         _open(alice, BTC, true, 1_000e6, 10_000e6); // exactly at the limit is fine
         skip(1);
-        _expectOpenRevert(ETH, PerpEngine.OraclePriceStale.selector);
+        _expectOpenRevert(ETH, PerpEngineBase.OraclePriceStale.selector);
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.OraclePriceStale.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceStale.selector);
         engine.closePosition(BTC, 0, 0, _noBytes());
 
         // A fresh update in the same transaction fixes it.
@@ -48,7 +50,7 @@ contract OracleTest is Base {
     function test_stale_priceTooFarInTheFuture() public {
         bytes[] memory update = _updateData(BTC, 100_000e8, 0, -8, uint64(vm.getBlockTimestamp() + 4));
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.OraclePriceStale.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceStale.selector);
         engine.openPosition{value: PYTH_FEE}(_params(BTC, true, 1_000e6, 10_000e6), update);
 
         // Small clock skew between Pyth and the chain is tolerated.
@@ -59,16 +61,16 @@ contract OracleTest is Base {
 
     function test_invalid_nonPositivePrice() public {
         _setPrice(BTC, 0, 0, -8);
-        _expectOpenRevert(BTC, PerpEngine.OraclePriceInvalid.selector);
+        _expectOpenRevert(BTC, PerpEngineBase.OraclePriceInvalid.selector);
         _setPrice(BTC, -100_000e8, 0, -8);
-        _expectOpenRevert(BTC, PerpEngine.OraclePriceInvalid.selector);
+        _expectOpenRevert(BTC, PerpEngineBase.OraclePriceInvalid.selector);
     }
 
     function test_invalid_unsupportedExponent() public {
         _setPrice(BTC, 100_000, 0, 1);
-        _expectOpenRevert(BTC, PerpEngine.OraclePriceInvalid.selector);
+        _expectOpenRevert(BTC, PerpEngineBase.OraclePriceInvalid.selector);
         _setPrice(BTC, 100_000, 0, -19);
-        _expectOpenRevert(BTC, PerpEngine.OraclePriceInvalid.selector);
+        _expectOpenRevert(BTC, PerpEngineBase.OraclePriceInvalid.selector);
     }
 
     function test_exponentRange_zeroAndMinus18() public {
@@ -81,7 +83,7 @@ contract OracleTest is Base {
     function test_invalid_invertedPriceUnderflowsToZero() public {
         // 9.2e18 with exponent 0 is 9.2e36 at 18 decimals; its reciprocal rounds to zero.
         _setPrice(JPY, type(int64).max, 0, 0);
-        _expectOpenRevert(JPY, PerpEngine.OraclePriceInvalid.selector);
+        _expectOpenRevert(JPY, PerpEngineBase.OraclePriceInvalid.selector);
     }
 
     function test_confidenceTooWide() public {
@@ -93,7 +95,7 @@ contract OracleTest is Base {
         assertEq(px.publishTime, vm.getBlockTimestamp());
 
         _setPrice(BTC, 100_000e8, 500e8 + 1, -8);
-        _expectOpenRevert(BTC, PerpEngine.OracleConfidenceTooWide.selector);
+        _expectOpenRevert(BTC, PerpEngineBase.OracleConfidenceTooWide.selector);
     }
 
     function test_invertedBand_isOrderedAndRoundedOutwards() public {
@@ -116,7 +118,7 @@ contract OracleTest is Base {
         bytes[] memory update = _fresh(BTC, 100_000e8, 5_000e8, -8); // 5% confidence
 
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.OracleConfidenceTooWide.selector);
+        vm.expectRevert(PerpEngineBase.OracleConfidenceTooWide.selector);
         engine.openPosition{value: PYTH_FEE}(_params(BTC, true, 1_000e6, 10_000e6), update);
 
         assertEq(usdc.balanceOf(alice), usdcBefore);
@@ -134,7 +136,7 @@ contract OracleTest is Base {
         // The keeper's update is itself too old.
         bytes[] memory update = _updateData(BTC, 99_000e8, 0, -8, uint64(vm.getBlockTimestamp() - 5));
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
+        vm.expectRevert(PerpEngineBase.NothingToLiquidate.selector);
         engine.liquidateBatch{value: PYTH_FEE}(_traderKeys(alice), update);
         assertEq(engine.getPosition(alice, BTC).margin, 1_000e6);
         assertEq(usdc.balanceOf(keeper), 0);
@@ -157,7 +159,7 @@ contract OracleTest is Base {
         skip(1);
         bytes[] memory update = _fresh(BTC, 100_250e8, 0, -8);
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.InsufficientOracleFee.selector);
+        vm.expectRevert(PerpEngineBase.InsufficientOracleFee.selector);
         engine.openPosition(_params(BTC, true, 1_000e6, 10_000e6), update);
     }
 
@@ -172,7 +174,7 @@ contract OracleTest is Base {
     function test_pythFee_refundFailureReverts() public {
         NoReceive caller = new NoReceive();
         vm.deal(address(this), 1 ether);
-        vm.expectRevert(PerpEngine.RefundFailed.selector);
+        vm.expectRevert(PerpEngineBase.RefundFailed.selector);
         caller.open{value: 1}(engine, _params(BTC, true, 1_000e6, 10_000e6), _noBytes());
     }
 

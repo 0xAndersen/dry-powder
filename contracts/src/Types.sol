@@ -24,7 +24,8 @@ struct Position {
 struct Market {
     bool enabled; // false blocks new positions; closes and liquidations still work
     bool invert;
-    uint16 maxLeverage; // whole multiples, 1..1000 (above 100x: keeper orders only)
+    uint16 maxLeverage; // whole multiples, 1..5000 (above 100x: keeper orders only)
+    FeeMode feeMode; // how the market charges: fees on notional, or a share of profit only
     uint64 lastFundingTime;
     uint64 expiry; // 0 for perpetuals
     bytes32 feedId;
@@ -35,6 +36,8 @@ struct Market {
     uint256 shortOi;
     uint256 longUnits; // sum of size * 1e36 / entryPrice over longs; used to mark the book to market
     uint256 shortUnits;
+    uint256 longMargin; // sum of margin over longs; with the profit cap it bounds what the side can win
+    uint256 shortMargin;
     int256 fundingIndex; // cumulative funding per unit of notional, 1e18; positive means longs have paid
     uint256 settlementPrice; // set once a dated market has settled
     string symbol;
@@ -49,6 +52,17 @@ struct MarketConfig {
     uint64 expiry;
     uint256 maxOiPerSide;
     uint256 skewScale;
+}
+
+/// @notice How a market charges.
+///         - Standard: a fee on notional at open (base plus skew surcharge) and at close; fills on the adverse side of
+///           the oracle's confidence band.
+///         - Upside ("no fee unless you win"): no fee at open or close and fills at the mid price; a winning close
+///           gives the house `profitShareBps` of the profit. Trades go through keeper orders only, which fill at a
+///           price published after the order, so a mid fill can never be taken against a stale price.
+enum FeeMode {
+    Standard,
+    Upside
 }
 
 enum OrderType {
@@ -67,6 +81,7 @@ struct Order {
     OrderType orderType;
     bool isLong;
     uint64 createdAt;
+    uint64 expiresAt; // 0: good until cancelled; otherwise the order cannot execute after this time
     uint256 margin; // open orders only
     uint256 size; // open orders: notional to open; trigger orders: notional to close, 0 for the whole position
     uint256 triggerPrice; // 18 decimals

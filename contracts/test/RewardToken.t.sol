@@ -12,9 +12,14 @@ contract RewardTokenTest is Base {
         house.notifyYield(amount);
     }
 
+    /// @dev DRY for staking tests, at the initial 100 DRY per USDC (where it comes from does not matter there).
     function _mint(address to, uint256 usdcLost) internal {
+        _giveDry(to, usdcLost * 100e12);
+    }
+
+    function _record(address trader, int256 result) internal returns (uint256 minted) {
         vm.prank(address(engine));
-        house.mintLossRebate(to, usdcLost);
+        minted = house.recordResult(trader, result);
     }
 
     function _mintAndStake(address who, uint256 amount) internal {
@@ -27,7 +32,9 @@ contract RewardTokenTest is Base {
         assertEq(house.decimals(), 18);
         assertEq(house.engine(), address(engine));
         assertEq(address(house.vault()), address(vault));
-        assertEq(house.REBATE_RATE(), 100);
+        assertEq(house.INITIAL_REBATE_RATE(), 100);
+        assertEq(house.HALVING_LOSS(), 1_000_000e6);
+        assertEq(house.rebateRate(), 100e18);
         assertEq(house.streamPeriod(), STREAM);
         assertEq(house.yieldRate(), 0);
         assertEq(house.periodFinish(), 0);
@@ -43,24 +50,78 @@ contract RewardTokenTest is Base {
         new RewardToken(address(vault), address(engine), 0);
     }
 
-    function test_mintLossRebate_onlyEngine() public {
+    function test_recordResult_onlyEngine() public {
         vm.prank(alice);
         vm.expectRevert(RewardToken.OnlyEngine.selector);
-        house.mintLossRebate(alice, 1e6);
+        house.recordResult(alice, -1e6);
     }
 
-    function test_mintLossRebate_mints100HousePerUsdc() public {
+    function test_recordResult_firstLossMintsAtTheInitialRate() public {
+        uint256 expected = house.rebateFor(1e6);
+        // 1 USDC at the midpoint of the curve: 100 DRY * H / (H + 0.5 USDC).
+        assertEq(expected, uint256(100e18) * 1_000_000e6 / (1_000_000e6 + 0.5e6));
         vm.expectEmit(address(house));
-        emit RewardToken.LossRebateMinted(alice, 1e6, 100e18);
-        vm.prank(address(engine));
-        uint256 minted = house.mintLossRebate(alice, 1e6);
-        assertEq(minted, 100e18);
-        assertEq(house.balanceOf(alice), 100e18);
+        emit RewardToken.LossRebateMinted(alice, 1e6, expected);
+        uint256 minted = _record(alice, -1e6);
+        assertEq(minted, expected);
+        assertEq(house.balanceOf(alice), expected);
+        assertEq(house.totalRebatesMinted(), expected);
+        assertEq(house.totalSupply(), expected);
+        assertEq(house.totalRebatedLoss(), 1e6);
+        (int128 net, int128 low) = house.results(alice);
+        assertEq(net, -1e6);
+        assertEq(low, -1e6);
+    }
 
-        _mint(alice, 1); // one micro-USDC
-        assertEq(house.balanceOf(alice), 100e18 + 100e12);
-        assertEq(house.totalRebatesMinted(), 100e18 + 100e12);
-        assertEq(house.totalSupply(), 100e18 + 100e12);
+    /// Net, not gross: DRY is minted only for the part of a loss that takes the running result to a new low.
+    function test_recordResult_mintsOnlyOnNewNetLows() public {
+        _record(alice, -100e6); // low -100: mints on 100
+        uint256 afterFirst = house.balanceOf(alice);
+        assertGt(afterFirst, 0);
+
+        assertEq(_record(alice, 100e6), 0); // back to 0
+        assertEq(_record(alice, -50e6), 0); // -50, above the low
+        assertEq(_record(alice, -50e6), 0); // -100, at the low: nothing new
+        assertEq(house.balanceOf(alice), afterFirst);
+
+        uint256 expected = house.rebateFor(10e6);
+        assertEq(_record(alice, -10e6), expected); // -110: 10 below the old low
+        assertEq(house.totalRebatedLoss(), 110e6);
+        (int128 net, int128 low) = house.results(alice);
+        assertEq(net, -110e6);
+        assertEq(low, -110e6);
+
+        // A win far above the low, then a loss that stays above it, mints nothing.
+        _record(alice, 1_000e6);
+        assertEq(_record(alice, -900e6), 0);
+        assertEq(house.balanceOf(alice), afterFirst + expected);
+
+        // Each trader has a ledger of their own.
+        assertGt(_record(bob, -10e6), 0);
+        assertEq(_record(alice, 0), 0);
+    }
+
+    /// The rate halves after HALVING_LOSS of rebated loss and keeps falling as 1 / (1 + x / H).
+    function test_rebateRate_decaysWithTheRebatedTotal() public {
+        _record(bob, -1_000_000e6);
+        assertEq(house.rebateRate(), 50e18);
+        _record(bob, -8_000_000e6);
+        assertEq(house.rebateRate(), 10e18);
+        // The midpoint rule prices one loss as large as H at H / 1.5 rather than H * ln 2: about 4% short.
+        uint256 big = house.rebateFor(1_000_000e6);
+        assertEq(big, uint256(1_000_000e6) * 100e12 * 1_000_000e6 / (1_000_000e6 + 9_500_000e6));
+    }
+
+    /// Total issuance grows like a logarithm of the rebated loss: 10x the loss is far less than 10x the DRY.
+    function testFuzz_recordResult_issuanceIsSublinear(uint64 loss) public {
+        loss = uint64(bound(loss, 1e6, 1_000_000_000e6));
+        uint256 one = _record(alice, -int256(uint256(loss)));
+        uint256 rest;
+        for (uint256 i; i < 9; ++i) {
+            rest += _record(alice, -int256(uint256(loss)));
+        }
+        assertLe(rest, one * 9);
+        assertEq(house.totalRebatedLoss(), uint256(loss) * 10);
     }
 
     function test_notifyYield_onlyVault() public {
@@ -364,9 +425,10 @@ contract RewardTokenTest is Base {
     function test_precision_longStreamPeriodAndTinyAmount() public {
         // One micro-USDC over a year still streams out in full (the rate keeps 18 extra decimals).
         RewardToken t = new RewardToken(address(this), address(this), 365 days);
-        t.mintLossRebate(alice, 1e6);
+        t.recordResult(alice, -1e6);
+        uint256 dry = t.balanceOf(alice);
         vm.prank(alice);
-        t.stake(100e18);
+        t.stake(dry);
         t.notifyYield(2);
         skip(365 days / 2);
         assertEq(t.earned(alice), 0);

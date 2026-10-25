@@ -4,16 +4,18 @@ pragma solidity 0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Multicall} from "@openzeppelin/contracts/utils/Multicall.sol";
-import {PerpEngine} from "./PerpEngine.sol";
-import {OpenParams, LimitParams, OrderType} from "./Types.sol";
+import {IEngine} from "./interfaces/IEngine.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {OpenParams, LimitParams, OrderType, Position} from "./Types.sol";
 
 /// @title AgentAccount
 /// @notice A trading account owned by one wallet that AI agents (or any bot) can trade from but never withdraw
 ///         from. The owner funds it with USDC and approves agent keys with a policy: expiry, maximum leverage and
-///         maximum margin per call, optionally restricted to a list of markets. Agents can open and add to
-///         positions, close them in whole or in part, add margin, place and cancel orders and set
-///         take-profit/stop-loss. Everything the engine pays goes back to this account, and only the owner can
-///         move tokens out.
+///         maximum margin per call, optionally a daily margin budget and a list of markets. Agents can open and add
+///         to positions, close them in whole or in part, add or take out margin, place, expire and cancel orders
+///         and set take-profit/stop-loss. Everything the engine pays goes back to this account, and only the owner
+///         can move tokens out.
 /// @dev Idea taken from Nexus (agent keys may place and cancel orders, never withdraw), rebuilt for Dry Powder's
 ///      on-chain engine as a thin forwarding account: the engine sees this contract as the trader.
 ///      {multicall} batches calls atomically (a ladder of orders, cancel-all, close-all). Each call is a
@@ -36,20 +38,33 @@ contract AgentAccount is Multicall {
     }
 
     IERC20 public immutable usdc;
-    PerpEngine public immutable engine;
+    IEngine public immutable engine;
     address public immutable owner;
     /// @dev Whoever deployed the account (the factory): it alone may call {initAgent}, and only while
     ///      `_initOpen` is set, which is in the deployment transaction.
     address private immutable _deployer;
     bool private transient _initOpen;
 
+    /// @param perDay Most margin (6-decimal USDC) the agent may commit per UTC day, summed over opens, orders and
+    ///               margin added; 0 means no daily limit. Margin coming back from closes does not refill it, so it
+    ///               bounds what the agent can lose in a day.
+    /// @param day The UTC day `spent` counts (days since 1970-01-01).
+    /// @param spent Margin committed so far that day.
+    struct Budget {
+        uint128 perDay;
+        uint32 day;
+        uint96 spent;
+    }
+
     mapping(address agent => Policy) public agents;
+    mapping(address agent => Budget) public budgets;
     /// @notice When true, agents may only open in markets marked in {marketAllowed}. The owner is never restricted.
     bool public restrictMarkets;
     mapping(bytes32 marketId => bool) public marketAllowed;
 
     event AgentSet(address indexed agent, uint64 expiry, uint16 maxLeverage, uint128 maxMargin);
     event AgentRevoked(address indexed agent);
+    event AgentBudgetSet(address indexed agent, uint128 perDay);
     event MarketsRestricted(bool restricted);
     event MarketAllowed(bytes32 indexed marketId, bool allowed);
     event Withdrawn(address indexed token, address indexed to, uint256 amount);
@@ -60,10 +75,11 @@ contract AgentAccount is Multicall {
     error InvalidPolicy();
     error LeverageCapExceeded();
     error MarginCapExceeded();
+    error DailyBudgetExceeded();
     error MarketNotAllowed();
     error GasTopUpFailed();
 
-    constructor(IERC20 usdc_, PerpEngine engine_, address owner_) {
+    constructor(IERC20 usdc_, IEngine engine_, address owner_) {
         if (address(usdc_) == address(0) || address(engine_) == address(0) || owner_ == address(0)) {
             revert ZeroAddress();
         }
@@ -90,11 +106,7 @@ contract AgentAccount is Multicall {
 
     /// @notice Approves `agent` (or replaces its policy) and forwards any `msg.value` to it as gas, so a session
     ///         key can be approved and funded in one transaction. Use {revokeAgent} to remove it.
-    function setAgent(address agent, uint64 expiry, uint16 maxLeverage, uint128 maxMargin)
-        external
-        payable
-        onlyOwner
-    {
+    function setAgent(address agent, uint64 expiry, uint16 maxLeverage, uint128 maxMargin) external payable onlyOwner {
         _setAgent(agent, expiry, maxLeverage, maxMargin);
     }
 
@@ -110,7 +122,21 @@ contract AgentAccount is Multicall {
     /// @notice Removes `agent` at once. Its open positions and orders stay; the owner can manage them.
     function revokeAgent(address agent) external onlyOwner {
         delete agents[agent];
+        delete budgets[agent];
         emit AgentRevoked(agent);
+    }
+
+    /// @notice Caps the margin `agent` may commit per UTC day (0: no daily cap). Takes effect at once; what the
+    ///         agent already committed today counts.
+    function setAgentBudget(address agent, uint128 perDay) external onlyOwner {
+        budgets[agent].perDay = perDay;
+        emit AgentBudgetSet(agent, perDay);
+    }
+
+    /// @notice Records who referred this account on the engine (once): its fees get the referral discount and the
+    ///         referrer earns a share of them. Owner only, since it is a lasting choice.
+    function setReferrer(address referrer) external onlyOwner {
+        engine.setReferrer(referrer);
     }
 
     function setRestrictMarkets(bool restricted) external onlyOwner {
@@ -132,7 +158,7 @@ contract AgentAccount is Multicall {
 
     // ───────────────────────────── Trading (owner or agent) ─────────────────────────────
 
-    /// @notice {PerpEngine.openPosition} for this account, within the caller's policy. Adds to a position on the
+    /// @notice {IEngine.openPosition} for this account, within the caller's policy. Adds to a position on the
     ///         same side; the policy applies to this call's margin and leverage.
     function openPosition(OpenParams calldata p, bytes[] calldata priceUpdate)
         external
@@ -144,14 +170,29 @@ contract AgentAccount is Multicall {
         key = engine.openPosition{value: msg.value}(p, priceUpdate);
     }
 
-    /// @notice {PerpEngine.createLimitOrder} for this account, within the caller's policy. A trigger at or through
+    /// @notice {IEngine.createLimitOrder} for this account, within the caller's policy. A trigger at or through
     ///         the current price is a keeper-filled market order; `stopEntry` makes it a breakout order.
     function createLimitOrder(LimitParams calldata p) external onlyTrader returns (uint256 orderId) {
         _checkPolicy(p.priceId, p.margin, p.size);
         orderId = engine.createLimitOrder(p);
     }
 
-    /// @notice {PerpEngine.closePosition} for this account: `size` 0 closes everything.
+    /// @notice {IEngine.createLimitOrderUntil}: {createLimitOrder} that stops being executable after `expiresAt`.
+    function createLimitOrderUntil(LimitParams calldata p, uint64 expiresAt)
+        external
+        onlyTrader
+        returns (uint256 orderId)
+    {
+        _checkPolicy(p.priceId, p.margin, p.size);
+        orderId = engine.createLimitOrderUntil(p, expiresAt);
+    }
+
+    /// @notice {IEngine.setOrderExpiry} for one of this account's orders (0: never expires).
+    function setOrderExpiry(uint256 orderId, uint64 expiresAt) external onlyTrader {
+        engine.setOrderExpiry(orderId, expiresAt);
+    }
+
+    /// @notice {IEngine.closePosition} for this account: `size` 0 closes everything.
     function closePosition(bytes32 marketId, uint256 size, uint256 acceptablePrice, bytes[] calldata priceUpdate)
         external
         payable
@@ -160,11 +201,23 @@ contract AgentAccount is Multicall {
         engine.closePosition{value: msg.value}(marketId, size, acceptablePrice, priceUpdate);
     }
 
-    /// @notice {PerpEngine.addMargin} for this account. For an agent, `amount` counts against its margin cap and
-    ///         the market list.
+    /// @notice {IEngine.addMargin} for this account. For an agent, `amount` counts against its margin cap, its
+    ///         daily budget and the market list.
     function addMargin(bytes32 marketId, uint256 amount) external onlyTrader {
         _checkPolicy(marketId, amount, 0);
         engine.addMargin(marketId, amount);
+    }
+
+    /// @notice {IEngine.removeMargin} for this account: the margin comes back here. For an agent, the position must
+    ///         stay within its leverage cap afterwards.
+    function removeMargin(bytes32 marketId, uint256 amount, bytes[] calldata priceUpdate) external payable onlyTrader {
+        if (msg.sender != owner) {
+            Position memory pos = engine.getPosition(address(this), marketId);
+            if (pos.size > (pos.margin - Math.min(amount, pos.margin)) * agents[msg.sender].maxLeverage) {
+                revert LeverageCapExceeded();
+            }
+        }
+        engine.removeMargin{value: msg.value}(marketId, amount, priceUpdate);
     }
 
     /// @notice Take-profit, stop-loss or keeper-executed close of `size` (0: all) of this account's position in
@@ -199,13 +252,22 @@ contract AgentAccount is Multicall {
         }
     }
 
-    /// @dev Agents only: `margin` within the cap, `size` within the leverage cap, the market allowed.
-    function _checkPolicy(bytes32 marketId, uint256 margin, uint256 size) internal view {
+    /// @dev Agents only: `margin` within the cap and the day's budget, `size` within the leverage cap, the market
+    ///      allowed. Counts `margin` against the budget.
+    function _checkPolicy(bytes32 marketId, uint256 margin, uint256 size) internal {
         if (msg.sender == owner) return;
         Policy memory p = agents[msg.sender];
         if (margin > p.maxMargin) revert MarginCapExceeded();
         if (size > margin * p.maxLeverage) revert LeverageCapExceeded();
         if (restrictMarkets && !marketAllowed[marketId]) revert MarketNotAllowed();
+        Budget storage b = budgets[msg.sender];
+        uint256 perDay = b.perDay;
+        if (perDay == 0) return;
+        uint32 today = uint32(block.timestamp / 1 days);
+        uint256 spent = b.day == today ? b.spent + margin : margin;
+        if (spent > perDay) revert DailyBudgetExceeded();
+        b.day = today;
+        b.spent = SafeCast.toUint96(spent);
     }
 }
 
@@ -213,7 +275,7 @@ contract AgentAccount is Multicall {
 /// @notice Deploys one {AgentAccount} per owner at a predictable address.
 contract AgentAccountFactory {
     IERC20 public immutable usdc;
-    PerpEngine public immutable engine;
+    IEngine public immutable engine;
 
     mapping(address owner => address account) public accountOf;
 
@@ -221,7 +283,7 @@ contract AgentAccountFactory {
 
     error AccountExists();
 
-    constructor(IERC20 usdc_, PerpEngine engine_) {
+    constructor(IERC20 usdc_, IEngine engine_) {
         usdc = usdc_;
         engine = engine_;
     }

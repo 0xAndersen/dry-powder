@@ -34,7 +34,9 @@ rmSync(ADDRESSES_FILE, { force: true });
 // `kill $(cat e2e/.state/stack.pid)` stops everything, anvil included.
 writeFileSync(join(STATE_DIR, "stack.pid"), String(process.pid));
 
-const anvil = spawn(findAnvil(), ["--port", String(PORTS.anvil), "--chain-id", "31337", "--accounts", String(Math.max(10, traderCount + 5)), "--balance", "100000", "--silent"], {
+// --prune-history keeps old states in memory only: without it a long run persists every state to
+// ~/.foundry/anvil/tmp and never removes them, which filled a 26 GB disk over a few days of e2e runs.
+const anvil = spawn(findAnvil(), ["--port", String(PORTS.anvil), "--chain-id", "31337", "--accounts", String(Math.max(10, traderCount + 5)), "--balance", "100000", "--prune-history", "--silent"], {
   stdio: ["ignore", "inherit", "inherit"],
 });
 anvil.on("exit", (code) => {

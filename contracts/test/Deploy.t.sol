@@ -8,7 +8,7 @@ import {MockPyth} from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 import {EngineLens} from "../src/EngineLens.sol";
 import {TestUSDC} from "../src/testnet/TestUSDC.sol";
-import {Market, OpenParams} from "../src/Types.sol";
+import {FeeMode, Market, OpenParams} from "../src/Types.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 
 /// @dev Runs the real deployment script against mocks etched at the Arc Testnet addresses it defaults to.
@@ -64,6 +64,32 @@ contract DeployTest is Test {
         uint16 maxLeverage,
         uint64 expiry
     ) internal view {
+        _assertMarketWith(d, i, id, symbol, feed, quote, invert, maxLeverage, expiry, 1_000_000e6, 250_000e6);
+        assertEq(uint8(d.engine.getMarket(id).feeMode), uint8(FeeMode.Standard));
+    }
+
+    function _assertTurbo(Deploy.Deployment memory d, uint256 i, string memory symbol, bytes32 feed, uint16 lev)
+        internal
+        view
+    {
+        bytes32 id = keccak256(bytes(symbol));
+        _assertMarketWith(d, i, id, symbol, feed, 0, false, lev, 0, 1_000_000_000e6, 1_000_000_000e6);
+        assertEq(uint8(d.engine.getMarket(id).feeMode), uint8(FeeMode.Upside));
+    }
+
+    function _assertMarketWith(
+        Deploy.Deployment memory d,
+        uint256 i,
+        bytes32 id,
+        string memory symbol,
+        bytes32 feed,
+        bytes32 quote,
+        bool invert,
+        uint16 maxLeverage,
+        uint64 expiry,
+        uint256 maxOiPerSide,
+        uint256 skewScale
+    ) internal view {
         assertEq(d.marketIds[i], id, symbol);
         assertEq(d.marketSymbols[i], symbol);
         assertEq(d.engine.getMarketIds()[i], id);
@@ -75,13 +101,14 @@ contract DeployTest is Test {
         assertEq(m.invert, invert);
         assertEq(m.maxLeverage, maxLeverage);
         assertEq(m.expiry, expiry);
-        assertEq(m.maxOiPerSide, 1_000_000e6);
-        assertEq(m.skewScale, 250_000e6);
+        assertEq(m.maxOiPerSide, maxOiPerSide);
+        assertEq(m.skewScale, skewScale);
     }
 
     function _assertLaunchMarkets(Deploy.Deployment memory d, string memory futureSymbol, uint64 expiry) internal view {
-        assertEq(d.engine.getMarketIds().length, 8);
-        assertEq(d.marketIds.length, 8);
+        assertEq(d.engine.getMarketIds().length, 12);
+        assertEq(d.marketIds.length, 12);
+        assertEq(d.engine.extension(), address(d.engineExt));
         assertEq(address(d.agentFactory.engine()), address(d.engine));
         assertEq(address(d.trailingStops.engine()), address(d.engine));
         assertEq(address(d.trailingStops.factory()), address(d.agentFactory));
@@ -91,11 +118,15 @@ contract DeployTest is Test {
         _assertMarket(d, 0, BTC, "BTC-USD", BTC, 0, false, 1000, 0);
         _assertMarket(d, 1, ETH, "ETH-USD", ETH, 0, false, 1000, 0);
         _assertMarket(d, 2, SOL, "SOL-USD", SOL, 0, false, 500, 0);
-        _assertMarket(d, 3, EUR, "EUR-USD", EUR, 0, false, 250, 0);
+        _assertMarket(d, 3, EUR, "EUR-USD", EUR, 0, false, 500, 0);
         _assertMarket(d, 4, JPY, "JPY-USD", JPY, 0, true, 100, 0);
-        _assertMarket(d, 5, XAU, "XAU-USD", XAU, 0, false, 250, 0);
+        _assertMarket(d, 5, XAU, "XAU-USD", XAU, 0, false, 500, 0);
         _assertMarket(d, 6, keccak256("ETH-BTC"), "ETH-BTC", ETH, BTC, false, 100, 0);
         _assertMarket(d, 7, keccak256(bytes(futureSymbol)), futureSymbol, BTC, 0, false, 250, expiry);
+        _assertTurbo(d, 8, "BTC-USD-TURBO", BTC, 5000);
+        _assertTurbo(d, 9, "ETH-USD-TURBO", ETH, 5000);
+        _assertTurbo(d, 10, "EUR-USD-TURBO", EUR, 5000);
+        _assertTurbo(d, 11, "XAU-USD-TURBO", XAU, 2500);
     }
 
     function test_deployScript_allModes() public {
@@ -121,7 +152,7 @@ contract DeployTest is Test {
         _assertLaunchMarkets(d, "BTC-USD-251017", DEFAULT_EXPIRY);
         // The lens reads the freshly listed markets (no prices yet).
         EngineLens.MarketView[] memory ms = d.lens.getMarkets();
-        assertEq(ms.length, 8);
+        assertEq(ms.length, 12);
         assertEq(ms[7].market.symbol, "BTC-USD-251017");
         assertFalse(ms[0].hasPrice);
 
@@ -135,14 +166,15 @@ contract DeployTest is Test {
         assertEq(vm.parseJsonAddress(json, ".publisherOracle"), address(0));
         assertEq(vm.parseJsonAddress(json, ".pythOracle"), address(d.oracle));
         assertEq(vm.parseJsonAddress(json, ".perpEngine"), address(d.engine));
+        assertEq(vm.parseJsonAddress(json, ".perpEngineExt"), address(d.engineExt));
         assertEq(vm.parseJsonAddress(json, ".engineLens"), address(d.lens));
         assertEq(vm.parseJsonAddress(json, ".houseVault"), address(d.vault));
         assertEq(vm.parseJsonAddress(json, ".rewardToken"), address(d.rewardToken));
         assertEq(vm.parseJsonUint(json, ".futureExpiry"), DEFAULT_EXPIRY);
         bytes32[] memory ids = vm.parseJsonBytes32Array(json, ".marketIds");
         string[] memory symbols = vm.parseJsonStringArray(json, ".marketSymbols");
-        assertEq(ids.length, 8);
-        assertEq(symbols.length, 8);
+        assertEq(ids.length, 12);
+        assertEq(symbols.length, 12);
         for (uint256 i; i < 8; ++i) {
             assertEq(ids[i], d.marketIds[i]);
             assertEq(symbols[i], d.marketSymbols[i]);

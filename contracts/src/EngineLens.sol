@@ -2,15 +2,15 @@
 pragma solidity 0.8.28;
 
 import {PositionMath} from "./libraries/PositionMath.sol";
-import {PerpEngine} from "./PerpEngine.sol";
+import {IEngine} from "./interfaces/IEngine.sol";
 import {Market, OraclePrice, Order, Position, PositionView, PriceStatus} from "./Types.sol";
 
 /// @title EngineLens
-/// @notice Read-only aggregation over PerpEngine for front-ends and keepers. Holds no state and no funds; it
+/// @notice Read-only aggregation over the engine for front-ends and keepers. Holds no state and no funds; it
 ///         exists so the engine's bytecode is spent on logic rather than on views. All valuation goes through
 ///         the same PositionMath library the engine uses.
 contract EngineLens {
-    PerpEngine public immutable engine;
+    IEngine public immutable engine;
 
     struct MarketView {
         bytes32 id;
@@ -23,7 +23,7 @@ contract EngineLens {
 
     error PositionNotFound();
 
-    constructor(PerpEngine engine_) {
+    constructor(IEngine engine_) {
         engine = engine_;
     }
 
@@ -42,8 +42,9 @@ contract EngineLens {
                 // No usable price: report the last one the oracle holds (too old to trade on directly, but a
                 // reference for keeper orders, which always fill at a newer price).
                 Market memory mk = out[i].market;
-                try engine.oracle().peek(mk.feedId, mk.quoteFeedId, mk.invert, type(uint256).max, 10_000)
-                returns (PriceStatus status, OraclePrice memory last) {
+                try engine.oracle().peek(mk.feedId, mk.quoteFeedId, mk.invert, type(uint256).max, 10_000) returns (
+                    PriceStatus status, OraclePrice memory last
+                ) {
                     if (status == PriceStatus.Ok) out[i].price = last;
                 } catch {}
             }

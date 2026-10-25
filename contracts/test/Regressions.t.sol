@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PerpEngineBase} from "../src/PerpEngineBase.sol";
 import {RewardToken} from "../src/RewardToken.sol";
 import {OpenParams} from "../src/Types.sol";
 import {Base} from "./Base.t.sol";
@@ -153,15 +154,16 @@ contract RegressionsTest is Base {
         assertEq(vault.totalAssets(), realised - 800_000e6);
         // Each LP's shares are worth half of the MARKED 1,201,000 ...
         assertEq(vault.convertToAssets(vault.balanceOf(lp)), 600_500e6);
-        // ... and only what the net-skew reserve (2M / 3) leaves free can leave at all.
-        assertEq(vault.maxWithdraw(lp), 1_201_000e6 - 666_666_666_667);
+        // ... and the reserve holds back the net exposure / 3: the long can cost at most its capped profit, 1M.
+        assertEq(engine.reservedLiquidity(), 333_333_333_334);
+        assertEq(vault.freeLiquidity(), 1_201_000e6 - 333_333_333_334);
 
         uint256 lpBefore = _bal(lp);
         vm.startPrank(lp);
         vault.redeem(vault.maxRedeem(lp), lp, lp);
         vm.stopPrank();
         uint256 lpOut = _bal(lp) - lpBefore;
-        assertEq(lpOut, 534_333_333_333); // v1: more than 1,000,000
+        assertApproxEqAbs(lpOut, 600_500e6, 1); // the marked value; v1: more than 1,000,000
 
         uint256 aliceBefore = _bal(alice);
         _setBtc(140_000);
@@ -241,7 +243,7 @@ contract RegressionsTest is Base {
         assertEq(engine.reservedLiquidity(), 250_000e6);
 
         _setBtc(79_000); // stop-loss level reached, position far from liquidation
-        vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
+        vm.expectRevert(PerpEngineBase.NothingToLiquidate.selector);
         _liquidate(alice);
 
         // The keeper executes her stop. v1: reverted with Blocklisted(alice).
@@ -262,8 +264,7 @@ contract RegressionsTest is Base {
     /// `streamPeriod` to whoever is staked while it streams.
     function test_L05_jitStakeNoLongerCapturesYield() public {
         _stake(bob, 1_000e18); // long-term staker
-        vm.prank(address(engine));
-        house.mintLossRebate(carol, 990e6); // carol holds 99,000 idle DRY
+        _giveDry(carol, 99_000e18); // carol holds 99,000 idle DRY
 
         _open(alice, BTC, true, 100_000e6, 1_000_000e6);
         _setBtc(91_000);
@@ -286,5 +287,39 @@ contract RegressionsTest is Base {
         skip(STREAM);
         assertEq(house.earned(carol), 0);
         assertApproxEqAbs(house.earned(bob), toStakers, 1); // v1: bob kept < 2% of it
+    }
+
+    // ───────────────────────── N-03 (fixed in v3.2) ─────────────────────────
+    /// v2 netted losses at face value although a loss can only be collected up to margin: after an 8% gap a 100x
+    /// winner (owed 80k) and a 100x loser (who can pay 10k) marked as zero, and an LP could leave at the
+    /// unmarked price while the house was really 70k worse off. v3.2 holds each side of the mark between losing
+    /// its margin and winning its capped profit, so the mark shows the 70k and the leaver pays his share of it.
+    function test_N03_markBoundsEachSideSoAnUncollectableLossNoLongerMasksAWinner() public {
+        _flatFees();
+        vm.prank(carol);
+        vault.deposit(1_000_000e6, carol);
+        skip(LOCK);
+        _refreshAll();
+        _open(alice, BTC, true, 10_000e6, 1_000_000e6); // 100x long
+        _open(bob, BTC, false, 10_000e6, 1_000_000e6); // 100x short
+        uint256 realised = vault.totalHouseBalance();
+
+        _setBtc(108_000); // alice is owed 80k, bob can pay at most his 10k margin
+        assertEq(engine.unrealizedTraderPnl(), 70_000e6);
+        assertEq(vault.exitValue(), realised - 70_000e6);
+
+        uint256 lpBefore = _bal(lp);
+        vm.startPrank(lp);
+        vault.redeem(vault.balanceOf(lp), lp, lp);
+        vm.stopPrank();
+        uint256 lpOut = _bal(lp) - lpBefore;
+        assertApproxEqAbs(lpOut, (realised - 70_000e6) / 2, 1);
+
+        // Once the book is cleaned up the stayer holds what the leaver took: the loss was shared.
+        vm.prank(keeper);
+        _liquidate(bob);
+        _close(alice, BTC);
+        uint256 carolValue = vault.convertToAssets(vault.balanceOf(carol));
+        assertApproxEqRel(carolValue, lpOut, 1e15);
     }
 }

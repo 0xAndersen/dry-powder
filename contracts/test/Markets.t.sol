@@ -6,6 +6,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {EngineLens} from "../src/EngineLens.sol";
 import {HouseVault} from "../src/HouseVault.sol";
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PerpEngineBase} from "../src/PerpEngineBase.sol";
 import {LimitParams, MarketConfig, OpenParams, OraclePrice, OrderType, Position} from "../src/Types.sol";
 import {Base} from "./Base.t.sol";
 
@@ -70,10 +71,10 @@ contract CrossMarketTest is Base {
         _publish(BTC, 100_000e8, 0, -8);
         skip(4);
         _publish(ETH, 4_000e8, 0, -8); // base fresh, quote four seconds old
-        vm.expectRevert(PerpEngine.OraclePriceStale.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceStale.selector);
         engine.getPrice(ETHBTC);
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.OraclePriceStale.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceStale.selector);
         engine.openPosition(_params(ETHBTC, true, 1_000e6, 10_000e6), _noBytes());
 
         _publish(BTC, 100_000e8, 0, -8); // both fresh
@@ -81,7 +82,7 @@ contract CrossMarketTest is Base {
 
         skip(4);
         _publish(BTC, 100_000e8, 0, -8); // quote fresh, base four seconds old
-        vm.expectRevert(PerpEngine.OraclePriceStale.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceStale.selector);
         engine.getPrice(ETHBTC);
     }
 
@@ -89,22 +90,22 @@ contract CrossMarketTest is Base {
         bytes32 id = keccak256("ETH-GHOST");
         vm.prank(owner);
         engine.addMarket(id, _cfg("ETH-GHOST", ETH, GHOST, false, 0));
-        vm.expectRevert(PerpEngine.OraclePriceUnavailable.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceUnavailable.selector);
         engine.getPrice(id);
         // ... and an unavailable base.
         bytes32 id2 = keccak256("GHOST-ETH");
         vm.prank(owner);
         engine.addMarket(id2, _cfg("GHOST-ETH", GHOST, ETH, false, 0));
-        vm.expectRevert(PerpEngine.OraclePriceUnavailable.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceUnavailable.selector);
         engine.getPrice(id2);
     }
 
     function test_cross_invalidQuoteFeed() public {
         _publishBoth(4_000e8, 0, 0, 0); // BTC = 0
-        vm.expectRevert(PerpEngine.OraclePriceInvalid.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceInvalid.selector);
         engine.getPrice(ETHBTC);
         _publishBoth(4_000e8, 0, -1, 0);
-        vm.expectRevert(PerpEngine.OraclePriceInvalid.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceInvalid.selector);
         engine.getPrice(ETHBTC);
         // The plain ETH market is unaffected by its neighbour's quote feed.
         assertEq(engine.getPrice(ETH).mid, 4_000e18);
@@ -112,10 +113,10 @@ contract CrossMarketTest is Base {
 
     function test_cross_quoteConfidenceTooWide() public {
         _publishBoth(4_000e8, 0, 100_000e8, 500e8 + 1);
-        vm.expectRevert(PerpEngine.OracleConfidenceTooWide.selector);
+        vm.expectRevert(PerpEngineBase.OracleConfidenceTooWide.selector);
         engine.getPrice(ETHBTC);
         _publishBoth(4_000e8, 20e8 + 1, 100_000e8, 0);
-        vm.expectRevert(PerpEngine.OracleConfidenceTooWide.selector);
+        vm.expectRevert(PerpEngineBase.OracleConfidenceTooWide.selector);
         engine.getPrice(ETHBTC);
     }
 
@@ -124,10 +125,10 @@ contract CrossMarketTest is Base {
         skip(1);
         _publish(ETH, 1, 0, -18);
         _publish(BTC, type(int64).max, 0, 0);
-        vm.expectRevert(PerpEngine.OraclePriceInvalid.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceInvalid.selector);
         engine.getPrice(ETHBTC);
         // Its inverse does not fit either: the cross is invalid before the inversion is attempted.
-        vm.expectRevert(PerpEngine.OraclePriceInvalid.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceInvalid.selector);
         engine.getPrice(BTCETH);
     }
 
@@ -149,16 +150,17 @@ contract CrossMarketTest is Base {
         // ETH outperforms: 4,620 / 110,000 = 0.042, +5% on the cross.
         _setBtcEth(110_000, 4_620);
         assertEq(engine.getPrice(ETHBTC).mid, 0.042e18);
+        uint256 dry = _rebate(500e6, 10_000e6);
         vm.expectEmit(address(engine));
-        emit PerpEngine.PositionClosed(aliceKey, alice, ETHBTC, 0.042e18, 500e6, 5e6, 1_495e6);
+        emit PerpEngineBase.PositionClosed(aliceKey, alice, ETHBTC, 0.042e18, 500e6, 5e6, 1_495e6);
         _close(alice, ETHBTC);
         vm.expectEmit(address(engine));
-        emit PerpEngine.PositionClosed(bobKey, bob, ETHBTC, 0.042e18, -500e6, 5e6, 495e6);
+        emit PerpEngineBase.PositionClosed(bobKey, bob, ETHBTC, 0.042e18, -500e6, 5e6, 495e6);
         _close(bob, ETHBTC);
 
         assertEq(usdc.balanceOf(alice), aliceAfterOpen + 1_495e6);
         assertEq(usdc.balanceOf(bob), bobAfterOpen + 495e6);
-        assertEq(house.balanceOf(bob), 50_000e18);
+        assertEq(house.balanceOf(bob), dry);
         assertEq(_market(ETHBTC).longUnits, 0);
         assertEq(_market(ETHBTC).shortUnits, 0);
         _assertEngineSolvent();
@@ -171,7 +173,7 @@ contract CrossMarketTest is Base {
 
         // BTC outruns ETH by a little under 0.9%: still healthy.
         _setBtcEth(100_890, 4_000);
-        vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
+        vm.expectRevert(PerpEngineBase.NothingToLiquidate.selector);
         _liquidate(alice);
         // BTC +1%, ETH flat: the cross falls 0.99%.
         _setBtcEth(101_000, 4_000);
@@ -250,15 +252,15 @@ contract DatedFutureTest is Base {
 
         _expire(0, 100_000);
         vm.prank(bob);
-        vm.expectRevert(PerpEngine.MarketExpired.selector);
+        vm.expectRevert(PerpEngineBase.MarketExpired.selector);
         engine.openPosition(_params(FUT, true, 1_000e6, 10_000e6), _noBytes());
         vm.prank(bob);
-        vm.expectRevert(PerpEngine.MarketExpired.selector);
+        vm.expectRevert(PerpEngineBase.MarketExpired.selector);
         engine.createLimitOrder(_limit(FUT, true, 1_000e6, 10_000e6, P100K));
 
         _expire(1 days, 100_000);
         vm.prank(bob);
-        vm.expectRevert(PerpEngine.MarketExpired.selector);
+        vm.expectRevert(PerpEngineBase.MarketExpired.selector);
         engine.openPosition(_params(FUT, false, 1_000e6, 10_000e6), _noBytes());
         // The perpetual on the same feed keeps trading.
         _open(bob, BTC, true, 1_000e6, 10_000e6);
@@ -271,12 +273,12 @@ contract DatedFutureTest is Base {
 
         _expire(0, 99_000);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.MarketExpired.selector);
+        vm.expectRevert(PerpEngineBase.MarketExpired.selector);
         engine.executeOrder(id, _noBytes());
         // ... nor after settlement.
         engine.settleMarket(FUT, _noBytes());
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.MarketExpired.selector);
+        vm.expectRevert(PerpEngineBase.MarketExpired.selector);
         engine.executeOrder(id, _noBytes());
 
         // The escrow is not stuck: the trader cancels for a full refund.
@@ -287,32 +289,32 @@ contract DatedFutureTest is Base {
     }
 
     function test_settleMarket_validations() public {
-        vm.expectRevert(PerpEngine.MarketNotFound.selector);
+        vm.expectRevert(PerpEngineBase.MarketNotFound.selector);
         engine.settleMarket(bytes32(uint256(1)), _noBytes());
         // A perpetual never expires.
-        vm.expectRevert(PerpEngine.MarketNotExpired.selector);
+        vm.expectRevert(PerpEngineBase.MarketNotExpired.selector);
         engine.settleMarket(BTC, _noBytes());
         // Too early, by a day and by a second.
-        vm.expectRevert(PerpEngine.MarketNotExpired.selector);
+        vm.expectRevert(PerpEngineBase.MarketNotExpired.selector);
         engine.settleMarket(FUT, _noBytes());
         vm.warp(EXPIRY - 1);
         _publish(BTC, 101_000e8, 0, -8);
-        vm.expectRevert(PerpEngine.MarketNotExpired.selector);
+        vm.expectRevert(PerpEngineBase.MarketNotExpired.selector);
         engine.settleMarket(FUT, _noBytes());
 
         // At expiry, but the only price on-chain was published a second before it.
         vm.warp(EXPIRY);
-        vm.expectRevert(PerpEngine.PriceBeforeExpiry.selector);
+        vm.expectRevert(PerpEngineBase.PriceBeforeExpiry.selector);
         engine.settleMarket(FUT, _noBytes());
         // Same when the caller supplies an update that predates expiry.
         vm.warp(EXPIRY + 1);
         bytes[] memory early = _updateData(BTC, 102_000e8, 0, -8, EXPIRY - 1);
-        vm.expectRevert(PerpEngine.PriceBeforeExpiry.selector);
+        vm.expectRevert(PerpEngineBase.PriceBeforeExpiry.selector);
         engine.settleMarket{value: PYTH_FEE}(FUT, early);
 
         // No usable price at all.
         vm.warp(EXPIRY + 1 hours);
-        vm.expectRevert(PerpEngine.OraclePriceStale.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceStale.selector);
         engine.settleMarket(FUT, _noBytes());
     }
 
@@ -321,13 +323,13 @@ contract DatedFutureTest is Base {
         vm.warp(EXPIRY + 30);
         bytes[] memory update = _updateData(BTC, 104_000e8, 0, -8, EXPIRY); // published exactly at expiry
         // Stale by the time it is submitted: the staleness window applies to settlement as well.
-        vm.expectRevert(PerpEngine.OraclePriceStale.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceStale.selector);
         engine.settleMarket{value: PYTH_FEE}(FUT, update);
 
         update = _fresh(BTC, 104_000e8, 50e8, -8);
         uint256 nativeBefore = carol.balance;
         vm.expectEmit(address(engine));
-        emit PerpEngine.MarketSettled(FUT, 104_000e18); // the mid price; the confidence band plays no part
+        emit PerpEngineBase.MarketSettled(FUT, 104_000e18); // the mid price; the confidence band plays no part
         vm.prank(carol); // anyone
         engine.settleMarket{value: 1_000}(FUT, update);
         assertEq(nativeBefore - carol.balance, PYTH_FEE);
@@ -336,7 +338,7 @@ contract DatedFutureTest is Base {
         assertEq(_market(FUT).lastFundingTime, EXPIRY);
 
         _setBtc(90_000);
-        vm.expectRevert(PerpEngine.MarketAlreadySettled.selector);
+        vm.expectRevert(PerpEngineBase.MarketAlreadySettled.selector);
         engine.settleMarket(FUT, _noBytes());
         assertEq(_market(FUT).settlementPrice, 104_000e18);
     }
@@ -401,7 +403,7 @@ contract DatedFutureTest is Base {
         assertEq(engine.getPrice(FUT).publishTime, vm.getBlockTimestamp());
         _setPrice(BTC, 0, 0, -8);
         assertEq(engine.getPrice(FUT).mid, 104_000e18);
-        vm.expectRevert(PerpEngine.OraclePriceInvalid.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceInvalid.selector);
         engine.getPrice(BTC);
     }
 
@@ -415,13 +417,14 @@ contract DatedFutureTest is Base {
         // Long after, with the live feed stale and far away, both close at 104,000 with no price update.
         _setBtc(70_000);
         skip(7 days);
+        uint256 dry = _rebate(400e6, 10_000e6);
         vm.expectEmit(address(engine));
-        emit PerpEngine.PositionClosed(key, alice, FUT, 104_000e18, 400e6, 5e6, 1_395e6);
+        emit PerpEngineBase.PositionClosed(key, alice, FUT, 104_000e18, 400e6, 5e6, 1_395e6);
         _close(alice, FUT);
         _close(bob, FUT);
         assertEq(usdc.balanceOf(alice), aliceBefore + 1_395e6);
         assertEq(usdc.balanceOf(bob), bobBefore + 1_000e6 - 400e6 - 5e6);
-        assertEq(house.balanceOf(bob), 40_000e18);
+        assertEq(house.balanceOf(bob), dry);
 
         _assertEngineSolvent();
         assertEq(engine.positionCount(), 0);
@@ -431,7 +434,7 @@ contract DatedFutureTest is Base {
         _open(alice, FUT, true, 1_000e6, 10_000e6);
         _settle(104_000);
         vm.startPrank(alice);
-        vm.expectRevert(PerpEngine.SlippageExceeded.selector);
+        vm.expectRevert(PerpEngineBase.SlippageExceeded.selector);
         engine.closePosition(FUT, 0, 104_000e18 + 1, _noBytes());
         engine.closePosition(FUT, 0, 104_000e18, _noBytes());
         vm.stopPrank();
@@ -471,11 +474,11 @@ contract DatedFutureTest is Base {
         skip(1 days); // no fresh price needed from here on
 
         vm.expectEmit(address(engine));
-        emit PerpEngine.PositionClosed(aliceKey, alice, FUT, 104_000e18, 400e6, 5e6, 1_395e6);
+        emit PerpEngineBase.PositionClosed(aliceKey, alice, FUT, 104_000e18, 400e6, 5e6, 1_395e6);
         vm.expectEmit(address(engine));
-        emit PerpEngine.PositionClosed(bobKey, bob, FUT, 104_000e18, -400e6, 5e6, 595e6);
+        emit PerpEngineBase.PositionClosed(bobKey, bob, FUT, 104_000e18, -400e6, 5e6, 595e6);
         vm.expectEmit(address(engine));
-        emit PerpEngine.PositionLiquidated(carolKey, carol, keeper, FUT, 104_000e18, 100e6, 2e6, 98e6);
+        emit PerpEngineBase.PositionLiquidated(carolKey, carol, keeper, FUT, 104_000e18, 100e6, 2e6, 98e6);
         vm.prank(keeper);
         assertEq(engine.settlePositions(keys), 3);
 
@@ -483,8 +486,9 @@ contract DatedFutureTest is Base {
         assertEq(usdc.balanceOf(bob), bobBefore + 595e6);
         assertEq(usdc.balanceOf(carol), carolBefore); // liquidated: nothing back
         assertEq(usdc.balanceOf(keeper), 2e6); // the liquidation fee goes to whoever settles
-        assertEq(house.balanceOf(bob), 40_000e18);
-        assertEq(house.balanceOf(carol), 9_800e18);
+        // bob reports his 400 loss up to 1% of 10,000; carol her 98 after bob's 100.
+        assertEq(house.balanceOf(bob), _rebateAfter(100e6, 0));
+        assertEq(house.balanceOf(carol), _rebateAfter(98e6, 100e6));
         assertEq(engine.positionCount(), 1);
         assertEq(engine.getPositionByKey(perpKey).trader, carol);
         assertEq(_market(FUT).longOi, 0);
@@ -538,12 +542,12 @@ contract DatedFutureTest is Base {
         skip(1 hours);
 
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderExecuted(1, alice, keeper, 104_000e18);
+        emit PerpEngineBase.OrderExecuted(1, alice, keeper, 104_000e18);
         _exec(1);
         assertEq(usdc.balanceOf(alice), aliceBefore + 1_395e6);
 
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(2, _noBytes());
 
         _exec(3);
@@ -553,7 +557,7 @@ contract DatedFutureTest is Base {
         vm.prank(bob);
         uint256 closeId = engine.setTriggerOrder(FUT, OrderType.Close, 104_000e18 + 1, 0);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(closeId, _noBytes());
         vm.prank(bob);
         engine.setTriggerOrder(FUT, OrderType.Close, 104_000e18, 0);
@@ -574,7 +578,7 @@ contract DatedFutureTest is Base {
 
         // She cannot walk away through a close ...
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.PositionLiquidatable.selector);
+        vm.expectRevert(PerpEngineBase.PositionLiquidatable.selector);
         engine.closePosition(FUT, 0, 0, _noBytes());
         (,,, bool liquidatable) = lens.getPositionState(key, 99_000e18);
         assertTrue(liquidatable);
@@ -639,7 +643,7 @@ contract DatedFutureTest is Base {
         _publish(BTC, 100_000e8, 0, -8);
         vm.warp(expiry);
         _publish(ETH, 4_200e8, 0, -8);
-        vm.expectRevert(PerpEngine.PriceBeforeExpiry.selector);
+        vm.expectRevert(PerpEngineBase.PriceBeforeExpiry.selector);
         engine.settleMarket(id, _noBytes());
         _publish(BTC, 100_000e8, 0, -8);
         engine.settleMarket(id, _noBytes());

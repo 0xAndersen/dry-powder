@@ -139,43 +139,6 @@ contract KnownIssuesTest is Base {
         assertApproxEqAbs(vault.convertToAssets(vault.balanceOf(lp)), 1_092_500e6, 2);
     }
 
-    // ───────────────────────── N-03 (new in v2) ─────────────────────────
-    /// `unrealizedTraderPnl` nets losses at face value although a loss can only ever be collected up to the
-    /// position's margin. Between a price gap and the liquidation of the losing side, an un-collectable loss
-    /// hides a real unrealised profit, the mark shows nothing owed, and an LP can still leave at the stale price
-    /// (the v1 M-03 exit, narrowed to this window). Deposits made in the opposite situation overpay.
-    function test_N03_uncollectableLossMasksAWinnerInTheMark() public {
-        _flatFees();
-        vm.prank(carol);
-        vault.deposit(1_000_000e6, carol);
-        skip(LOCK);
-        _refreshAll();
-        _open(alice, BTC, true, 10_000e6, 1_000_000e6); // 100x long
-        _open(bob, BTC, false, 10_000e6, 1_000_000e6); // 100x short
-        uint256 realised = vault.totalHouseBalance();
-
-        _setBtc(108_000); // 8% gap: alice is owed 80k, bob can pay at most his 10k margin
-        assertEq(engine.unrealizedTraderPnl(), 0); // +80k and -80k
-        assertEq(vault.exitValue(), realised); // the house is really about 70k worse off than this
-
-        // lp leaves at the unmarked price ...
-        uint256 lpBefore = _bal(lp);
-        vm.startPrank(lp);
-        vault.redeem(vault.balanceOf(lp), lp, lp);
-        vm.stopPrank();
-        uint256 lpOut = _bal(lp) - lpBefore;
-        assertApproxEqAbs(lpOut, realised / 2, 1);
-
-        // ... then the book is cleaned up, and carol alone carries the loss.
-        vm.prank(keeper);
-        _liquidate(bob);
-        _close(alice, BTC);
-        uint256 carolValue = vault.convertToAssets(vault.balanceOf(carol));
-        console2.log("leaver took    ", lpOut / 1e6);
-        console2.log("stayer is left ", carolValue / 1e6);
-        assertLt(carolValue + 69_000e6, lpOut);
-    }
-
     // ───────────────────────── N-04 (new in v2) ─────────────────────────
     /// A market whose oracle price is momentarily unusable (invalid, or confidence wider than `maxConfBps`) is
     /// left out of `unrealizedTraderPnl` altogether, i.e. marked at zero PnL. While that lasts the vault prices
@@ -244,19 +207,23 @@ contract KnownIssuesTest is Base {
         assertEq(_market(FUT).settlementPrice, 125_000e18);
     }
 
-    // ───────────────────────── N-07 (new in v2, the staking side of the old H-01) ─────────────────────────
-    /// DRY is still minted on GROSS losses: 100 per USDC a position loses, whether or not the same person
-    /// holds the offsetting winner. A delta-neutral pair therefore manufactures DRY for the price of its
-    /// trading fees. It no longer drains LPs (H-01 is fixed), but it lets a farmer out-stake the traders who
-    /// really lost money and collect most of the 15% performance stream that was meant for them.
-    function test_N07_houseIsFarmedWithHedgedPairsForTheCostOfFees() public {
+    // ───────────────────────── N-07 (reduced in v3.2) ─────────────────────────
+    /// v2 minted DRY on GROSS losses, 100 per USDC, so a delta-neutral pair on two accounts manufactured DRY for
+    /// the price of its fees (80,000 of rebate base for 2,000 of fees here) and out-staked the traders who really
+    /// lost money. v3.2 mints on each account's NET result and caps what one close reports at 1% of its notional,
+    /// so the same cycle now buys 10,000 of rebate base for its 2,000 of fees: farming costs eight times more per
+    /// DRY, and the decay raises the price further as issuance grows. It is not closed: where the house's income
+    /// is mostly fees rather than DRY-bearing losses, as here, the DRY a farmer buys still earns more than it cost.
+    function test_N07_hedgedPairsStillBuyDryAtAProductionCost() public {
         _flatFees();
-        // An honest trader really loses 1,000 USDC and stakes the 100,000 DRY that earned her.
+        // An honest trader loses 1,000 USDC on 10,000 of notional (5x): she reports the 1% cap, 100.
         _open(carol, ETH, true, 2_000e6, 10_000e6);
         _setEth(3_600);
         _close(carol, ETH);
+        uint256 carolDry = house.balanceOf(carol);
+        assertEq(carolDry, _rebateAfter(100e6, 0));
         vm.prank(carol);
-        house.stake(100_000e18);
+        house.stake(carolDry);
 
         // The farmer runs one hedged cycle: 1M a side, an 8% move.
         uint256 before = _bal(alice) + _bal(bob);
@@ -267,16 +234,18 @@ contract KnownIssuesTest is Base {
         _close(bob, BTC);
         uint256 cost = before - (_bal(alice) + _bal(bob));
         assertEq(cost, 2_000e6); // four fees of 500
-        assertEq(house.balanceOf(bob), 8_000_000e18); // 80x the honest staker's stake, for 2x her loss
+        uint256 bobDry = house.balanceOf(bob);
+        assertEq(bobDry, _rebateAfter(10_000e6, 100e6)); // 1% of 1M, not the 80,000 loss
+        assertEq(house.balanceOf(alice), 0); // the winning leg has no loss to rebate
         vm.prank(bob);
-        house.stake(8_000_000e18);
+        house.stake(bobDry);
 
-        // From here on he takes 98.8% of everything stakers are paid.
+        // He still takes most of what stakers are paid while honest DRY is scarce.
         _feeIncome(100_000e6);
         skip(EPOCH);
         uint256 toStakers = vault.settleEpoch();
         skip(STREAM);
-        assertApproxEqAbs(house.earned(bob), (toStakers * 80) / 81, 2);
-        assertGt(house.earned(bob), cost * 7);
+        assertApproxEqRel(house.earned(bob), (toStakers * bobDry) / (bobDry + carolDry), 1e12);
+        assertGt(house.earned(bob), cost);
     }
 }

@@ -230,7 +230,9 @@ contract AgentAccountTest is Base {
     function test_multicall_placesALadderAtomically() public {
         bytes[] memory calls = new bytes[](3);
         for (uint256 i; i < 3; ++i) {
-            calls[i] = abi.encodeCall(AgentAccount.createLimitOrder, (_limit(BTC, true, 100e6, 1_000e6, (99_000 - i * 500) * 1e18)));
+            calls[i] = abi.encodeCall(
+                AgentAccount.createLimitOrder, (_limit(BTC, true, 100e6, 1_000e6, (99_000 - i * 500) * 1e18))
+            );
         }
         vm.prank(agent);
         bytes[] memory out = acct.multicall(calls);
@@ -359,5 +361,94 @@ contract AgentAccountTest is Base {
         vm.prank(alice);
         vm.expectRevert(AgentAccount.GasTopUpFailed.selector);
         acct.setAgent{value: 1}(address(usdc), expiry, 5, 100e6); // a contract with no way to take native value
+    }
+
+    // ───────────────────────────── v3.2: budget, expiry, margin removal, referrer ─────────────────────────────
+
+    function test_dailyBudget_capsWhatAnAgentCommitsPerDay() public {
+        vm.startPrank(alice);
+        acct.setAgent(agent, uint64(block.timestamp + 7 days), 10, 1_000e6);
+        vm.stopPrank();
+        vm.prank(agent);
+        vm.expectRevert(AgentAccount.NotOwner.selector);
+        acct.setAgentBudget(agent, 1_500e6);
+        vm.expectEmit(address(acct));
+        emit AgentAccount.AgentBudgetSet(agent, 1_500e6);
+        vm.prank(alice);
+        acct.setAgentBudget(agent, 1_500e6);
+
+        vm.startPrank(agent);
+        acct.openPosition(_params(BTC, true, 1_000e6, 10_000e6), _noBytes());
+        vm.expectRevert(AgentAccount.DailyBudgetExceeded.selector);
+        acct.createLimitOrder(_limit(ETH, true, 501e6, 5_010e6, 3_000e18));
+        acct.createLimitOrder(_limit(ETH, true, 500e6, 5_000e6, 3_000e18)); // exactly the budget
+        vm.expectRevert(AgentAccount.DailyBudgetExceeded.selector);
+        acct.addMargin(BTC, 1e6);
+        vm.stopPrank();
+        (uint128 perDay, uint32 day, uint96 spent) = acct.budgets(agent);
+        assertEq(perDay, 1_500e6);
+        assertEq(spent, 1_500e6);
+        assertEq(day, vm.getBlockTimestamp() / 1 days);
+
+        // The owner is never limited.
+        vm.prank(alice);
+        acct.addMargin(BTC, 1e6);
+
+        // A new UTC day starts afresh.
+        skip(1 days);
+        _refreshAll();
+        vm.prank(agent);
+        acct.createLimitOrder(_limit(EUR, true, 1_000e6, 10_000e6, 1e18));
+        (, day, spent) = acct.budgets(agent);
+        assertEq(spent, 1_000e6);
+        assertEq(day, vm.getBlockTimestamp() / 1 days);
+
+        // Revoking the agent clears its budget.
+        vm.prank(alice);
+        acct.revokeAgent(agent);
+        (perDay,,) = acct.budgets(agent);
+        assertEq(perDay, 0);
+    }
+
+    function test_removeMargin_forAgentsWithinTheirLeverageCap() public {
+        vm.prank(agent);
+        acct.openPosition(_params(BTC, true, 1_000e6, 5_000e6), _noBytes()); // 5x
+        _setBtc(100_000);
+        uint256 before = usdc.balanceOf(address(acct));
+        vm.prank(agent);
+        vm.expectRevert(AgentAccount.LeverageCapExceeded.selector);
+        acct.removeMargin(BTC, 501e6, _noBytes()); // 499 left: past the agent's 10x
+        vm.prank(agent);
+        acct.removeMargin(BTC, 500e6, _noBytes()); // exactly 10x
+        assertEq(usdc.balanceOf(address(acct)) - before, 500e6); // back to the account, never to the agent
+        assertEq(usdc.balanceOf(agent), 0);
+        // The owner is held only to the market's limits.
+        vm.prank(alice);
+        acct.removeMargin(BTC, 400e6, _noBytes()); // 100 left: 50x
+        vm.prank(stranger);
+        vm.expectRevert(AgentAccount.NotAuthorized.selector);
+        acct.removeMargin(BTC, 1e6, _noBytes());
+    }
+
+    function test_orderExpiry_throughTheAccount() public {
+        uint64 until = uint64(block.timestamp + 60);
+        vm.startPrank(agent);
+        uint256 id = acct.createLimitOrderUntil(_limit(BTC, true, 1_000e6, 10_000e6, 90_000e18), until);
+        assertEq(engine.getOrder(id).expiresAt, until);
+        assertEq(engine.getOrder(id).trader, address(acct));
+        acct.setOrderExpiry(id, 0);
+        vm.expectRevert(AgentAccount.MarginCapExceeded.selector);
+        acct.createLimitOrderUntil(_limit(BTC, true, 1_001e6, 10_010e6, 90_000e18), until);
+        vm.stopPrank();
+        assertEq(engine.getOrder(id).expiresAt, 0);
+    }
+
+    function test_setReferrer_ownerOnly() public {
+        vm.prank(agent);
+        vm.expectRevert(AgentAccount.NotOwner.selector);
+        acct.setReferrer(bob);
+        vm.prank(alice);
+        acct.setReferrer(bob);
+        assertEq(engine.referrerOf(address(acct)), bob);
     }
 }

@@ -8,6 +8,7 @@ import {MockPyth} from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 import {EngineLens} from "../src/EngineLens.sol";
 import {HouseVault} from "../src/HouseVault.sol";
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {IEngine} from "../src/interfaces/IEngine.sol";
 import {RewardToken} from "../src/RewardToken.sol";
 import {
     LimitParams,
@@ -32,7 +33,7 @@ contract Handler is Test {
     MockPyth internal pyth;
     HouseVault internal vault;
     RewardToken internal house;
-    PerpEngine internal engine;
+    IEngine internal engine;
     EngineLens internal lens;
 
     address[] public actors;
@@ -74,7 +75,7 @@ contract Handler is Test {
         MockPyth pyth_,
         HouseVault vault_,
         RewardToken house_,
-        PerpEngine engine_,
+        IEngine engine_,
         EngineLens lens_,
         address[] memory actors_,
         address[3] memory roles, // lp, keeper, engine owner

@@ -5,7 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Base} from "./Base.t.sol";
 import {DeployAddons} from "../script/DeployAddons.s.sol";
 import {AgentAccountFactory} from "../src/AgentAccount.sol";
-import {PerpEngine} from "../src/PerpEngine.sol";
+import {IEngine} from "../src/interfaces/IEngine.sol";
 import {TrailingStops} from "../src/TrailingStops.sol";
 import {TwapOrders} from "../src/TwapOrders.sol";
 
@@ -26,7 +26,7 @@ contract DeployAddonsTest is Base {
         assertEq(vm.parseJsonAddress(json, ".engine"), address(engine));
 
         // A factory deployed for another engine is refused.
-        PerpEngine other = PerpEngine(makeAddr("otherEngine"));
+        IEngine other = IEngine(makeAddr("otherEngine"));
         vm.etch(address(other), hex"00");
         AgentAccountFactory foreign = new AgentAccountFactory(IERC20(address(usdc)), other);
         vm.setEnv("AGENT_FACTORY_ADDRESS", vm.toString(address(foreign)));

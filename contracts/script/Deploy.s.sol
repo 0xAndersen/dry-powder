@@ -8,6 +8,8 @@ import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {EngineLens} from "../src/EngineLens.sol";
 import {HouseVault} from "../src/HouseVault.sol";
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PerpEngineExt} from "../src/PerpEngineExt.sol";
+import {IEngine} from "../src/interfaces/IEngine.sol";
 import {PythOracle} from "../src/PythOracle.sol";
 import {RewardToken} from "../src/RewardToken.sol";
 import {IHouseVault} from "../src/interfaces/IHouseVault.sol";
@@ -17,10 +19,11 @@ import {TestUSDC} from "../src/testnet/TestUSDC.sol";
 import {AgentAccountFactory} from "../src/AgentAccount.sol";
 import {TrailingStops} from "../src/TrailingStops.sol";
 import {TwapOrders} from "../src/TwapOrders.sol";
-import {MarketConfig} from "../src/Types.sol";
+import {FeeMode, MarketConfig} from "../src/Types.sol";
 
-/// @notice Deploys the protocol (PythOracle adapter, HouseVault, RewardToken, PerpEngine, EngineLens) and lists
-///         the eight launch markets.
+/// @notice Deploys the protocol (PythOracle adapter, HouseVault, RewardToken, the engine as PerpEngineExt plus
+///         PerpEngine, EngineLens, agent accounts and the order add-ons) and lists the twelve launch markets: eight
+///         Standard markets and four Turbo markets (Upside fee mode: no fee unless you win, up to 5000x).
 ///
 /// Usage (Arc Testnet):
 ///   forge script script/Deploy.s.sol:Deploy --rpc-url arc_testnet --broadcast --account <keystore-name>
@@ -44,9 +47,9 @@ import {MarketConfig} from "../src/Types.sol";
 ///                          Friday 08:00 UTC that is strictly more than 24 hours away.
 ///
 /// @dev Vault, token and engine reference each other immutably, so their addresses are predicted from the
-///      deployer's nonce. Nothing else may be broadcast from the deployer between those three creations. No
-///      contract here links an external library (which forge would deploy from the same account and shift the
-///      nonce); keep it that way.
+///      deployer's nonce: vault, token, the engine's extension, then the engine. Nothing else may be broadcast from
+///      the deployer between those four creations. No contract here links an external library (which forge would
+///      deploy from the same account and shift the nonce); keep it that way.
 contract Deploy is Script {
     /// @dev Arc's native USDC, ERC-20 interface (6 decimals). Same address on every Arc network.
     address internal constant ARC_USDC = 0x3600000000000000000000000000000000000000;
@@ -66,6 +69,12 @@ contract Deploy is Script {
 
     uint256 internal constant MAX_OI_PER_SIDE = 1_000_000e6;
     uint256 internal constant SKEW_SCALE = 250_000e6;
+    /// @dev Turbo markets run at up to 5000x, where notional is thousands of times margin. The vault cap measures
+    ///      exposure (capped profit) rather than notional, so the per-side notional cap is set far out of the way,
+    ///      and a large skew scale keeps funding negligible for positions that live minutes, not days.
+    uint256 internal constant TURBO_MAX_OI_PER_SIDE = 1_000_000_000e6;
+    uint256 internal constant TURBO_SKEW_SCALE = 1_000_000_000e6;
+    uint256 internal constant MARKET_COUNT = 12;
 
     struct Deployment {
         address usdc; // collateral actually used (a fresh TestUSDC when COLLATERAL=test)
@@ -74,7 +83,8 @@ contract Deploy is Script {
         PythOracle oracle;
         HouseVault vault;
         RewardToken rewardToken;
-        PerpEngine engine;
+        IEngine engine;
+        PerpEngineExt engineExt;
         EngineLens lens;
         AgentAccountFactory agentFactory;
         TrailingStops trailingStops;
@@ -142,7 +152,8 @@ contract Deploy is Script {
         uint256 nonce = vm.getNonce(deployer);
         address predictedVault = vm.computeCreateAddress(deployer, nonce);
         address predictedToken = vm.computeCreateAddress(deployer, nonce + 1);
-        address predictedEngine = vm.computeCreateAddress(deployer, nonce + 2);
+        // nonce + 2 is the engine's extension.
+        address predictedEngine = vm.computeCreateAddress(deployer, nonce + 3);
 
         d.vault = new HouseVault(
             IERC20(d.usdc),
@@ -152,8 +163,19 @@ contract Deploy is Script {
             vm.envOr("EPOCH_SECONDS", uint256(1 days))
         );
         d.rewardToken = new RewardToken(predictedVault, predictedEngine, vm.envOr("STREAM_SECONDS", uint256(1 days)));
-        d.engine = new PerpEngine(
-            IERC20(d.usdc), d.oracle, IHouseVault(predictedVault), IRewardToken(predictedToken), deployer
+        d.engineExt =
+            new PerpEngineExt(IERC20(d.usdc), d.oracle, IHouseVault(predictedVault), IRewardToken(predictedToken));
+        d.engine = IEngine(
+            address(
+                new PerpEngine(
+                    IERC20(d.usdc),
+                    d.oracle,
+                    IHouseVault(predictedVault),
+                    IRewardToken(predictedToken),
+                    deployer,
+                    d.engineExt
+                )
+            )
         );
         require(
             address(d.vault) == predictedVault && address(d.rewardToken) == predictedToken
@@ -162,20 +184,21 @@ contract Deploy is Script {
         );
     }
 
-    /// @dev The launch markets of V2_SPEC.md. A plain perpetual is listed under its Pyth feed id; the cross and
-    ///      the dated future under the hash of their symbol.
+    /// @dev The launch markets. A plain perpetual is listed under its Pyth feed id; the cross, the dated future and
+    ///      the Turbo markets (which share a feed with a Standard market) under the hash of their symbol.
     function _listMarkets(Deployment memory d) internal {
-        d.marketIds = new bytes32[](8);
-        d.marketSymbols = new string[](8);
+        d.marketIds = new bytes32[](MARKET_COUNT);
+        d.marketSymbols = new string[](MARKET_COUNT);
         string memory futureSymbol = string.concat("BTC-USD-", expiryTag(d.futureExpiry));
 
-        // Majors go to 1000x (above 100x: keeper orders only, see PerpEngine.DIRECT_MAX_LEVERAGE).
+        // Standard markets: fees on notional. Majors go to 1000x (above 100x: keeper orders only, see
+        // PerpEngine.DIRECT_MAX_LEVERAGE).
         _list(d, 0, BTC_USD, MarketConfig("BTC-USD", BTC_USD, 0, false, 1000, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
         _list(d, 1, ETH_USD, MarketConfig("ETH-USD", ETH_USD, 0, false, 1000, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
         _list(d, 2, SOL_USD, MarketConfig("SOL-USD", SOL_USD, 0, false, 500, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
-        _list(d, 3, EUR_USD, MarketConfig("EUR-USD", EUR_USD, 0, false, 250, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
+        _list(d, 3, EUR_USD, MarketConfig("EUR-USD", EUR_USD, 0, false, 500, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
         _list(d, 4, USD_JPY, MarketConfig("JPY-USD", USD_JPY, 0, true, 100, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
-        _list(d, 5, XAU_USD, MarketConfig("XAU-USD", XAU_USD, 0, false, 250, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
+        _list(d, 5, XAU_USD, MarketConfig("XAU-USD", XAU_USD, 0, false, 500, 0, MAX_OI_PER_SIDE, SKEW_SCALE));
         _list(
             d,
             6,
@@ -188,6 +211,19 @@ contract Deploy is Script {
             keccak256(bytes(futureSymbol)),
             MarketConfig(futureSymbol, BTC_USD, 0, false, 250, d.futureExpiry, MAX_OI_PER_SIDE, SKEW_SCALE)
         );
+        // Turbo markets: Upside fee mode (no fee unless you win, mid-price fills, keeper orders only).
+        _listTurbo(d, 8, "BTC-USD-TURBO", BTC_USD, 5000);
+        _listTurbo(d, 9, "ETH-USD-TURBO", ETH_USD, 5000);
+        _listTurbo(d, 10, "EUR-USD-TURBO", EUR_USD, 5000);
+        _listTurbo(d, 11, "XAU-USD-TURBO", XAU_USD, 2500);
+    }
+
+    function _listTurbo(Deployment memory d, uint256 i, string memory symbol, bytes32 feed, uint16 maxLeverage)
+        internal
+    {
+        bytes32 id = keccak256(bytes(symbol));
+        _list(d, i, id, MarketConfig(symbol, feed, 0, false, maxLeverage, 0, TURBO_MAX_OI_PER_SIDE, TURBO_SKEW_SCALE));
+        d.engine.setMarketFeeMode(id, FeeMode.Upside);
     }
 
     /// @dev Test collateral only: mints `amount` (TestUSDC caps each mint at 1,000,000) and deposits it as the house.
@@ -215,6 +251,7 @@ contract Deploy is Script {
         console2.log("HouseVault  (dpUSDC):", address(d.vault));
         console2.log("RewardToken (DRY): ", address(d.rewardToken));
         console2.log("PerpEngine:          ", address(d.engine));
+        console2.log("PerpEngineExt:       ", address(d.engineExt));
         console2.log("EngineLens:          ", address(d.lens));
         console2.log("AgentAccountFactory: ", address(d.agentFactory));
         console2.log("TrailingStops:       ", address(d.trailingStops));
@@ -233,6 +270,7 @@ contract Deploy is Script {
         vm.serializeAddress(json, "houseVault", address(d.vault));
         vm.serializeAddress(json, "rewardToken", address(d.rewardToken));
         vm.serializeAddress(json, "perpEngine", address(d.engine));
+        vm.serializeAddress(json, "perpEngineExt", address(d.engineExt));
         vm.serializeAddress(json, "engineLens", address(d.lens));
         vm.serializeAddress(json, "agentFactory", address(d.agentFactory));
         vm.serializeAddress(json, "trailingStops", address(d.trailingStops));

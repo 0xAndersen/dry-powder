@@ -104,7 +104,8 @@ const funder = env.FUNDER_KEY || env.DEPLOYER_KEY ? wallet(env.FUNDER_KEY || env
 
 const opts = {
   heartbeatSeconds: num("HEARTBEAT_SECONDS", 60),
-  moveBps: num("MOVE_BPS", 15),
+  // A 5 bp move republishes: a wider threshold leaves direct (<=100x) trades a stale price to trade against.
+  moveBps: num("MOVE_BPS", 5),
   settleMarketDelaySeconds: num("SETTLE_MARKET_DELAY_SECONDS", 0),
   settleEpochs: !["0", "false"].includes(String(env.SETTLE_EPOCHS ?? "1")),
   settlePositionsDelaySeconds: num("SETTLE_POSITIONS_DELAY_SECONDS", 600),

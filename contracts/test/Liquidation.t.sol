@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {HouseVault} from "../src/HouseVault.sol";
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PerpEngineBase} from "../src/PerpEngineBase.sol";
 import {Base} from "./Base.t.sol";
 
 contract LiquidationTest is Base {
@@ -18,12 +19,12 @@ contract LiquidationTest is Base {
 
         _setBtc(99_101); // loss 899 < 900
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
+        vm.expectRevert(PerpEngineBase.NothingToLiquidate.selector);
         _liquidate(alice);
 
         _setBtc(99_100); // loss 900
         vm.expectEmit(address(engine));
-        emit PerpEngine.PositionLiquidated(key, alice, keeper, BTC, 99_100e18, 1_000e6, 20e6, 980e6);
+        emit PerpEngineBase.PositionLiquidated(key, alice, keeper, BTC, 99_100e18, 1_000e6, 20e6, 980e6);
         vm.prank(keeper);
         assertEq(_liquidate(alice), 1);
     }
@@ -34,6 +35,7 @@ contract LiquidationTest is Base {
         uint256 navBefore = vault.totalHouseBalance();
         uint256 aliceBefore = usdc.balanceOf(alice);
         _setBtc(99_000);
+        uint256 dry = house.rebateFor(980e6);
 
         vm.prank(keeper);
         _liquidate(alice);
@@ -46,8 +48,8 @@ contract LiquidationTest is Base {
         assertEq(vault.totalHouseBalance(), navBefore + 980e6);
         assertEq(vault.pendingStakerYield(), 0);
         assertEq(house.earned(bob), 0);
-        // 100 DRY per USDC that reached the vault.
-        assertEq(house.balanceOf(alice), 98_000e18);
+        // DRY on the 980 that reached the vault (at 100x the whole margin is within the 1% of notional cap).
+        assertEq(house.balanceOf(alice), dry);
         // The trader gets nothing back.
         assertEq(usdc.balanceOf(alice), aliceBefore);
 
@@ -61,7 +63,7 @@ contract LiquidationTest is Base {
         _open(alice, ETH, false, 1_000e6, 50_000e6); // 50x: liquidates at +1.8%
         _setEth(4_071);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
+        vm.expectRevert(PerpEngineBase.NothingToLiquidate.selector);
         _liquidate(alice);
         _setEth(4_072);
         vm.prank(keeper);
@@ -75,7 +77,7 @@ contract LiquidationTest is Base {
         bytes[] memory update = _fresh(BTC, 99_000e8, 0, -8);
 
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.InsufficientOracleFee.selector);
+        vm.expectRevert(PerpEngineBase.InsufficientOracleFee.selector);
         engine.liquidateBatch(_traderKeys(alice), update);
 
         uint256 nativeBefore = keeper.balance;
@@ -91,7 +93,7 @@ contract LiquidationTest is Base {
         _setBtc(99_000);
         skip(4);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
+        vm.expectRevert(PerpEngineBase.NothingToLiquidate.selector);
         _liquidate(alice);
         assertEq(engine.positionCount(), 1);
     }
@@ -137,7 +139,7 @@ contract LiquidationTest is Base {
         uint256 oiBefore = engine.totalOpenInterest();
 
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
+        vm.expectRevert(PerpEngineBase.NothingToLiquidate.selector);
         engine.liquidateBatch(keys, _noBytes());
 
         _setBtc(98_500);
@@ -147,11 +149,16 @@ contract LiquidationTest is Base {
         assertEq(engine.positionCount(), 10);
         assertEq(usdc.balanceOf(keeper), 20 * 10e6);
         assertEq(vault.totalTraderLosses(), 20 * 490e6);
+        uint256 rebated;
         for (uint256 i; i < 30; ++i) {
             bool gone = engine.getPosition(traders[i], BTC).trader == address(0);
             assertEq(gone, i >= 10);
-            assertEq(house.balanceOf(traders[i]), i >= 10 ? 49_000e18 : 0);
+            assertEq(house.balanceOf(traders[i]) > 0, i >= 10);
+            // Each reports the 490 that reached the vault, up to 1% of its notional.
+            uint256 cap = 5e6 * (40 + 2 * i);
+            if (i >= 10) rebated += cap < 490e6 ? cap : 490e6;
         }
+        assertEq(house.totalRebatedLoss(), rebated);
         _assertEngineSolvent();
 
         // The second leg of the cascade takes out the rest.
@@ -327,7 +334,7 @@ contract LiquidationPriceTest is Base {
 
         // The engine agrees on both sides of that price.
         _setPrice(BTC, int64(uint64(liq / 1e10 + 1e8)), 0, -8);
-        vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
+        vm.expectRevert(PerpEngineBase.NothingToLiquidate.selector);
         _liquidate(alice);
         _setPrice(BTC, int64(uint64(liq / 1e10 - 1e8)), 0, -8);
         vm.prank(keeper);

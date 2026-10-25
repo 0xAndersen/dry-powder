@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PerpEngineBase} from "../src/PerpEngineBase.sol";
 import {LimitParams, OpenParams, Order, OrderType, Position} from "../src/Types.sol";
 import {Base} from "./Base.t.sol";
 
@@ -22,7 +23,7 @@ contract CloseOrdersTest is Base {
         uint256 before = usdc.balanceOf(alice);
 
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderCreated(1, alice, BTC, OrderType.Close, true, 0, 0, 0);
+        emit PerpEngineBase.OrderCreated(1, alice, BTC, OrderType.Close, true, 0, 0, 0);
         assertEq(_closeOrder(alice, BTC, 0), 1); // no bound
 
         assertEq(before - usdc.balanceOf(alice), EXEC_FEE);
@@ -48,7 +49,7 @@ contract CloseOrdersTest is Base {
 
     function test_closeOrder_requiresAPosition() public {
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.PositionNotFound.selector);
+        vm.expectRevert(PerpEngineBase.PositionNotFound.selector);
         engine.setTriggerOrder(BTC, OrderType.Close, 0, 0);
     }
 
@@ -59,7 +60,7 @@ contract CloseOrdersTest is Base {
 
         skip(5);
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderUpdated(id, 99_500e18);
+        emit PerpEngineBase.OrderUpdated(id, 99_500e18);
         assertEq(_closeOrder(alice, BTC, 99_500e18), id);
         assertEq(usdc.balanceOf(alice), afterCreate);
         assertEq(engine.getOrder(id).triggerPrice, 99_500e18);
@@ -77,11 +78,11 @@ contract CloseOrdersTest is Base {
         uint256 id = _closeOrder(alice, BTC, 0);
 
         vm.prank(bob);
-        vm.expectRevert(PerpEngine.NotOrderOwner.selector);
+        vm.expectRevert(PerpEngineBase.NotOrderOwner.selector);
         engine.cancelOrder(id);
 
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderCancelled(id, alice);
+        emit PerpEngineBase.OrderCancelled(id, alice);
         vm.prank(alice);
         engine.cancelOrder(id);
         assertEq(usdc.balanceOf(alice), before);
@@ -100,9 +101,9 @@ contract CloseOrdersTest is Base {
 
         _setPrice(BTC, 101_000e8, 100e8, -8); // a sell fills at the bid, 100,900
         vm.expectEmit(address(engine));
-        emit PerpEngine.PositionClosed(key, alice, BTC, 100_900e18, 90e6, 5e6, 1_085e6);
+        emit PerpEngineBase.PositionClosed(key, alice, BTC, 100_900e18, 90e6, 5e6, 1_085e6);
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderExecuted(id, alice, keeper, 100_900e18);
+        emit PerpEngineBase.OrderExecuted(id, alice, keeper, 100_900e18);
         _exec(id);
 
         assertEq(usdc.balanceOf(alice), before + 1_085e6);
@@ -118,9 +119,10 @@ contract CloseOrdersTest is Base {
         uint256 id = _closeOrder(alice, BTC, 0);
         uint256 before = usdc.balanceOf(alice);
         _setPrice(BTC, 101_000e8, 100e8, -8); // a buy fills at the ask, 101,100
+        uint256 dry = _rebate(110e6, 10_000e6);
         _exec(id);
         assertEq(usdc.balanceOf(alice), before + 1_000e6 - 110e6 - 5e6);
-        assertEq(house.balanceOf(alice), 11_000e18);
+        assertEq(house.balanceOf(alice), dry);
     }
 
     function test_closeOrder_boundNotMet_long() public {
@@ -130,13 +132,13 @@ contract CloseOrdersTest is Base {
 
         _setBtc(100_499);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(id, _noBytes());
 
         // The bound is on the execution price: mid 100,550 with the bid at 100,450 is not good enough.
         _setPrice(BTC, 100_550e8, 100e8, -8);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(id, _noBytes());
 
         _setPrice(BTC, 100_600e8, 100e8, -8); // bid exactly 100,500
@@ -151,11 +153,11 @@ contract CloseOrdersTest is Base {
 
         _setBtc(99_501);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(id, _noBytes());
         _setPrice(BTC, 99_450e8, 100e8, -8); // ask 99,550
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(id, _noBytes());
 
         _setPrice(BTC, 99_400e8, 100e8, -8); // ask exactly 99,500
@@ -169,7 +171,7 @@ contract CloseOrdersTest is Base {
         uint256 id = _closeOrder(alice, BTC, 99_000e18);
         _setBtc(98_999); // a stop at 99,000 would fire here; the Close order must not
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(id, _noBytes());
         _setBtc(99_000);
         _exec(id);
@@ -181,7 +183,7 @@ contract CloseOrdersTest is Base {
         _open(alice, BTC, true, 1_000e6, 10_000e6);
         uint256 id = _closeOrder(alice, BTC, 0);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.PriceNotAfterOpen.selector);
+        vm.expectRevert(PerpEngineBase.PriceNotAfterOpen.selector);
         engine.executeOrder(id, _noBytes());
 
         // A price from the next second can.
@@ -198,7 +200,7 @@ contract CloseOrdersTest is Base {
         skip(2);
         uint256 id = _closeOrder(alice, BTC, 0); // ... but before the order
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.PriceBeforeOrder.selector);
+        vm.expectRevert(PerpEngineBase.PriceBeforeOrder.selector);
         engine.executeOrder(id, _noBytes());
 
         // Moving the order re-arms the rule.
@@ -206,7 +208,7 @@ contract CloseOrdersTest is Base {
         skip(1);
         _closeOrder(alice, BTC, 100_000e18);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.PriceBeforeOrder.selector);
+        vm.expectRevert(PerpEngineBase.PriceBeforeOrder.selector);
         engine.executeOrder(id, _noBytes());
 
         _publish(BTC, 100_300e8, 0, -8);
@@ -220,7 +222,7 @@ contract CloseOrdersTest is Base {
         uint256 before = usdc.balanceOf(alice);
         _setBtc(100_000);
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderCancelled(id, alice);
+        emit PerpEngineBase.OrderCancelled(id, alice);
         _close(alice, BTC);
         assertEq(usdc.balanceOf(alice), before + 995e6 + EXEC_FEE);
         assertEq(engine.orderCount(), 0);
@@ -237,11 +239,11 @@ contract CloseOrdersTest is Base {
         // Past the threshold the position belongs to liquidators, not to its orders.
         _closeOrder(alice, BTC, 0);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.PositionLiquidatable.selector);
+        vm.expectRevert(PerpEngineBase.PositionLiquidatable.selector);
         engine.executeOrder(id, _noBytes());
 
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderCancelled(id, alice);
+        emit PerpEngineBase.OrderCancelled(id, alice);
         vm.prank(keeper);
         _liquidate(alice);
         assertEq(usdc.balanceOf(alice), before); // nothing back, not even the order's escrow
@@ -336,7 +338,7 @@ contract CloseOrdersTest is Base {
         vm.prank(alice);
         uint256 openId = engine.createLimitOrder(_limit(BTC, true, 1_000e6, 10_000e6, 100_500e18));
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.PriceBeforeOrder.selector);
+        vm.expectRevert(PerpEngineBase.PriceBeforeOrder.selector);
         engine.executeOrder(openId, _noBytes());
 
         // ... it fills against the next one, at that price.
@@ -353,7 +355,7 @@ contract CloseOrdersTest is Base {
         uint256 bobId = engine.createLimitOrder(_limit(BTC, true, 1_000e6, 10_000e6, 100_500e18));
         _setBtc(100_501);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(bobId, _noBytes());
 
         // "Sell at market, at least 100,000".

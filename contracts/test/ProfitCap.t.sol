@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PerpEngineBase} from "../src/PerpEngineBase.sol";
 import {OpenParams, OrderType} from "../src/Types.sol";
 import {Base} from "./Base.t.sol";
 
@@ -24,7 +25,7 @@ contract ProfitCapTest is Base {
         assertEq(pnl, 2_000e6);
 
         vm.expectEmit(address(engine));
-        emit PerpEngine.PositionClosed(key, alice, BTC, 120_000e18, 1_000e6, 5e6, 1_095e6);
+        emit PerpEngineBase.PositionClosed(key, alice, BTC, 120_000e18, 1_000e6, 5e6, 1_095e6);
         _close(alice, BTC);
         assertEq(usdc.balanceOf(alice), afterOpen + 100e6 - 5e6 + 1_000e6);
         assertEq(vault.totalTraderProfits(), 1_000e6);
@@ -91,9 +92,9 @@ contract ProfitCapTest is Base {
 
     function test_setMaxProfitMultiple_bounds() public {
         vm.startPrank(owner);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setMaxProfitMultiple(0);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.setMaxProfitMultiple(101);
         engine.setMaxProfitMultiple(1);
         engine.setMaxProfitMultiple(100);

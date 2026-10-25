@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PerpEngineBase} from "../src/PerpEngineBase.sol";
 import {LimitParams, OpenParams, Order, OrderType, Position} from "../src/Types.sol";
 import {Base} from "./Base.t.sol";
 
@@ -24,7 +25,7 @@ contract OrdersTest is Base {
     function test_limit_create_escrowsMarginFeeBudgetAndExecutionFee() public {
         uint256 before = usdc.balanceOf(alice);
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderCreated(1, alice, BTC, OrderType.LimitOpen, true, 99_000e18, 1_000e6, 10_000e6);
+        emit PerpEngineBase.OrderCreated(1, alice, BTC, OrderType.LimitOpen, true, 99_000e18, 1_000e6, 10_000e6);
         vm.prank(alice);
         uint256 id = engine.createLimitOrder(_limit(BTC, true, 1_000e6, 10_000e6, 99_000e18));
 
@@ -57,12 +58,12 @@ contract OrdersTest is Base {
 
         _setBtc(99_001);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(id, _noBytes());
 
         _setBtc(98_900);
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderExecuted(id, alice, keeper, 98_900e18);
+        emit PerpEngineBase.OrderExecuted(id, alice, keeper, 98_900e18);
         _exec(id);
 
         Position memory pos = engine.getPosition(alice, BTC);
@@ -83,7 +84,7 @@ contract OrdersTest is Base {
 
         _setBtc(100_999);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(id, _noBytes());
 
         _setBtc(101_000);
@@ -99,7 +100,7 @@ contract OrdersTest is Base {
         // Mid is through the limit but the ask (99,030) is not: the limit price must be honoured.
         _setPrice(BTC, 98_990e8, 40e8, -8);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(id, _noBytes());
         _setPrice(BTC, 98_960e8, 40e8, -8);
         _exec(id);
@@ -133,7 +134,7 @@ contract OrdersTest is Base {
         vm.prank(alice);
         uint256 id = engine.createLimitOrder(_limit(BTC, true, 1_000e6, 10_000e6, 100_000e18));
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.PriceBeforeOrder.selector);
+        vm.expectRevert(PerpEngineBase.PriceBeforeOrder.selector);
         engine.executeOrder(id, _noBytes());
         _setBtc(100_000);
         _exec(id);
@@ -141,30 +142,30 @@ contract OrdersTest is Base {
 
     function test_limit_create_validations() public {
         vm.startPrank(alice);
-        vm.expectRevert(PerpEngine.MarketNotFound.selector);
+        vm.expectRevert(PerpEngineBase.MarketNotFound.selector);
         engine.createLimitOrder(_limit(bytes32(uint256(7)), true, 1_000e6, 10_000e6, 99_000e18));
-        vm.expectRevert(PerpEngine.MarginTooLow.selector);
+        vm.expectRevert(PerpEngineBase.MarginTooLow.selector);
         engine.createLimitOrder(_limit(BTC, true, 1e6, 10e6, 99_000e18));
-        vm.expectRevert(PerpEngine.LeverageOutOfRange.selector);
+        vm.expectRevert(PerpEngineBase.LeverageOutOfRange.selector);
         engine.createLimitOrder(_limit(BTC, true, 1_000e6, 100_001e6, 99_000e18));
-        vm.expectRevert(PerpEngine.InvalidTrigger.selector);
+        vm.expectRevert(PerpEngineBase.InvalidTrigger.selector);
         engine.createLimitOrder(_limit(BTC, true, 1_000e6, 10_000e6, 0));
 
         // Brackets are validated against the limit price.
         LimitParams memory p = _limit(BTC, true, 1_000e6, 10_000e6, 99_000e18);
         p.takeProfit = 99_000e18;
-        vm.expectRevert(PerpEngine.InvalidTrigger.selector);
+        vm.expectRevert(PerpEngineBase.InvalidTrigger.selector);
         engine.createLimitOrder(p);
         p.takeProfit = 0;
         p.stopLoss = 99_000e18;
-        vm.expectRevert(PerpEngine.InvalidTrigger.selector);
+        vm.expectRevert(PerpEngineBase.InvalidTrigger.selector);
         engine.createLimitOrder(p);
         vm.stopPrank();
 
         vm.prank(owner);
         engine.setMarket(BTC, false, 100, MAX_OI_PER_SIDE, SKEW_SCALE);
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.MarketDisabled.selector);
+        vm.expectRevert(PerpEngineBase.MarketDisabled.selector);
         engine.createLimitOrder(_limit(BTC, true, 1_000e6, 10_000e6, 99_000e18));
 
         vm.prank(owner);
@@ -190,14 +191,14 @@ contract OrdersTest is Base {
         vm.prank(owner);
         engine.setMarket(BTC, false, 100, MAX_OI_PER_SIDE, SKEW_SCALE);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.MarketDisabled.selector);
+        vm.expectRevert(PerpEngineBase.MarketDisabled.selector);
         engine.executeOrder(id, _noBytes());
         vm.prank(owner);
         engine.setMarket(BTC, true, 100, MAX_OI_PER_SIDE, SKEW_SCALE);
 
         _open(alice, BTC, false, 1_000e6, 5_000e6);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.PositionExists.selector);
+        vm.expectRevert(PerpEngineBase.PositionExists.selector);
         engine.executeOrder(id, _noBytes());
 
         // The order is still intact and can be cancelled for a full refund.
@@ -224,7 +225,7 @@ contract OrdersTest is Base {
 
     function test_executeOrder_unknownOrderReverts() public {
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.OrderNotFound.selector);
+        vm.expectRevert(PerpEngineBase.OrderNotFound.selector);
         engine.executeOrder(99, _noBytes());
     }
 
@@ -250,14 +251,14 @@ contract OrdersTest is Base {
         uint256 id = engine.createLimitOrder(p);
 
         vm.prank(bob);
-        vm.expectRevert(PerpEngine.NotOrderOwner.selector);
+        vm.expectRevert(PerpEngineBase.NotOrderOwner.selector);
         engine.cancelOrder(id);
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.OrderNotFound.selector);
+        vm.expectRevert(PerpEngineBase.OrderNotFound.selector);
         engine.cancelOrder(id + 1);
 
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderCancelled(id, alice);
+        emit PerpEngineBase.OrderCancelled(id, alice);
         vm.prank(alice);
         engine.cancelOrder(id);
         assertEq(usdc.balanceOf(alice), before);
@@ -303,20 +304,20 @@ contract OrdersTest is Base {
         OpenParams memory p = _params(BTC, true, 1_000e6, 10_000e6);
         vm.startPrank(alice);
         p.takeProfit = 100_000e18; // long TP must be above entry
-        vm.expectRevert(PerpEngine.InvalidTrigger.selector);
+        vm.expectRevert(PerpEngineBase.InvalidTrigger.selector);
         engine.openPosition(p, _noBytes());
         p.takeProfit = 0;
         p.stopLoss = 100_000e18; // long SL must be below entry
-        vm.expectRevert(PerpEngine.InvalidTrigger.selector);
+        vm.expectRevert(PerpEngineBase.InvalidTrigger.selector);
         engine.openPosition(p, _noBytes());
 
         p = _params(BTC, false, 1_000e6, 10_000e6);
         p.takeProfit = 100_000e18; // short TP must be below entry
-        vm.expectRevert(PerpEngine.InvalidTrigger.selector);
+        vm.expectRevert(PerpEngineBase.InvalidTrigger.selector);
         engine.openPosition(p, _noBytes());
         p.takeProfit = 0;
         p.stopLoss = 100_000e18; // short SL must be above entry
-        vm.expectRevert(PerpEngine.InvalidTrigger.selector);
+        vm.expectRevert(PerpEngineBase.InvalidTrigger.selector);
         engine.openPosition(p, _noBytes());
 
         p.takeProfit = 98_000e18;
@@ -332,16 +333,16 @@ contract OrdersTest is Base {
 
         _setBtc(101_999);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(1, _noBytes());
 
         _setBtc(102_000);
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderCancelled(2, alice); // the sibling stop-loss
+        emit PerpEngineBase.OrderCancelled(2, alice); // the sibling stop-loss
         vm.expectEmit(address(engine));
-        emit PerpEngine.PositionClosed(key, alice, BTC, 102_000e18, 200e6, 5e6, 1_195e6);
+        emit PerpEngineBase.PositionClosed(key, alice, BTC, 102_000e18, 200e6, 5e6, 1_195e6);
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderExecuted(1, alice, keeper, 102_000e18);
+        emit PerpEngineBase.OrderExecuted(1, alice, keeper, 102_000e18);
         _exec(1);
 
         // margin - fee + profit, plus the refunded stop-loss execution fee
@@ -359,13 +360,14 @@ contract OrdersTest is Base {
 
         _setBtc(98_001);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(2, _noBytes());
 
         _setBtc(98_000);
+        uint256 dry = _rebate(200e6, 10_000e6); // a 200 loss on 10,000 of notional reports the 1% cap: 100
         _exec(2);
         assertEq(usdc.balanceOf(alice), before + 1_000e6 - 200e6 - 5e6 + EXEC_FEE);
-        assertEq(house.balanceOf(alice), 20_000e18);
+        assertEq(house.balanceOf(alice), dry);
         assertEq(engine.orderCount(), 0);
     }
 
@@ -375,7 +377,7 @@ contract OrdersTest is Base {
         uint256 before = usdc.balanceOf(alice);
         _setBtc(98_001);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(1, _noBytes());
         _setBtc(97_500); // gaps through the trigger: the trader gets the better price
         _exec(1);
@@ -388,7 +390,7 @@ contract OrdersTest is Base {
         uint256 before = usdc.balanceOf(alice);
         _setBtc(101_999);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(2, _noBytes());
         _setBtc(102_000);
         _exec(2);
@@ -409,7 +411,7 @@ contract OrdersTest is Base {
         _openWithBrackets(alice, true, 100e6, 10_000e6, 0, 99_200e18); // 100x, stop at -0.8%
         _setBtc(99_000); // gaps to -1.0%: past the 90% threshold
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.PositionLiquidatable.selector);
+        vm.expectRevert(PerpEngineBase.PositionLiquidatable.selector);
         engine.executeOrder(1, _noBytes());
 
         vm.prank(keeper);
@@ -429,15 +431,19 @@ contract OrdersTest is Base {
 
         vm.startPrank(alice);
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderCreated(1, alice, BTC, OrderType.TakeProfit, true, 103_000e18, 0, 0);
+        emit PerpEngineBase.OrderCreated(1, alice, BTC, OrderType.TakeProfit, true, 103_000e18, 0, 0);
         assertEq(engine.setTriggerOrder(BTC, OrderType.TakeProfit, 103_000e18, 0), 1);
         assertEq(engine.setTriggerOrder(BTC, OrderType.StopLoss, 97_000e18, 0), 2);
         assertEq(before - usdc.balanceOf(alice), 2 * EXEC_FEE);
 
-        // Moving an existing trigger reuses the order and its escrow.
+        // Moving an existing trigger reuses the order and its escrow. The price has risen, so the stop can be
+        // moved above entry (still below the price).
+        vm.stopPrank();
         skip(1);
+        _setBtc(101_000);
+        vm.startPrank(alice);
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderUpdated(2, 100_500e18);
+        emit PerpEngineBase.OrderUpdated(2, 100_500e18);
         assertEq(engine.setTriggerOrder(BTC, OrderType.StopLoss, 100_500e18, 0), 2);
         assertEq(engine.setTriggerOrder(BTC, OrderType.TakeProfit, 104_000e18, 0), 1);
         vm.stopPrank();
@@ -461,20 +467,51 @@ contract OrdersTest is Base {
         engine.setTriggerOrder(BTC, OrderType.StopLoss, 97_000e18, 0);
         skip(2);
         vm.prank(alice);
-        engine.setTriggerOrder(BTC, OrderType.StopLoss, 100_000e18, 0);
-        // The stored price (100,000, two seconds old) would satisfy the moved stop, but it predates the move.
+        engine.setTriggerOrder(BTC, OrderType.StopLoss, 99_999e18, 0);
+        // The stored price (100,000, two seconds old and still usable) predates the move, so the moved order
+        // cannot execute against it at all.
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.PriceBeforeOrder.selector);
+        vm.expectRevert(PerpEngineBase.PriceBeforeOrder.selector);
         engine.executeOrder(1, _noBytes());
+    }
+
+    /// With a fresh price, a take-profit or stop-loss already through it is refused: it would fire at once.
+    function test_setTriggerOrder_refusesATriggerAlreadyThroughThePrice() public {
+        _open(alice, BTC, true, 1_000e6, 10_000e6); // long at ~100,000
+        _open(bob, BTC, false, 1_000e6, 10_000e6); // short
+        vm.startPrank(alice);
+        vm.expectRevert(PerpEngineBase.InvalidTrigger.selector);
+        engine.setTriggerOrder(BTC, OrderType.TakeProfit, 99_000e18, 0); // a long's take-profit below the mid
+        vm.expectRevert(PerpEngineBase.InvalidTrigger.selector);
+        engine.setTriggerOrder(BTC, OrderType.StopLoss, 100_000e18, 0); // a long's stop at the mid
+        engine.setTriggerOrder(BTC, OrderType.StopLoss, 99_000e18, 0);
+        engine.setTriggerOrder(BTC, OrderType.TakeProfit, 101_000e18, 0);
+        // Moving an order is checked the same way.
+        vm.expectRevert(PerpEngineBase.InvalidTrigger.selector);
+        engine.setTriggerOrder(BTC, OrderType.StopLoss, 100_500e18, 0);
+        // A close order's trigger is a price bound, not a condition: any side is fine.
+        engine.setTriggerOrder(BTC, OrderType.Close, 150_000e18, 0);
+        vm.stopPrank();
+        vm.startPrank(bob);
+        vm.expectRevert(PerpEngineBase.InvalidTrigger.selector);
+        engine.setTriggerOrder(BTC, OrderType.TakeProfit, 101_000e18, 0); // a short's take-profit above the mid
+        vm.expectRevert(PerpEngineBase.InvalidTrigger.selector);
+        engine.setTriggerOrder(BTC, OrderType.StopLoss, 99_000e18, 0); // a short's stop below it
+        engine.setTriggerOrder(BTC, OrderType.StopLoss, 101_000e18, 0);
+        vm.stopPrank();
+        // Without a usable price there is nothing to compare with, so the trigger is accepted as before.
+        skip(60);
+        vm.prank(bob);
+        engine.setTriggerOrder(BTC, OrderType.TakeProfit, 101_000e18, 0);
     }
 
     function test_setTriggerOrder_validations() public {
         vm.startPrank(alice);
-        vm.expectRevert(PerpEngine.NotTriggerOrderType.selector);
+        vm.expectRevert(PerpEngineBase.NotTriggerOrderType.selector);
         engine.setTriggerOrder(BTC, OrderType.LimitOpen, 1e18, 0);
-        vm.expectRevert(PerpEngine.InvalidTrigger.selector);
+        vm.expectRevert(PerpEngineBase.InvalidTrigger.selector);
         engine.setTriggerOrder(BTC, OrderType.TakeProfit, 0, 0);
-        vm.expectRevert(PerpEngine.PositionNotFound.selector);
+        vm.expectRevert(PerpEngineBase.PositionNotFound.selector);
         engine.setTriggerOrder(BTC, OrderType.TakeProfit, 1e18, 0);
         vm.stopPrank();
     }
@@ -499,7 +536,7 @@ contract OrdersTest is Base {
         // owed (margin 100 - fee 5 + profit 50, plus the stop-loss escrow) is parked for her to claim.
         _setBtc(100_500);
         vm.expectEmit(address(engine));
-        emit PerpEngine.PaymentDeferred(alice, 145e6 + EXEC_FEE);
+        emit PerpEngineBase.PaymentDeferred(alice, 145e6 + EXEC_FEE);
         _exec(1);
         assertEq(engine.positionCount(), 0);
         assertEq(engine.orderCount(), 0);
@@ -513,13 +550,15 @@ contract OrdersTest is Base {
         _openWithBrackets(alice, true, 100e6, 10_000e6, 101_500e18, 100_000e18);
         usdc.setBlocklisted(alice, true);
         _setBtc(99_000);
+        // The rebate is on her net result: 98 to the vault, less the 50 she won on the first position.
+        uint256 dry = house.rebateFor(48e6);
         vm.prank(keeper);
         assertEq(_liquidate(alice), 1);
         assertEq(engine.positionCount(), 0);
         assertEq(engine.orderCount(), 0);
         // two open fees, one close fee, and the two orphaned bracket escrows of the liquidated position
         assertEq(vault.totalFeesCollected(), 15e6 + 2 * EXEC_FEE);
-        assertEq(house.balanceOf(alice), 9_800e18);
+        assertEq(house.balanceOf(alice), dry);
         assertEq(engine.claimable(alice), 145e6 + EXEC_FEE);
         _assertEngineSolvent();
     }
@@ -531,7 +570,7 @@ contract OrdersTest is Base {
         engine.setMarket(BTC, true, 10, MAX_OI_PER_SIDE, SKEW_SCALE); // leverage cut to 10x afterwards
         _setBtc(100_000);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.LeverageOutOfRange.selector);
+        vm.expectRevert(PerpEngineBase.LeverageOutOfRange.selector);
         engine.executeOrder(id, _noBytes());
     }
 
@@ -543,7 +582,7 @@ contract OrdersTest is Base {
 
         _setBtc(97_500); // gaps through both the limit and the stop
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.InvalidTrigger.selector);
+        vm.expectRevert(PerpEngineBase.InvalidTrigger.selector);
         engine.executeOrder(id, _noBytes());
 
         _setBtc(98_500); // back between stop and limit: fills normally
@@ -563,12 +602,12 @@ contract OrdersTest is Base {
         p.takeProfit = 100_300e18;
         vm.startPrank(alice);
         engine.openPosition{value: PYTH_FEE}(p, older);
-        vm.expectRevert(PerpEngine.PriceNotAfterOpen.selector);
+        vm.expectRevert(PerpEngineBase.PriceNotAfterOpen.selector);
         engine.closePosition{value: PYTH_FEE}(BTC, 0, 0, newer);
         vm.stopPrank();
         // The same holds for closing through a trigger order.
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.PriceNotAfterOpen.selector);
+        vm.expectRevert(PerpEngineBase.PriceNotAfterOpen.selector);
         engine.executeOrder{value: PYTH_FEE}(1, newer);
 
         // A price from the next second is fine.

@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {EngineLens} from "../src/EngineLens.sol";
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PerpEngineBase} from "../src/PerpEngineBase.sol";
 import {PythOracle} from "../src/PythOracle.sol";
 import {
     LimitParams,
@@ -236,13 +237,13 @@ contract EngineLensTest is Base {
         uint256 before = usdc.balanceOf(alice);
         if (liquidatable) {
             vm.prank(alice);
-            vm.expectRevert(PerpEngine.PositionLiquidatable.selector);
+            vm.expectRevert(PerpEngineBase.PositionLiquidatable.selector);
             engine.closePosition(BTC, 0, 0, _noBytes());
             vm.prank(keeper);
             assertEq(engine.liquidateBatch(_keys(key), _noBytes()), 1);
         } else {
             vm.prank(keeper);
-            vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
+            vm.expectRevert(PerpEngineBase.NothingToLiquidate.selector);
             engine.liquidateBatch(_keys(key), _noBytes());
             _close(alice, BTC);
             int256 cap = int256(margin * 10);

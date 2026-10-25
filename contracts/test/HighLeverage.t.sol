@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Base} from "./Base.t.sol";
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PerpEngineBase} from "../src/PerpEngineBase.sol";
 import {AgentAccount, AgentAccountFactory} from "../src/AgentAccount.sol";
 import {OrderType, Position} from "../src/Types.sol";
 
@@ -30,17 +31,19 @@ contract HighLeverageTest is Base {
         engine.executeOrder(orderId, _noBytes());
     }
 
-    function test_marketAcceptsUpTo1000x_notMore() public {
+    function test_marketAcceptsUpTo5000x_notMore() public {
         assertEq(engine.getMarket(BTC).maxLeverage, 1000);
-        vm.prank(owner);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
-        engine.setMarket(BTC, true, 1001, MAX_OI_PER_SIDE, SKEW_SCALE);
+        vm.startPrank(owner);
+        engine.setMarket(BTC, true, 5000, MAX_OI_PER_SIDE, SKEW_SCALE);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
+        engine.setMarket(BTC, true, 5001, MAX_OI_PER_SIDE, SKEW_SCALE);
+        vm.stopPrank();
     }
 
     function test_directOpen_allowedUpTo100x_refusedAbove() public {
         _open(alice, BTC, true, MARGIN, MARGIN * 100);
         vm.prank(bob);
-        vm.expectRevert(PerpEngine.HighLeverageNeedsOrder.selector);
+        vm.expectRevert(PerpEngineBase.HighLeverageNeedsOrder.selector);
         engine.openPosition(_params(BTC, true, MARGIN, MARGIN * 100 + 1), _noBytes());
     }
 
@@ -53,7 +56,7 @@ contract HighLeverageTest is Base {
 
     function test_1000x_leverageAboveMarketMaxStillRefused() public {
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.LeverageOutOfRange.selector);
+        vm.expectRevert(PerpEngineBase.LeverageOutOfRange.selector);
         engine.createLimitOrder(_limit(ETH, true, MARGIN, MARGIN * 101, 5_000e18)); // ETH stays at 100x
     }
 
@@ -62,7 +65,7 @@ contract HighLeverageTest is Base {
         _setBtc(100_050); // +0.05%: +$5 on $10,000
 
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.HighLeverageNeedsOrder.selector);
+        vm.expectRevert(PerpEngineBase.HighLeverageNeedsOrder.selector);
         engine.closePosition(BTC, 0, 0, _noBytes());
 
         uint256 before = usdc.balanceOf(alice);
@@ -162,7 +165,7 @@ contract HighLeverageTest is Base {
         assertEq(engine.getPosition(address(acct), BTC).size, SIZE_1000X);
 
         vm.prank(agent);
-        vm.expectRevert(PerpEngine.HighLeverageNeedsOrder.selector);
+        vm.expectRevert(PerpEngineBase.HighLeverageNeedsOrder.selector);
         acct.closePosition(BTC, 0, 0, _noBytes());
     }
 }

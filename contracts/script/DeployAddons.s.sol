@@ -3,7 +3,7 @@ pragma solidity 0.8.28;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {AgentAccountFactory} from "../src/AgentAccount.sol";
-import {PerpEngine} from "../src/PerpEngine.sol";
+import {IEngine} from "../src/interfaces/IEngine.sol";
 import {TrailingStops} from "../src/TrailingStops.sol";
 import {TwapOrders} from "../src/TwapOrders.sol";
 
@@ -28,8 +28,8 @@ contract DeployAddons is Script {
         );
 
         vm.startBroadcast();
-        trailingStops = new TrailingStops(PerpEngine(engine), AgentAccountFactory(factory));
-        twapOrders = new TwapOrders(PerpEngine(engine), AgentAccountFactory(factory));
+        trailingStops = new TrailingStops(IEngine(engine), AgentAccountFactory(factory));
+        twapOrders = new TwapOrders(IEngine(engine), AgentAccountFactory(factory));
         vm.stopBroadcast();
 
         console2.log("TrailingStops:", address(trailingStops));

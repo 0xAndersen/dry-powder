@@ -5,6 +5,9 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {HouseVault} from "../src/HouseVault.sol";
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PerpEngineExt} from "../src/PerpEngineExt.sol";
+import {IEngine} from "../src/interfaces/IEngine.sol";
+import {PerpEngineBase} from "../src/PerpEngineBase.sol";
 import {RewardToken} from "../src/RewardToken.sol";
 import {IHouseVault} from "../src/interfaces/IHouseVault.sol";
 import {IRewardToken} from "../src/interfaces/IRewardToken.sol";
@@ -27,7 +30,7 @@ contract PullPaymentsTest is Base {
 
     function test_claim_nothingToClaim() public {
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.NothingToClaim.selector);
+        vm.expectRevert(PerpEngineBase.NothingToClaim.selector);
         engine.claim();
     }
 
@@ -38,9 +41,9 @@ contract PullPaymentsTest is Base {
 
         // The close itself is unaffected: same event, same accounting, the vault pays the engine.
         vm.expectEmit(address(engine));
-        emit PerpEngine.PositionClosed(key, alice, BTC, 101_000e18, 100e6, 5e6, 1_095e6);
+        emit PerpEngineBase.PositionClosed(key, alice, BTC, 101_000e18, 100e6, 5e6, 1_095e6);
         vm.expectEmit(address(engine));
-        emit PerpEngine.PaymentDeferred(alice, 1_095e6);
+        emit PerpEngineBase.PaymentDeferred(alice, 1_095e6);
         _close(alice, BTC);
 
         assertEq(engine.positionCount(), 0);
@@ -59,13 +62,13 @@ contract PullPaymentsTest is Base {
         assertEq(engine.claimable(alice), 1_095e6);
         // Nobody else can take it.
         vm.prank(bob);
-        vm.expectRevert(PerpEngine.NothingToClaim.selector);
+        vm.expectRevert(PerpEngineBase.NothingToClaim.selector);
         engine.claim();
 
         usdc.setBlocklisted(alice, false);
         uint256 before = usdc.balanceOf(alice);
         vm.expectEmit(address(engine));
-        emit PerpEngine.Claimed(alice, 1_095e6);
+        emit PerpEngineBase.Claimed(alice, 1_095e6);
         vm.prank(alice);
         engine.claim();
         assertEq(usdc.balanceOf(alice), before + 1_095e6);
@@ -74,7 +77,7 @@ contract PullPaymentsTest is Base {
         assertEq(usdc.balanceOf(address(engine)), 0);
 
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.NothingToClaim.selector);
+        vm.expectRevert(PerpEngineBase.NothingToClaim.selector);
         engine.claim();
     }
 
@@ -86,7 +89,7 @@ contract PullPaymentsTest is Base {
         // margin 1,000 - loss 100 - fee 5; the loss and the rebate are booked as usual
         assertEq(engine.claimable(alice), 895e6);
         assertEq(vault.totalTraderLosses(), 100e6);
-        assertEq(house.balanceOf(alice), 10_000e18);
+        assertEq(house.balanceOf(alice), _rebateAfter(100e6, 0));
         _assertEngineSolvent();
     }
 
@@ -167,9 +170,9 @@ contract PullPaymentsTest is Base {
         _blocklist(alice);
 
         vm.expectEmit(address(engine));
-        emit PerpEngine.OrderCancelled(id, alice);
+        emit PerpEngineBase.OrderCancelled(id, alice);
         vm.expectEmit(address(engine));
-        emit PerpEngine.PaymentDeferred(alice, escrow);
+        emit PerpEngineBase.PaymentDeferred(alice, escrow);
         vm.prank(alice);
         engine.cancelOrder(id);
         assertEq(engine.orderCount(), 0);
@@ -200,7 +203,7 @@ contract PullPaymentsTest is Base {
 
         // Budget 15, actual fee 5.10: the 9.90 refund cannot be delivered, but the fill goes through.
         vm.expectEmit(address(engine));
-        emit PerpEngine.PaymentDeferred(alice, 9.9e6);
+        emit PerpEngineBase.PaymentDeferred(alice, 9.9e6);
         _exec(id);
         assertEq(engine.getPosition(alice, BTC).size, 10_000e6);
         assertEq(engine.claimable(alice), 9.9e6);
@@ -245,7 +248,7 @@ contract PullPaymentsTest is Base {
         OddUSDC token;
         HouseVault vault;
         RewardToken house;
-        PerpEngine engine;
+        IEngine engine;
     }
 
     /// @dev A second protocol instance over `OddUSDC`, sharing the fixture's oracle.
@@ -254,11 +257,23 @@ contract PullPaymentsTest is Base {
         uint256 nonce = vm.getNonce(address(this));
         address predictedVault = vm.computeCreateAddress(address(this), nonce);
         address predictedToken = vm.computeCreateAddress(address(this), nonce + 1);
-        address predictedEngine = vm.computeCreateAddress(address(this), nonce + 2);
+        address predictedEngine = vm.computeCreateAddress(address(this), nonce + 3); // nonce + 2: the extension
         s.vault = new HouseVault(IERC20(address(s.token)), predictedEngine, predictedToken, LOCK, EPOCH);
         s.house = new RewardToken(predictedVault, predictedEngine, STREAM);
-        s.engine = new PerpEngine(
-            IERC20(address(s.token)), oracle, IHouseVault(predictedVault), IRewardToken(predictedToken), owner
+        PerpEngineExt ext = new PerpEngineExt(
+            IERC20(address(s.token)), oracle, IHouseVault(predictedVault), IRewardToken(predictedToken)
+        );
+        s.engine = IEngine(
+            address(
+                new PerpEngine(
+                    IERC20(address(s.token)),
+                    oracle,
+                    IHouseVault(predictedVault),
+                    IRewardToken(predictedToken),
+                    owner,
+                    ext
+                )
+            )
         );
         vm.startPrank(owner);
         s.engine.addMarket(BTC, _cfg("BTC-USD", BTC, bytes32(0), false, 0));
@@ -284,7 +299,7 @@ contract PullPaymentsTest is Base {
         _setBtc(101_000);
 
         vm.expectEmit(address(s.engine));
-        emit PerpEngine.PaymentDeferred(alice, 1_095e6);
+        emit PerpEngineBase.PaymentDeferred(alice, 1_095e6);
         vm.prank(alice);
         s.engine.closePosition(BTC, 0, 0, _noBytes());
         assertEq(s.engine.positionCount(), 0);

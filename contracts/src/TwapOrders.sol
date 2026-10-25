@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {AgentAccount, AgentAccountFactory} from "./AgentAccount.sol";
-import {PerpEngine} from "./PerpEngine.sol";
+import {IEngine} from "./interfaces/IEngine.sol";
 import {LimitParams, OraclePrice, Position} from "./Types.sol";
 
 /// @title TwapOrders
@@ -56,7 +56,7 @@ contract TwapOrders {
     uint256 public constant SLICE_GAS = 500_000;
     uint256 private constant BPS = 10_000;
 
-    PerpEngine public immutable engine;
+    IEngine public immutable engine;
     AgentAccountFactory public immutable factory;
 
     mapping(bytes32 id => Twap) private _twaps;
@@ -88,7 +88,7 @@ contract TwapOrders {
     error NoTwap();
     error InsufficientGas();
 
-    constructor(PerpEngine engine_, AgentAccountFactory factory_) {
+    constructor(IEngine engine_, AgentAccountFactory factory_) {
         engine = engine_;
         factory = factory_;
     }

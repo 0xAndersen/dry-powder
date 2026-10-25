@@ -42,7 +42,7 @@ jobs:
           DEPLOYMENT: ../deployments/arc-testnet.json
           RUN_SECONDS: "20900"
           HEARTBEAT_SECONDS: ${{ vars.KEEPER_HEARTBEAT_SECONDS || '60' }}
-          MOVE_BPS: ${{ vars.KEEPER_MOVE_BPS || '15' }}
+          MOVE_BPS: ${{ vars.KEEPER_MOVE_BPS || '5' }}
           PORT: "8080"
         run: |
           npm ci

@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Base} from "./Base.t.sol";
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PerpEngineBase} from "../src/PerpEngineBase.sol";
 import {PositionMath} from "../src/libraries/PositionMath.sol";
 import {LimitParams, Market, OpenParams, Order, OrderType, Position, PositionView} from "../src/Types.sol";
 
@@ -47,7 +48,7 @@ contract PositionManagementTest is Base {
 
         uint256 before = _bal(alice);
         vm.expectEmit(true, true, true, true, address(engine));
-        emit PerpEngine.PositionIncreased(
+        emit PerpEngineBase.PositionIncreased(
             key, alice, BTC, true, 1_000e6, 10_000e6, 110_000e18, 5e6, 2_000e6, 20_000e6, entry
         );
         assertEq(_open(alice, BTC, true, 1_000e6, 10_000e6), key);
@@ -78,8 +79,7 @@ contract PositionManagementTest is Base {
         _open(alice, BTC, false, 1_000e6, 10_000e6); // at 100,000
         _setBtc(90_000);
         _open(alice, BTC, false, 1_000e6, 10_000e6);
-        uint256 units =
-            PositionMath.units(10_000e6, 100_000e18) + PositionMath.units(10_000e6, 90_000e18);
+        uint256 units = PositionMath.units(10_000e6, 100_000e18) + PositionMath.units(10_000e6, 90_000e18);
         assertEq(_pos(alice).entryPrice, Math.mulDiv(20_000e6, PositionMath.UNIT_PRECISION, units, Math.Rounding.Floor));
         bytes32 key = engine.positionKey(alice, BTC);
         (int256 pnl,,,) = lens.getPositionState(key, 90_000e18);
@@ -110,7 +110,7 @@ contract PositionManagementTest is Base {
     function test_increase_otherSideReverts() public {
         _open(alice, BTC, true, 1_000e6, 10_000e6);
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.PositionExists.selector);
+        vm.expectRevert(PerpEngineBase.PositionExists.selector);
         engine.openPosition(_params(BTC, false, 1_000e6, 10_000e6), _noBytes());
 
         // An opposite-side order stays resting: the keeper cannot fill it.
@@ -118,14 +118,14 @@ contract PositionManagementTest is Base {
         uint256 id = engine.createLimitOrder(_limit(BTC, false, 1_000e6, 10_000e6, 1));
         _setBtc(100_000);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.PositionExists.selector);
+        vm.expectRevert(PerpEngineBase.PositionExists.selector);
         engine.executeOrder(id, _noBytes());
     }
 
     function test_increase_leverageAppliesToTheAddition() public {
         _open(alice, BTC, true, 1_000e6, 10_000e6);
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.HighLeverageNeedsOrder.selector);
+        vm.expectRevert(PerpEngineBase.HighLeverageNeedsOrder.selector);
         engine.openPosition(_params(BTC, true, 100e6, 10_001e6), _noBytes()); // the addition alone is > 100x
         // Through an order the addition may go to the market's 1000x.
         _openByOrder(alice, true, 10e6, 10_000e6, 100_000);
@@ -142,7 +142,7 @@ contract PositionManagementTest is Base {
 
         _setBtc(99_000);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(breakout, _noBytes());
         _exec(dip);
         assertEq(_pos(alice).size, 15_000e6);
@@ -214,7 +214,7 @@ contract PositionManagementTest is Base {
         skip(2);
         _open(alice, BTC, true, 1_000e6, 10_000e6); // reads the price published 2 s ago
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.PriceNotAfterOpen.selector);
+        vm.expectRevert(PerpEngineBase.PriceNotAfterOpen.selector);
         engine.closePosition(BTC, 0, 0, _noBytes());
         _setBtc(100_000);
         _close(alice, BTC);
@@ -227,7 +227,7 @@ contract PositionManagementTest is Base {
         _open(alice, BTC, true, 100e6, 10_000e6); // 100x: the 10x-margin cap ($1,000) is a 10% move
         _setBtc(111_000);
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.ProfitCapReached.selector);
+        vm.expectRevert(PerpEngineBase.ProfitCapReached.selector);
         engine.openPosition(_params(BTC, true, 1_000e6, 1_000e6), _noBytes());
         _setBtc(109_000); // below the cap: allowed
         _open(alice, BTC, true, 1_000e6, 1_000e6);
@@ -244,7 +244,7 @@ contract PositionManagementTest is Base {
         uint256 before = _bal(alice);
         vm.expectEmit(true, true, true, true, address(engine));
         // 40%: margin 400, PnL +40, fee 2 (5 bp of 4,000), payout 438.
-        emit PerpEngine.PositionDecreased(key, alice, BTC, 101_000e18, 4_000e6, 400e6, 40e6, 2e6, 438e6);
+        emit PerpEngineBase.PositionDecreased(key, alice, BTC, 101_000e18, 4_000e6, 400e6, 40e6, 2e6, 438e6);
         vm.prank(alice);
         engine.closePosition(BTC, 4_000e6, 0, _noBytes());
         assertEq(_bal(alice) - before, 438e6);
@@ -273,8 +273,8 @@ contract PositionManagementTest is Base {
         uint256 dry = house.balanceOf(alice);
         vm.prank(alice);
         engine.closePosition(BTC, 5_000e6, 0, _noBytes());
-        // Half: loss 50, rebated as DRY like any loss.
-        assertEq(house.balanceOf(alice) - dry, 50e6 * 100e12);
+        // Half: loss 50 on 5,000 of notional, rebated as DRY like any loss (the 1% cap is exactly 50).
+        assertEq(house.balanceOf(alice) - dry, _rebateAfter(50e6, 0));
         assertEq(_pos(alice).margin, 500e6);
         _assertEngineSolvent();
     }
@@ -291,7 +291,7 @@ contract PositionManagementTest is Base {
         bytes32 key = _open(alice, BTC, true, 10e6, 1_000e6);
         _setBtc(100_000);
         vm.expectEmit(true, true, true, false, address(engine));
-        emit PerpEngine.PositionClosed(key, alice, BTC, 0, 0, 0, 0);
+        emit PerpEngineBase.PositionClosed(key, alice, BTC, 0, 0, 0, 0);
         vm.prank(alice);
         engine.closePosition(BTC, 600e6, 0, _noBytes()); // 4 USDC would remain; the minimum is 5
         assertEq(engine.positionCount(), 0);
@@ -332,7 +332,7 @@ contract PositionManagementTest is Base {
         _openByOrder(alice, true, 20e6, 10_000e6, 100_000); // 500x
         _setBtc(100_000);
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.HighLeverageNeedsOrder.selector);
+        vm.expectRevert(PerpEngineBase.HighLeverageNeedsOrder.selector);
         engine.closePosition(BTC, 5_000e6, 0, _noBytes());
 
         vm.prank(alice);
@@ -401,7 +401,7 @@ contract PositionManagementTest is Base {
         _open(alice, BTC, true, 100e6, 10_000e6); // 100x: liquidated at a 0.9% drop
         _setBtc(99_000);
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.PositionLiquidatable.selector);
+        vm.expectRevert(PerpEngineBase.PositionLiquidatable.selector);
         engine.closePosition(BTC, 5_000e6, 0, _noBytes());
     }
 
@@ -413,7 +413,7 @@ contract PositionManagementTest is Base {
         uint256 liqBefore = _view(alice).liquidationPrice;
         uint256 before = _bal(alice);
         vm.expectEmit(true, true, false, true, address(engine));
-        emit PerpEngine.MarginAdded(key, alice, 400e6, 500e6);
+        emit PerpEngineBase.MarginAdded(key, alice, 400e6, 500e6);
         vm.prank(alice);
         engine.addMargin(BTC, 400e6);
         assertEq(before - _bal(alice), 400e6);
@@ -431,7 +431,7 @@ contract PositionManagementTest is Base {
         _setBtc(99_850); // -0.15%: would have liquidated it
         bytes32[] memory keys = _keys(engine.positionKey(alice, BTC));
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.NothingToLiquidate.selector);
+        vm.expectRevert(PerpEngineBase.NothingToLiquidate.selector);
         engine.liquidateBatch(keys, _noBytes());
         assertEq(engine.positionCount(), 1);
         _assertEngineSolvent();
@@ -441,17 +441,17 @@ contract PositionManagementTest is Base {
         _open(alice, BTC, true, 1_000e6, 10_000e6);
         _setBtc(100_100);
         vm.startPrank(alice);
-        vm.expectRevert(PerpEngine.PositionInProfit.selector);
+        vm.expectRevert(PerpEngineBase.PositionInProfit.selector);
         engine.addMargin(BTC, 100e6);
-        vm.expectRevert(PerpEngine.PositionNotFound.selector);
+        vm.expectRevert(PerpEngineBase.PositionNotFound.selector);
         engine.addMargin(ETH, 100e6);
         vm.stopPrank();
 
         _setBtc(99_900);
         vm.startPrank(alice);
-        vm.expectRevert(PerpEngine.InvalidParam.selector);
+        vm.expectRevert(PerpEngineBase.InvalidParam.selector);
         engine.addMargin(BTC, 0);
-        vm.expectRevert(PerpEngine.LeverageOutOfRange.selector);
+        vm.expectRevert(PerpEngineBase.LeverageOutOfRange.selector);
         engine.addMargin(BTC, 9_000e6 + 1); // margin above size
         engine.addMargin(BTC, 9_000e6); // exactly 1x
         vm.stopPrank();
@@ -464,7 +464,7 @@ contract PositionManagementTest is Base {
         skip(2);
         vm.startPrank(alice);
         engine.addMargin(BTC, 180e6); // 50x: a direct close would now be allowed...
-        vm.expectRevert(PerpEngine.PriceNotAfterOpen.selector);
+        vm.expectRevert(PerpEngineBase.PriceNotAfterOpen.selector);
         engine.closePosition(BTC, 0, 0, _noBytes()); // ...but not against the price from before the top-up
         vm.stopPrank();
         _setBtc(99_990);
@@ -490,7 +490,7 @@ contract PositionManagementTest is Base {
         assertEq(uint8(engine.getOrder(id).orderType), uint8(OrderType.StopOpen));
         _setBtc(100_900);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(id, _noBytes());
         _setBtc(101_200);
         _exec(id);
@@ -505,7 +505,7 @@ contract PositionManagementTest is Base {
         uint256 id = engine.createLimitOrder(_stopEntry(BTC, false, 1_000e6, 10_000e6, 99_000e18));
         _setBtc(99_100);
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.TriggerNotMet.selector);
+        vm.expectRevert(PerpEngineBase.TriggerNotMet.selector);
         engine.executeOrder(id, _noBytes());
         _setBtc(99_000); // at the trigger
         _exec(id);
@@ -544,7 +544,7 @@ contract PositionManagementTest is Base {
     function test_stopEntry_isNotATriggerOrderType() public {
         _open(alice, BTC, true, 1_000e6, 10_000e6);
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.NotTriggerOrderType.selector);
+        vm.expectRevert(PerpEngineBase.NotTriggerOrderType.selector);
         engine.setTriggerOrder(BTC, OrderType.StopOpen, 101_000e18, 0);
     }
 
@@ -555,7 +555,7 @@ contract PositionManagementTest is Base {
         uint256 id = engine.createLimitOrder(l);
         _setBtc(102_500); // gapped through the take-profit: filling would close it at once
         vm.prank(keeper);
-        vm.expectRevert(PerpEngine.InvalidTrigger.selector);
+        vm.expectRevert(PerpEngineBase.InvalidTrigger.selector);
         engine.executeOrder(id, _noBytes());
         assertEq(engine.orderCount(), 1);
     }

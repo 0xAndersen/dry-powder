@@ -13,6 +13,9 @@ import {PythStructs} from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 import {EngineLens} from "../src/EngineLens.sol";
 import {HouseVault} from "../src/HouseVault.sol";
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {PerpEngineExt} from "../src/PerpEngineExt.sol";
+import {IEngine} from "../src/interfaces/IEngine.sol";
+import {PerpEngineBase} from "../src/PerpEngineBase.sol";
 import {PythOracle} from "../src/PythOracle.sol";
 import {RewardToken} from "../src/RewardToken.sol";
 import {IHouseVault} from "../src/interfaces/IHouseVault.sol";
@@ -233,7 +236,7 @@ contract PublisherOracleTest is Test {
         PythOracle oracle;
         HouseVault vault;
         RewardToken house;
-        PerpEngine engine;
+        IEngine engine;
         EngineLens lens;
     }
 
@@ -243,11 +246,23 @@ contract PublisherOracleTest is Test {
         uint256 nonce = vm.getNonce(address(this));
         address predictedVault = vm.computeCreateAddress(address(this), nonce);
         address predictedToken = vm.computeCreateAddress(address(this), nonce + 1);
-        address predictedEngine = vm.computeCreateAddress(address(this), nonce + 2);
+        address predictedEngine = vm.computeCreateAddress(address(this), nonce + 3); // nonce + 2: the extension
         s.vault = new HouseVault(IERC20(address(s.usdc)), predictedEngine, predictedToken, 1 hours, 1 days);
         s.house = new RewardToken(predictedVault, predictedEngine, 1 days);
-        s.engine = new PerpEngine(
-            IERC20(address(s.usdc)), s.oracle, IHouseVault(predictedVault), IRewardToken(predictedToken), owner
+        PerpEngineExt ext = new PerpEngineExt(
+            IERC20(address(s.usdc)), s.oracle, IHouseVault(predictedVault), IRewardToken(predictedToken)
+        );
+        s.engine = IEngine(
+            address(
+                new PerpEngine(
+                    IERC20(address(s.usdc)),
+                    s.oracle,
+                    IHouseVault(predictedVault),
+                    IRewardToken(predictedToken),
+                    owner,
+                    ext
+                )
+            )
         );
         s.lens = new EngineLens(s.engine);
         MarketConfig memory cfg = MarketConfig({
@@ -292,7 +307,7 @@ contract PublisherOracleTest is Test {
         (PriceStatus status,) = s.oracle.peek(BTC, bytes32(0), false, 10, 50);
         assertEq(uint8(status), uint8(PriceStatus.Unavailable));
         vm.prank(alice);
-        vm.expectRevert(PerpEngine.OraclePriceUnavailable.selector);
+        vm.expectRevert(PerpEngineBase.OraclePriceUnavailable.selector);
         s.engine.openPosition(_params(BTC, true, 1_000e6, 10_000e6), new bytes[](0));
 
         // Open with a signed update passed as `priceUpdate`. The oracle is free; any value sent comes back.
