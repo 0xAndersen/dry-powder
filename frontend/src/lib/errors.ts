@@ -182,3 +182,23 @@ export function humanizeError(error: unknown): string {
   }
   return "Something went wrong. Try again.";
 }
+
+// ───────────── Strategies and AgentRegistry (one block: their messages and decodable errors) ─────────────
+// Names these share with the contracts above (NotOwner, NotAllowed, AgentPolicyExceeded, InsufficientGas, and
+// AgentAccount v3.2's DailyBudgetExceeded) keep the messages above.
+import { agentRegistryAbi as registryErrorsAbi, strategiesAbi as strategiesErrorsAbi } from "./abi";
+
+Object.assign(MESSAGES, {
+  // Strategies
+  InvalidStrategy: "That strategy is not valid: check the interval (1 minute to 1 day), the slippage bound (up to 5%), the leverage, the bands and the stop and target.",
+  NotApproved: "The account does not let strategies place this strategy's orders yet: approve the Strategies contract with at least this leverage and margin per order.",
+  MarketTaken: "This account already runs a strategy in this market. Stop that one first.",
+  NoStrategy: "That strategy is not running any more: it may already be paused or stopped.",
+  // AgentRegistry
+  InvalidAgent: "A listing needs a name (up to 48 bytes) and a kind (up to 32); the description takes up to 280 bytes and the link up to 256.",
+  AlreadyRegistered: "This account is already listed. Edit the listing instead.",
+  NotRegistered: "This account is not listed in the agent registry.",
+} satisfies Record<string, string>);
+for (const item of [...strategiesErrorsAbi, ...registryErrorsAbi]) {
+  if (item.type === "error") (errorItems as unknown as Abi[number][]).push(item as Abi[number]);
+}
