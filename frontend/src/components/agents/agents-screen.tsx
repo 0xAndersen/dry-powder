@@ -1,17 +1,24 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useConfig, useConnect, useReadContracts, useSwitchChain } from "wagmi";
 import { simulateContract, writeContract } from "wagmi/actions";
-import { getAddress, isAddress, type Address } from "viem";
+import { getAddress, isAddress, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { AppLink } from "@/components/app-link";
+import { KeyBudget } from "@/components/agents/key-budget";
+import { AgentDirectory, ListingCard } from "@/components/agents/registry";
+import { StrategyList } from "@/components/agents/strategy-list";
+import { AgentStudio, type StudioPrefill } from "@/components/agents/studio";
 import { useApp } from "@/components/providers";
 import { TxStatus } from "@/components/tx-status";
+import { useAccountStrategies } from "@/hooks/use-strategies";
 import { useTx } from "@/hooks/use-tx";
 import { useWallet } from "@/hooks/use-wallet";
 import { agentAccountAbi, agentAccountFactoryAbi, rewardTokenAbi, testUSDCAbi } from "@/lib/abi";
 import { USDC_DECIMALS, fmtDateTime, fmtToken, fmtUsdc, parseAmount, shortAddress, toInputString } from "@/lib/format";
+import { kindOf, listingKindFor } from "@/lib/strategies";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 const DEPLOYMENT_URL = "https://raw.githubusercontent.com/0xAndersen/dry-powder/main/deployments/arc-testnet.json";
@@ -77,6 +84,21 @@ export function AgentsScreen() {
     query: { enabled: !!factory && !!owner, refetchInterval: 5_000 },
   });
   const account = lookup.data?.[0] && lookup.data[0] !== ZERO ? (lookup.data[0] as Address) : undefined;
+  const accountKnown = !!owner && lookup.data !== undefined;
+  const strategies = useAccountStrategies(account);
+  const firstLive = strategies.live[0];
+  const suggestedKind = firstLive ? listingKindFor(kindOf(firstLive.config.kind)) : null;
+
+  // "Copy this agent" from the directory, or a link with ?copy=0x…&market=SYMBOL.
+  const searchParams = useSearchParams();
+  const [prefill, setPrefill] = useState<StudioPrefill | null>(() => {
+    const raw = searchParams.get("copy");
+    return raw && isAddress(raw, { strict: false }) ? { leader: getAddress(raw), marketId: searchParams.get("market"), nonce: 1 } : null;
+  });
+  const copyAgent = (leader: Address, marketId: Hex | null) => {
+    setPrefill({ leader, marketId, nonce: Date.now() });
+    document.getElementById("studio")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const create = () => {
     if (!factory || !owner) return;
@@ -90,6 +112,36 @@ export function AgentsScreen() {
     });
   };
 
+  const accountPanel = !factory ? (
+    <div className="notice" data-tone="warn" role="status">
+      This deployment has no agent account factory configured (AGENT_FACTORY_ADDRESS). Trading is unaffected.
+    </div>
+  ) : !wallet.ready ? (
+    <section className="panel flex flex-col items-start gap-3 p-4">
+      <p className="text-muted">Connect the wallet that will own the agent account.</p>
+      <ConnectButton />
+    </section>
+  ) : lookup.data === undefined ? (
+    <section className="panel p-4 text-muted">{lookup.isError ? "Could not read the agent account factory." : "Looking up your agent account…"}</section>
+  ) : !account ? (
+    <section className="panel flex flex-col items-start gap-3 p-4" data-testid="agents-create">
+      <h2 className="panel-title">Create your agent account</h2>
+      <p className="max-w-[62ch] text-[0.8125rem] text-muted">
+        One account per wallet, at a fixed address. Creating it costs a little gas and nothing else. Launching a strategy creates it for you.
+      </p>
+      <button type="button" className="btn btn-primary btn-lg" disabled={tx.busy} onClick={create} data-testid="agents-create-button">
+        {tx.busy ? <span className="spinner" aria-hidden="true" /> : null}
+        Create agent account
+      </button>
+      <TxStatus state={tx.state} onDismiss={tx.reset} className="w-full" />
+    </section>
+  ) : (
+    <>
+      <FundsCard account={account} owner={owner!} />
+      <AgentsCard account={account} owner={owner!} />
+    </>
+  );
+
   return (
     <div className="flex flex-col gap-2">
       <div className="px-1 pb-1 pt-3 sm:pt-4">
@@ -99,35 +151,37 @@ export function AgentsScreen() {
           with a policy: how long, how much leverage, how much margin per trade. Agents can open, close and manage orders from
           it. Every payout returns to the account, and only your wallet can move money out.
         </p>
+        <nav className="mt-3 flex flex-wrap gap-1.5" aria-label="On this page">
+          <a className="chip" href="#studio">
+            Strategy studio
+          </a>
+          {account && strategies.rows.length > 0 ? (
+            <a className="chip" href="#running">
+              Running <span className="num ml-1 text-faint">{strategies.live.length}</span>
+            </a>
+          ) : null}
+          {cfg.agentRegistry ? (
+            <a className="chip" href="#directory">
+              Agent directory
+            </a>
+          ) : null}
+          <a className="chip" href="#account">
+            Account and keys
+          </a>
+        </nav>
       </div>
 
-      {!factory ? (
-        <div className="notice" data-tone="warn" role="status">
-          This deployment has no agent account factory configured (AGENT_FACTORY_ADDRESS). Trading is unaffected.
+      <div className="grid items-start gap-2 lg:grid-cols-[minmax(0,1fr)_22rem] 2xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div className="flex min-w-0 flex-col gap-2">
+          <AgentStudio account={account} accountKnown={accountKnown} prefill={prefill} />
+          {account ? <StrategyList account={account} owner={owner} /> : null}
+          <AgentDirectory me={account} onCopy={copyAgent} />
         </div>
-      ) : !wallet.ready ? (
-        <section className="panel flex flex-col items-start gap-3 p-4">
-          <p className="text-muted">Connect the wallet that will own the agent account.</p>
-          <ConnectButton />
-        </section>
-      ) : lookup.data === undefined ? (
-        <section className="panel p-4 text-muted">{lookup.isError ? "Could not read the agent account factory." : "Looking up your agent account…"}</section>
-      ) : !account ? (
-        <section className="panel flex flex-col items-start gap-3 p-4" data-testid="agents-create">
-          <h2 className="panel-title">Create your agent account</h2>
-          <p className="max-w-[62ch] text-[0.8125rem] text-muted">One account per wallet, at a fixed address. Creating it costs a little gas and nothing else.</p>
-          <button type="button" className="btn btn-primary btn-lg" disabled={tx.busy} onClick={create} data-testid="agents-create-button">
-            {tx.busy ? <span className="spinner" aria-hidden="true" /> : null}
-            Create agent account
-          </button>
-          <TxStatus state={tx.state} onDismiss={tx.reset} className="w-full" />
-        </section>
-      ) : (
-        <div className="grid gap-2 lg:grid-cols-2">
-          <FundsCard account={account} owner={owner!} />
-          <AgentsCard account={account} owner={owner!} />
-        </div>
-      )}
+        <aside className="flex min-w-0 scroll-mt-16 flex-col gap-2" id="account" aria-label="Account and keys">
+          {accountPanel}
+          {account ? <ListingCard account={account} owner={owner} suggestedKind={suggestedKind} /> : null}
+        </aside>
+      </div>
     </div>
   );
 }
@@ -282,6 +336,12 @@ function AgentsCard({ account, owner }: { account: Address; owner: Address }) {
     contracts: known.list.map((a) => ({ address: account, abi: agentAccountAbi, functionName: "agents", args: [a], chainId: cfg.chainId }) as const),
     query: { enabled: known.list.length > 0, refetchInterval: 5_000 },
   });
+  // Each key's daily margin budget (`setAgentBudget`), edited per row.
+  const budgets = useReadContracts({
+    allowFailure: false,
+    contracts: known.list.map((a) => ({ address: account, abi: agentAccountAbi, functionName: "budgets", args: [a], chainId: cfg.chainId }) as const),
+    query: { enabled: known.list.length > 0, refetchInterval: 10_000 },
+  });
 
   const agent = isAddress(agentText.trim(), { strict: false }) ? getAddress(agentText.trim()) : null;
   const levN = Number(lev);
@@ -382,6 +442,7 @@ function AgentsCard({ account, owner }: { account: Address; owner: Address }) {
                     Revoke
                   </button>
                 ) : null}
+                {active ? <KeyBudget account={account} owner={owner} agent={a} budget={budgets.data?.[i] as readonly [bigint, number, bigint] | undefined} onDone={() => void budgets.refetch()} /> : null}
               </li>
             );
           })}
@@ -406,8 +467,8 @@ function AgentsCard({ account, owner }: { account: Address; owner: Address }) {
             agent now. It can only trade within this policy, never withdraw.
           </div>
         ) : null}
-        <div className="grid grid-cols-3 gap-2">
-          <div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="col-span-2">
             <label className="field-label" htmlFor={`${id}-e`}>
               Expires in
             </label>

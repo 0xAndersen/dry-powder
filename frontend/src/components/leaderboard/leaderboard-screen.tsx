@@ -1,10 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { AgentBadge } from "@/components/agents/agent-badge";
 import { FollowButton, TraderName } from "@/components/social/trader-name";
 import { useApp } from "@/components/providers";
 import { Tip } from "@/components/tip";
 import { useLocalStore } from "@/hooks/use-local-store";
+import { useAgentBadges } from "@/hooks/use-agent-badges";
 import { useChainNow } from "@/hooks/use-market-data";
 import { useVenueStats } from "@/hooks/use-venue-stats";
 import { useAccountView, useWallet } from "@/hooks/use-wallet";
@@ -111,6 +113,8 @@ export function LeaderboardScreen() {
   const me = (view.watching ? undefined : view.address)?.toLowerCase() ?? wallet.address?.toLowerCase();
   const myRank = me ? ranked.findIndex((r) => r.address.toLowerCase() === me) : -1;
   const shown = (followingOnly ? ranked.filter((r) => isFollowing(list, r.address)) : ranked).slice(0, ROWS);
+  // Listed agents and agent accounts among the rows shown, read in one batch.
+  const badges = useAgentBadges(shown.map((r) => r.address));
 
   const coverage =
     stats.source === "indexer"
@@ -212,6 +216,7 @@ export function LeaderboardScreen() {
                           <span className={`num w-8 ${rank <= 3 ? "font-semibold text-text" : "text-faint"}`}>#{rank}</span>
                           <FollowButton address={r.address} />
                           <TraderName address={r.address} />
+                          <AgentBadge info={badges.get(r.address.toLowerCase())} />
                           {r.sum.liquidations > 0 ? <span className="text-2xs text-short">{r.sum.liquidations} liq</span> : null}
                         </span>
                       </td>

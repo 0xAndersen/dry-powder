@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { getAddress, isAddress, type Address } from "viem";
 import { AppLink } from "@/components/app-link";
+import { AgentBadgeFor } from "@/components/agents/agent-badge";
 import { PnlCalendar } from "@/components/portfolio/pnl-calendar";
 import { PnlCurve } from "@/components/portfolio/pnl-curve";
 import { Journal } from "@/components/portfolio/journal";
@@ -150,6 +151,7 @@ function Profile({ address }: { address: Address }) {
                 You
               </span>
             ) : null}
+            <AgentBadgeFor address={address} />
           </h1>
           <p className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted">
             <span className="num break-all">{address}</span>
