@@ -13,6 +13,10 @@
   "scripts": {
     "start": "node src/main.mjs",
     "index": "node src/indexer.mjs",
+    "relay": "node src/relay.mjs",
+    "push": "node src/push.mjs",
+    "push:keys": "node src/push.mjs keys",
+    "prizes": "node ../ops/scripts/prizes.mjs",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {

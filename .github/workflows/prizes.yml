@@ -1,0 +1,112 @@
+name: Season prizes (Arc Testnet)
+
+# Season prizes (roadmap 81), run by hand once a season has ended:
+#   1. builds the season's results from the published stats (status/stats.json on the status branch): the top traders
+#      by net PnL, the prize table's amounts, the Merkle root, and each winner's proof;
+#   2. funds the season's pool with test USDC and publishes the root on the PrizeDistributor (the deployer key owns it);
+#   3. commits the results to the "prizes" branch (prizes/index.json and prizes/season-N.json), where the app's
+#      Season prizes card reads them to show the pool and claim.
+# Publishing is idempotent: a run for a season already published with the same root only re-commits the files.
+# The logic is ops/scripts/prizes.mjs (keeper/src/prizes.mjs); see its header to run the same steps locally.
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Season number, or 'last' for the last finished season"
+        default: last
+      table:
+        description: "Prize per rank in whole tUSDC, as a JSON array"
+        default: "[500, 300, 150, 100, 50]"
+      deadline_days:
+        description: "Days the prizes stay claimable"
+        default: "14"
+      min_trades:
+        description: "Closed trades a winner needs in the season"
+        default: "1"
+      exclude_agents:
+        description: "Leave accounts listed in the AgentRegistry out of the prizes"
+        type: boolean
+        default: false
+      mint:
+        description: "Mint the tUSDC the pool needs (test collateral only)"
+        type: boolean
+        default: true
+      dry_run:
+        description: "Only build and show the results: nothing is published or committed"
+        type: boolean
+        default: false
+
+concurrency:
+  group: prizes-arc-testnet
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  prizes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        working-directory: keeper
+        run: npm ci
+      - name: Published stats and earlier results
+        run: |
+          git fetch -q origin status
+          git show FETCH_HEAD:status/stats.json > "$RUNNER_TEMP/stats.json"
+          dir="$RUNNER_TEMP/prizes-branch"
+          if git fetch -q origin prizes 2>/dev/null; then
+            git worktree add -q --detach "$dir" FETCH_HEAD
+          else
+            git worktree add -q --detach "$dir"
+            (cd "$dir" && git checkout -q --orphan prizes && git rm -rq --ignore-unmatch . && git clean -fdq)
+          fi
+          echo "PRIZES_DIR=$dir" >> "$GITHUB_ENV"
+      - name: Build the results
+        id: build
+        env:
+          SEASON: ${{ inputs.season }}
+          TABLE: ${{ inputs.table }}
+          DEADLINE_DAYS: ${{ inputs.deadline_days }}
+          MIN_TRADES: ${{ inputs.min_trades }}
+          EXCLUDE_AGENTS: ${{ inputs.exclude_agents }}
+        run: |
+          extra=()
+          if test "$EXCLUDE_AGENTS" = "true"; then extra+=(--exclude-agents); fi
+          node ops/scripts/prizes.mjs build --stats "$RUNNER_TEMP/stats.json" --season "$SEASON" --table "$TABLE" \
+            --deadline-days "$DEADLINE_DAYS" --min-trades "$MIN_TRADES" --out "$PRIZES_DIR/prizes" "${extra[@]}"
+      - name: Results (dry run)
+        if: inputs.dry_run
+        run: cat "$PRIZES_DIR/prizes/${{ steps.build.outputs.file }}"
+      - name: Fund the season and publish the root
+        if: ${{ !inputs.dry_run }}
+        env:
+          DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}
+          MINT: ${{ inputs.mint }}
+        run: |
+          extra=()
+          if test "$MINT" = "true"; then extra+=(--mint); fi
+          node ops/scripts/prizes.mjs publish --results "$PRIZES_DIR/prizes/${{ steps.build.outputs.file }}" --fund "${extra[@]}"
+      - name: Commit the results to the prizes branch
+        if: ${{ !inputs.dry_run }}
+        working-directory: ${{ env.PRIZES_DIR }}
+        env:
+          SEASON_NUMBER: ${{ steps.build.outputs.season }}
+        run: |
+          git config user.name "dry-powder-prizes"
+          git config user.email "actions@users.noreply.github.com"
+          git add prizes
+          if git diff --cached --quiet; then echo "Nothing new to commit."; exit 0; fi
+          git commit -qm "Season $SEASON_NUMBER prizes"
+          git push -q origin HEAD:refs/heads/prizes
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prizes-season-${{ steps.build.outputs.season }}
+          path: ${{ env.PRIZES_DIR }}/prizes/

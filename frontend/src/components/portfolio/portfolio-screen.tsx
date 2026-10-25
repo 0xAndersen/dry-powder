@@ -7,6 +7,7 @@ import { Challenges } from "@/components/portfolio/challenges";
 import { PnlCalendar } from "@/components/portfolio/pnl-calendar";
 import { PnlCurve } from "@/components/portfolio/pnl-curve";
 import { Journal } from "@/components/portfolio/journal";
+import { PrizeCard } from "@/components/prizes/prize-card";
 import { useApp } from "@/components/providers";
 import { ShareSheet } from "@/components/social/share-sheet";
 import { Tip } from "@/components/tip";
@@ -393,6 +394,8 @@ export function PortfolioScreen() {
           )}
         </section>
       </div>
+
+      <PrizeCard address={address} watching={view.watching} />
 
       {!view.watching ? (
         <Challenges
