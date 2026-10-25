@@ -7,6 +7,9 @@
 // keccak256(seed + "/publisher/0") and keccak256(seed + "/keeper/0")), or DEPLOYER_KEY alone (the seed then
 // derives from it, as ops/run-testnet.mjs does). FUNDER_KEY (default: DEPLOYER_KEY) tops the two up with
 // native USDC for gas when they run low.
+// KEEPER_MODE=executor runs a keeper only: no publisher key, no price signing, no exchange feeds; it fills,
+// liquidates, settles and sweeps against the prices already on-chain. That is how a second operator, anyone, runs
+// one beside the venue's (only KEEPER_KEY, or SEED, is needed, plus gas).
 // RUN_SECONDS stops it cleanly after that long (for scheduled runners); otherwise it runs until killed.
 // PORT serves GET /health (JSON) for uptime checks.
 import { createHash } from "node:crypto";
@@ -99,9 +102,10 @@ const hasMc3 = ((await probe.getCode({ address: MC3 }).catch(() => undefined)) ?
 const pollingInterval = num("POLL_MS", a.chainId === 31337 ? 150 : 1_000);
 const pub = createPublicClient({ chain, transport, pollingInterval, ...(hasMc3 ? { batch: { multicall: { wait: 50 } } } : {}) });
 const wallet = (pk) => createWalletClient({ chain, transport, account: privateKeyToAccount(pk) });
-const publisher = wallet(key("PUBLISHER_KEY", "publisher"));
+const executorOnly = String(env.KEEPER_MODE || "").toLowerCase() === "executor";
+const publisher = executorOnly ? null : wallet(key("PUBLISHER_KEY", "publisher"));
 const keeper = wallet(key("KEEPER_KEY", "keeper"));
-const funder = env.FUNDER_KEY || env.DEPLOYER_KEY ? wallet(env.FUNDER_KEY || env.DEPLOYER_KEY) : null;
+const funder = !executorOnly && (env.FUNDER_KEY || env.DEPLOYER_KEY) ? wallet(env.FUNDER_KEY || env.DEPLOYER_KEY) : null;
 
 const opts = {
   heartbeatSeconds: num("HEARTBEAT_SECONDS", 60),
@@ -160,8 +164,8 @@ const sponsor = sponsorOn
   : null;
 const actual = await pub.getChainId().catch((e) => { throw fatal(`no RPC reachable (${rpcUrls.join(", ")}): ${e?.shortMessage ?? e?.message ?? e}`); });
 if (actual !== a.chainId) throw fatal(`RPC is chain ${actual}, expected ${a.chainId}`);
-annotate("notice", `keeper started: publisher ${publisher.account.address}, keeper ${keeper.account.address}`);
-log("start", JSON.stringify({ multicall: hasMc3, sources: sourceNames, gasSponsor: Boolean(sponsor), rpcUrls, chainId: a.chainId, engine: a.engine, oracle: a.oracle, publisher: publisher.account.address, keeper: keeper.account.address, funder: funder?.account.address ?? null, opts }));
+annotate("notice", `keeper started (${executorOnly ? "executor only" : "publisher + keeper"}): publisher ${publisher?.account.address ?? "none"}, keeper ${keeper.account.address}`);
+log("start", JSON.stringify({ multicall: hasMc3, sources: sourceNames, gasSponsor: Boolean(sponsor), rpcUrls, chainId: a.chainId, engine: a.engine, oracle: a.oracle, mode: executorOnly ? "executor" : "full", publisher: publisher?.account.address ?? null, keeper: keeper.account.address, funder: funder?.account.address ?? null, opts }));
 
 let last = { at: 0 };
 let stopping = false;

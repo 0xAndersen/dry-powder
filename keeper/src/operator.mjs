@@ -9,6 +9,10 @@
 //
 // It holds no state that matters: everything is re-read from the chain each tick, so it can be restarted,
 // moved between hosts or run on a schedule.
+//
+// Without a publisher (KEEPER_MODE=executor) it is a keeper anyone can run: it signs no prices and acts only on
+// what is already on-chain, earning the execution fees and liquidation rewards it collects. Running a second one
+// beside the venue's means fills never depend on one operator (roadmap 10).
 import { formatEther, parseEther, toFunctionSelector } from "viem";
 import * as ABIS from "./abi.mjs";
 import { engineLensAbi, houseVaultAbi, perpEngineAbi, publisherOracleAbi } from "./abi.mjs";
@@ -26,7 +30,7 @@ const BENIGN = new Set([
   "PositionExists", "OraclePriceStale", "InvalidTrigger", "EnforcedPause", "MarketDisabled", "LeverageOutOfRange",
   "MarginTooLow", "MarketOiCapExceeded", "VaultOiCapExceeded", "MarketExpired", "PositionNotFound", "EpochNotOver",
   "MarketAlreadySettled", "PriceBeforeExpiry", "MarketNotExpired", "MarketNotSettled", "OracleConfidenceTooWide",
-  "OraclePriceUnavailable",
+  "OraclePriceUnavailable", "OrderHasExpired", "NothingToCancel", "OrdersOnly",
 ]);
 
 // Selector -> error name, for reverts viem reports only by signature.
@@ -45,14 +49,24 @@ const revertName = (e) => {
   return m ? m[1] || m[2] : null;
 };
 
-/** Mirrors PerpEngine trigger conditions (0 LimitOpen, 1 TakeProfit, 2 StopLoss, 3 Close, 4 StopOpen). */
-export function triggered(type, isLong, trigger, px) {
-  if (type === 0) return isLong ? px.ask <= trigger : px.bid >= trigger;
-  if (type === 4) return isLong ? px.ask >= trigger : px.bid <= trigger;
+/** Mirrors PerpEngine trigger conditions (0 LimitOpen, 1 TakeProfit, 2 StopLoss, 3 Close, 4 StopOpen). Opens and
+ *  closes compare the price they fill at: the ask for a buy and the bid for a sell, or the mid in an Upside (Turbo)
+ *  market (`atMid`); take-profits and stops always compare the mid. */
+export function triggered(type, isLong, trigger, px, atMid = false) {
+  const buy = atMid ? px.mid : px.ask;
+  const sell = atMid ? px.mid : px.bid;
+  if (type === 0) return isLong ? buy <= trigger : sell >= trigger;
+  if (type === 4) return isLong ? buy >= trigger : sell <= trigger;
   if (type === 1) return isLong ? px.mid >= trigger : px.mid <= trigger;
   if (type === 2) return isLong ? px.mid <= trigger : px.mid >= trigger;
-  return trigger === 0n || (isLong ? px.bid >= trigger : px.ask <= trigger);
+  return trigger === 0n || (isLong ? sell >= trigger : buy <= trigger);
 }
+
+/** True for a market in the Upside fee mode (Market.feeMode 1): fills at the mid. */
+export const fillsAtMid = (m) => Number(m?.market?.feeMode ?? 0) === 1;
+
+/** True when order `o` can no longer execute at chain time `now` (Order.expiresAt, 0 = never). */
+export const isExpired = (o, now) => Number(o.expiresAt ?? 0n) !== 0 && now > Number(o.expiresAt);
 /** Lens liquidation price (PositionMath.liquidationPrice): a long at or below it, a short at or above it.
  *  Zero means a long no price can liquidate, or a short every price does; both fall out of the comparison. */
 export const isLiquidatable = (isLong, lp, mid) => (isLong ? mid <= lp : mid >= lp);
@@ -72,8 +86,8 @@ export const trailStepTooSmall = (current, next, stepBps = 10) => {
 };
 
 /** True when an open order would fill at or through its take-profit or stop-loss (PerpEngine._validateBrackets). */
-export function gapsBracket(o, px) {
-  const fill = o.isLong ? px.ask : px.bid;
+export function gapsBracket(o, px, atMid = false) {
+  const fill = atMid ? px.mid : o.isLong ? px.ask : px.bid;
   if (o.takeProfit !== 0n && (o.isLong ? o.takeProfit <= fill : o.takeProfit >= fill)) return true;
   if (o.stopLoss !== 0n && (o.isLong ? o.stopLoss >= fill : o.stopLoss <= fill)) return true;
   return false;
@@ -255,6 +269,7 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
    *  liquidations; add-on pokes (TWAP slices, strategies) read the stored price and force their feeds when it is
    *  old. */
   async function publish(chainNow, oc, force = null) {
+    if (!publisher) return false;
     const publishTime = Math.max(lastPublish + 1, Math.min(Math.floor(Date.now() / 1000), chainNow + 1));
     const updates = [];
     for (const f of FEEDS) {
@@ -284,6 +299,8 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
     const cache = new Map();
     return async (f) => {
       if (cache.has(f.key)) return cache.get(f.key);
+      // An executor signs nothing: it acts on the prices already on-chain.
+      if (!publisher) return null;
       const q = kraken.quote(f);
       let out = null;
       if (q) {
@@ -382,14 +399,20 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
         if (r) stats.settledPositions += batch.length;
       }
     }
-    // 3. Orders whose condition holds at the price the fill will use.
+    // 3. Orders whose condition holds at the price the fill will use. Expired ones are swept instead (3e).
     const liqSet = new Set(liq.map((x) => x.key.toLowerCase()));
     const posBy = new Map(view.positions.map((v) => [v.position.trader.toLowerCase() + v.position.priceId.toLowerCase(), v]));
+    const expired = [];
     for (const o of view.orders) {
       const id = `o:${o.id}`;
+      if (isExpired(o, chainNow)) {
+        expired.push(o.id);
+        continue;
+      }
       if (!ready(id)) continue;
       const m = byId.get(o.priceId.toLowerCase());
       if (!m) continue;
+      const atMid = fillsAtMid(m);
       const pos = posBy.get(o.trader.toLowerCase() + o.priceId.toLowerCase());
       // Open orders (limit, stop-entry) add to a position on the same side; the engine refuses the other side.
       const opens = o.orderType === 0 || o.orderType === 4;
@@ -403,9 +426,9 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
         if (p.pt < Number(o.createdAt)) continue;
         if (pos && p.pt <= Number(pos.position.openedAt)) continue;
       }
-      if (!triggered(o.orderType, pos && !opens ? pos.position.isLong : o.isLong, o.triggerPrice, p.px)) continue;
+      if (!triggered(o.orderType, pos && !opens ? pos.position.isLong : o.isLong, o.triggerPrice, p.px, atMid)) continue;
       // A fill through one of its own brackets would close at once: the engine leaves such an order resting.
-      if (opens && gapsBracket(o, p.px)) continue;
+      if (opens && gapsBracket(o, p.px, atMid)) continue;
       const r = await send(keeper, engine, perpEngineAbi, "executeOrder", [o.id, p.upd], id);
       if (r) stats.executed++;
     }
@@ -435,6 +458,13 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
         count(stats.errors, "strategies");
         stats.lastError = `strategies: ${String(e?.shortMessage ?? e?.message ?? e).split("\n")[0].slice(0, 240)}`;
       }
+    }
+    // 3e. Expired orders: anyone may remove them and earns each one's execution fee (the rest of its escrow goes
+    // back to its trader).
+    for (let i = 0; i < expired.length; i += opts.batchSize) {
+      const batch = expired.slice(i, i + opts.batchSize);
+      const r = await send(keeper, engine, perpEngineAbi, "cancelExpired", [batch], `exp:${batch[0]}`);
+      if (r) stats.expired = (stats.expired ?? 0) + batch.length;
     }
     // 4. Vault epoch.
     if (!opts.settleEpochs) return;
@@ -613,7 +643,7 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
     lastTopUp = Date.now();
     const min = parseEther(String(opts.minGas));
     const amount = parseEther(String(opts.topUp));
-    for (const w of [publisher, keeper]) {
+    for (const w of [publisher, keeper].filter(Boolean)) {
       if (w.account.address.toLowerCase() === funder.account.address.toLowerCase()) continue;
       const bal = await pub.getBalance({ address: w.account.address });
       if (bal >= min) continue;
@@ -631,13 +661,16 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
 
   async function tick() {
     stats.ticks++;
-    try {
-      await kraken.poll();
-      krakenOk = true;
-    } catch (e) {
-      krakenOk = false;
-      count(stats.errors, "kraken");
-      stats.lastError = `kraken: ${String(e?.message ?? e)}`;
+    // An executor signs no prices, so it needs no exchange feed.
+    if (publisher) {
+      try {
+        await kraken.poll();
+        krakenOk = true;
+      } catch (e) {
+        krakenOk = false;
+        count(stats.errors, "kraken");
+        stats.lastError = `kraken: ${String(e?.message ?? e)}`;
+      }
     }
     await topUp();
     if (stats.ticks % 100 === 1) {
@@ -646,7 +679,7 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
     }
     const block = await pub.getBlock();
     const chainNow = Number(block.timestamp);
-    if (krakenOk) await publish(chainNow, await onchainFeeds());
+    if (krakenOk && publisher) await publish(chainNow, await onchainFeeds());
     const view = await readAll();
     await keep(chainNow, view);
     return { chainNow, positions: view.positions.length, orders: view.orders.length };

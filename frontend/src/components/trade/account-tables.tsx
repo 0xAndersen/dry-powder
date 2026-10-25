@@ -18,7 +18,7 @@ import { useTrailing, type TrailingState } from "@/hooks/use-trailing";
 import { useTwaps } from "@/hooks/use-twap";
 import { useTx, type TxHandle } from "@/hooks/use-tx";
 import { useWallet, type AccountView } from "@/hooks/use-wallet";
-import { ORDER_TYPE, TEST_MINT_AMOUNT, submitAddMargin, submitBatch, submitCancel, submitTestMint, submitTrigger, type BatchCall } from "@/lib/actions";
+import { ORDER_TYPE, TEST_MINT_AMOUNT, submitAddMargin, submitBatch, submitCancel, submitRemoveMargin, submitTestMint, submitTrigger, type BatchCall } from "@/lib/actions";
 import { UserFacingError } from "@/lib/errors";
 import { isOpenOrder, orderTypeLabel } from "@/lib/events";
 import { closeFlow } from "@/lib/flows";
@@ -267,9 +267,14 @@ function PositionRow({
     setSheet(null);
     run((api) => closeFlow(withCtx(api), { instrument, view, reference: price?.reference ?? null, slippageBps: settings.slippageBps, executionFee: params.executionFee, balance, size }));
   };
-  const addMargin = (amount: bigint) => {
+  const addMargin = (amount: bigint, mode: "add" | "remove" = "add") => {
     setSheet(null);
     run(async (api) => {
+      if (mode === "remove") {
+        if (!instrument) throw new UserFacingError("This market is not loaded yet.");
+        await submitRemoveMargin(withCtx(api), instrument, amount, `Take margin out of ${symbol}`);
+        return `${fmtUsdc(amount)} ${cfg.collateralSymbol} taken out of the ${symbol} margin.`;
+      }
       await submitAddMargin(withCtx(api), pos.priceId, amount, `Add margin to ${symbol}`);
       return `${fmtUsdc(amount)} ${cfg.collateralSymbol} added to the ${symbol} margin.`;
     });
@@ -405,7 +410,7 @@ function PositionRow({
             </span>
           ) : (
             <span className="flex flex-wrap items-center justify-end gap-1.5">
-              <button type="button" className="btn btn-sm" disabled={tx.busy || !instrument} onClick={() => setSheet("margin")} data-testid="add-margin" title="Add margin: lower leverage, liquidation further away">
+              <button type="button" className="btn btn-sm" disabled={tx.busy || !instrument} onClick={() => setSheet("margin")} data-testid="add-margin" title="Add margin (lower leverage) or take some out (higher leverage)">
                 Margin
               </button>
               <button type="button" className="btn btn-sm" disabled={tx.busy || !instrument} onClick={() => setSheet("close")} data-testid="close-position">
@@ -600,6 +605,13 @@ function OrdersTable({
                 <td>
                   <span className="num">#{row.id.toString()}</span> {orderTypeLabel(o.orderType)}
                   <span className="num block text-xs text-faint">{fmtAge(Math.max(0, chainNow - Number(o.createdAt)))} ago</span>
+                  {Number((o as { expiresAt?: bigint }).expiresAt ?? 0n) !== 0 ? (
+                    <span className="num block text-xs text-faint" data-testid="order-expiry">
+                      {chainNow > Number((o as { expiresAt?: bigint }).expiresAt)
+                        ? "Expired: a keeper removes it"
+                        : `Expires in ${fmtAge(Number((o as { expiresAt?: bigint }).expiresAt) - chainNow)}`}
+                    </span>
+                  ) : null}
                 </td>
                 <td>
                   <button type="button" className="wide font-semibold hover:text-accent" disabled={!instrument} onClick={() => instrument && onSelectMarket(instrument)}>

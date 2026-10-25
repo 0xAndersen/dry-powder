@@ -5,7 +5,7 @@ import type { PositionView } from "@/hooks/use-account-data";
 import type { MarketPrice } from "@/hooks/use-market-data";
 import { fmtUsdc } from "@/lib/format";
 import type { Instrument } from "@/lib/instruments";
-import { absDiff, ratio } from "@/lib/math";
+import { BPS, absDiff, ratio } from "@/lib/math";
 import type { PositionValue } from "@/lib/position";
 import { movePct, simpleName, simpleSubject } from "@/lib/simple";
 
@@ -16,6 +16,7 @@ export function PositionCard({
   instrument,
   price,
   sym,
+  shareBps,
   busy,
   canTrade,
   onCashOut,
@@ -27,6 +28,8 @@ export function PositionCard({
   instrument: Instrument | undefined;
   price: MarketPrice | undefined;
   sym: string;
+  /** What a Turbo market keeps of a winning close's profit (null on an engine without Turbo markets). */
+  shareBps: bigint | null;
   busy: boolean;
   canTrade: boolean;
   onCashOut: () => void;
@@ -37,7 +40,11 @@ export function PositionCard({
   const up = pos.isLong;
   const name = instrument ? simpleName(instrument) : "Market";
   const subject = instrument ? simpleSubject(instrument) : "The price";
-  const pnl = value.pnl;
+  // A Turbo win is shown after the house's share of the profit, which is what cashing out pays.
+  const share = instrument?.upside ? (shareBps ?? 2_000n) : 0n;
+  const gross = value.pnl;
+  const shared = gross !== null && gross > 0n && share > 0n;
+  const pnl = shared ? gross - (gross * share) / BPS : gross;
   const worth = pnl !== null ? pos.margin + pnl : null;
   const closing = pos.closeOrderId !== 0n;
   // How far the price could move against the trade at entry, and how far it can now.
@@ -71,6 +78,7 @@ export function PositionCard({
           {value.roe !== null ? `${value.roe >= 0 ? "+" : "−"}${Math.abs(value.roe * 100).toFixed(1)}%` : ""}
           {worth !== null ? `, worth ${fmtUsdc(worth > 0n ? worth : 0n)} ${sym} now` : ""}
           {value.capped ? ", at the 10x win limit" : ""}
+          {shared ? `, after the ${(Number(share) / 100).toFixed(0)}% Turbo share` : ""}
         </p>
       </div>
       <div>

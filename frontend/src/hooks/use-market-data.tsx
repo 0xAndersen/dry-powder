@@ -26,6 +26,13 @@ export type EngineParams = {
   /** The oracle contract the engine forwards updates to (Pyth or the testnet PublisherOracle). */
   pyth: Address;
   vaultNav: bigint;
+  /** v3.2 (absent on an older engine): what Upside (Turbo) markets keep of a winning close's profit. */
+  profitShareBps: bigint | null;
+  /** v3.2: a referred trader's fee discount, and the referrer's share of each fee. */
+  referralDiscountBps: bigint | null;
+  referralShareBps: bigint | null;
+  /** v3.2: the vault cap is measured in exposure (capped profit), not notional. */
+  totalExposure: bigint | null;
 };
 
 /**
@@ -147,9 +154,22 @@ export function MarketDataProvider({ children }: { children: ReactNode }) {
     ],
     query: { refetchInterval: 5_000 },
   });
+  // v3.2 parameters, read separately so an older engine (which lacks them) still loads.
+  const v32Query = useReadContracts({
+    allowFailure: true,
+    contracts: [
+      { ...engine, functionName: "profitShareBps" },
+      { ...engine, functionName: "referralDiscountBps" },
+      { ...engine, functionName: "referralShareBps" },
+      { ...engine, functionName: "totalExposure" },
+    ],
+    query: { refetchInterval: 15_000 },
+  });
   const params = useMemo<EngineParams | undefined>(() => {
     const d = paramsQuery.data;
     if (!d) return undefined;
+    const v = v32Query.data;
+    const opt = (i: number): bigint | null => (v?.[i]?.status === "success" ? (v[i]!.result as bigint) : null);
     return {
       baseFeeBps: d[0],
       maxSkewFeeBps: d[1],
@@ -162,8 +182,12 @@ export function MarketDataProvider({ children }: { children: ReactNode }) {
       maxProfitMultiple: d[8],
       pyth: d[9],
       vaultNav: d[10],
+      profitShareBps: opt(0),
+      referralDiscountBps: opt(1),
+      referralShareBps: opt(2),
+      totalExposure: opt(3),
     };
-  }, [paramsQuery.data]);
+  }, [paramsQuery.data, v32Query.data]);
 
   const instruments = useMemo<Instrument[]>(
     () => (markets.data ? (markets.data as readonly RawMarketView[]).map(toInstrument) : []),

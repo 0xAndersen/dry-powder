@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { gapsBracket, isLiquidatable, triggered } from "../src/operator.mjs";
+import { fillsAtMid, gapsBracket, isExpired, isLiquidatable, triggered } from "../src/operator.mjs";
 import { FEEDS, quoteToPrice } from "../src/feeds.mjs";
 
 const px = (bid, ask) => ({ bid: BigInt(bid), ask: BigInt(ask), mid: BigInt((bid + ask) / 2) });
@@ -37,6 +37,39 @@ test("an open order that would fill through its own bracket is left resting", ()
   assert.equal(gapsBracket(order(false, 95, 105), px(98, 100)), false);
   assert.equal(gapsBracket(order(false, 98, 0), px(98, 100)), true, "short fills at the bid, on its take-profit");
   assert.equal(gapsBracket(order(false, 0, 97), px(98, 100)), true, "short fills at or above its stop");
+});
+
+test("Upside (Turbo) markets fill opens and closes at the mid; triggers already used it", () => {
+  const p = px(98, 102); // mid 100
+  // A long limit at 100 fills at the mid, not at the ask of 102.
+  assert.equal(triggered(0, true, 100n, p), false);
+  assert.equal(triggered(0, true, 100n, p, true), true);
+  assert.equal(triggered(0, false, 100n, p, true), true);
+  assert.equal(triggered(0, false, 101n, p, true), false);
+  // A stop-entry breaks out on the mid.
+  assert.equal(triggered(4, true, 100n, p, true), true);
+  assert.equal(triggered(4, true, 101n, p, true), false);
+  // A close with a bound compares the mid.
+  assert.equal(triggered(3, true, 100n, p), false);
+  assert.equal(triggered(3, true, 100n, p, true), true);
+  assert.equal(triggered(3, false, 100n, p, true), true);
+  // Take-profit and stop-loss: the mid either way.
+  assert.equal(triggered(1, true, 100n, p, true), triggered(1, true, 100n, p));
+  assert.equal(triggered(2, false, 100n, p, true), triggered(2, false, 100n, p));
+  // Brackets are checked against the mid fill.
+  const order = { isLong: true, takeProfit: 101n, stopLoss: 0n };
+  assert.equal(gapsBracket(order, p), true, "at the ask of 102 the take-profit at 101 is already through");
+  assert.equal(gapsBracket(order, p, true), false, "at the mid of 100 it is not");
+  assert.equal(fillsAtMid({ market: { feeMode: 1 } }), true);
+  assert.equal(fillsAtMid({ market: { feeMode: 0 } }), false);
+  assert.equal(fillsAtMid({ market: {} }), false, "a v3.1 lens has no fee mode");
+});
+
+test("orders expire after their expiry, never with none", () => {
+  assert.equal(isExpired({ expiresAt: 0n }, 2_000_000_000), false);
+  assert.equal(isExpired({}, 2_000_000_000), false, "a v3.1 order has no expiry");
+  assert.equal(isExpired({ expiresAt: 1_000n }, 1_000), false, "it may still execute in its last second");
+  assert.equal(isExpired({ expiresAt: 1_000n }, 1_001), true);
 });
 
 test("liquidation price semantics match the lens", () => {

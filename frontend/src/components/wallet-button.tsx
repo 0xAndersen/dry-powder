@@ -159,7 +159,7 @@ export function WalletButton() {
         onClick={() => setOpen((v) => !v)}
       >
         {!wallet.wrongNetwork && balance.data !== undefined ? (
-          <span className="num hidden text-muted lg:inline">{fmtUsdc(balance.data)} {config.collateralSymbol}</span>
+          <span className="num hidden text-muted 2xl:inline">{fmtUsdc(balance.data)} {config.collateralSymbol}</span>
         ) : null}
         <span className="num">{wallet.address ? shortAddress(wallet.address) : ""}</span>
       </button>

@@ -34,7 +34,17 @@ export type ActionContext = {
 /** AgentAccount forwarders plus the engine's errors, so reverts from the engine decode with their names. */
 const ACCOUNT_CALL_ABI = [...agentAccountAbi, ...perpEngineAbi.filter((item) => item.type === "error")] as const;
 
-type EngineFn = "openPosition" | "createLimitOrder" | "closePosition" | "setTriggerOrder" | "cancelOrder" | "claim" | "addMargin";
+type EngineFn =
+  | "openPosition"
+  | "createLimitOrder"
+  | "createLimitOrderUntil"
+  | "closePosition"
+  | "setTriggerOrder"
+  | "setOrderExpiry"
+  | "cancelOrder"
+  | "claim"
+  | "addMargin"
+  | "removeMargin";
 
 /**
  * Sends a trading call: straight to the engine from the wallet, or through the AgentAccount from the session key.
@@ -155,13 +165,20 @@ export type OpenRequest = {
   stopLoss: bigint;
   /** Collateral the engine will pull: margin + fee budget + execution fees. */
   required: bigint;
+  /** Unix seconds after which a resting order can no longer execute (v3.2); omitted: good until cancelled. */
+  expiresAt?: number;
 };
 
 export type OpenResult = { receipt: TransactionReceipt; orderId: bigint | null; trigger: bigint | null };
 
-/** The trigger a keeper-filled market order rests at: the reference price pushed out by the slippage tolerance. */
-export function marketableTrigger(reference: Quote, isLong: boolean, slippageBps: number): bigint {
-  return isLong ? withSlippageUp(reference.ask, BigInt(slippageBps)) : withSlippageDown(reference.bid, BigInt(slippageBps));
+/**
+ * The trigger a keeper-filled market order rests at: the price it fills at (the ask or bid, or the mid in a Turbo
+ * market) pushed out by the slippage tolerance.
+ */
+export function marketableTrigger(reference: Quote, isLong: boolean, slippageBps: number, atMid = false): bigint {
+  const bound = BigInt(slippageBps);
+  if (atMid) return isLong ? withSlippageUp(reference.mid, bound) : withSlippageDown(reference.mid, bound);
+  return isLong ? withSlippageUp(reference.ask, bound) : withSlippageDown(reference.bid, bound);
 }
 
 /**
@@ -173,15 +190,20 @@ export async function submitOpen(ctx: ActionContext, req: OpenRequest, label: st
   await ensureAllowance(ctx, cfg.perpEngine, req.required);
   const { instrument, isLong, margin, size, takeProfit, stopLoss } = req;
 
-  // Above 100x the engine refuses direct opens (they would read a stored price); always use a keeper order.
-  if (req.type !== "market" || cfg.oracleMode === "publisher" || needsKeeperOrders(size, margin)) {
+  // Above 100x the engine refuses direct opens (they would read a stored price), and Upside (Turbo) markets take
+  // keeper orders only: always use a keeper order there.
+  if (req.type !== "market" || cfg.oracleMode === "publisher" || needsKeeperOrders(size, margin) || instrument.upside) {
     let triggerPrice = req.limitPrice;
     if (req.type === "market") {
       if (!req.reference) throw new UserFacingError("No price is available to anchor the order to yet.");
-      triggerPrice = marketableTrigger(req.reference, isLong, req.slippageBps);
+      triggerPrice = marketableTrigger(req.reference, isLong, req.slippageBps, instrument.upside);
     }
     if (triggerPrice === 0n) throw new UserFacingError("Enter a price greater than zero.");
-    const receipt = await sendEngine(ctx, label, "createLimitOrder", [{ priceId: instrument.id, isLong, margin, size, triggerPrice, takeProfit, stopLoss, stopEntry: req.type === "stop" }]);
+    const order = { priceId: instrument.id, isLong, margin, size, triggerPrice, takeProfit, stopLoss, stopEntry: req.type === "stop" };
+    // Good-til-time (v3.2): the order cannot execute after `expiresAt` and a keeper sweeps it, refunding the escrow.
+    const receipt = req.expiresAt
+      ? await sendEngine(ctx, label, "createLimitOrderUntil", [order, BigInt(Math.floor(req.expiresAt))])
+      : await sendEngine(ctx, label, "createLimitOrder", [order]);
     return { receipt, orderId: orderIdFrom(receipt, "OrderCreated"), trigger: triggerPrice };
   }
 
@@ -234,16 +256,21 @@ export async function submitClose(ctx: ActionContext, req: CloseRequest, label: 
     return { receipt, orderId: null, direct: true };
   }
 
-  // Selling a long fills at the bid, buying back a short at the ask; the bound sits `slippage` beyond it.
+  // Selling a long fills at the bid, buying back a short at the ask (both at the mid in a Turbo market); the bound
+  // sits `slippage` beyond it.
+  const upside = instrument.upside;
   const worst = req.reference
     ? isLong
-      ? withSlippageDown(req.reference.bid, BigInt(req.slippageBps))
-      : withSlippageUp(req.reference.ask, BigInt(req.slippageBps))
+      ? withSlippageDown(upside ? req.reference.mid : req.reference.bid, BigInt(req.slippageBps))
+      : withSlippageUp(upside ? req.reference.mid : req.reference.ask, BigInt(req.slippageBps))
     : 0n;
+  const keeperOnly = req.highLeverage || upside;
 
-  if (req.highLeverage && req.direct) {
+  if (keeperOnly && req.direct) {
     throw new UserFacingError(
-      `Positions above 100x close only through a keeper order, which costs one execution fee. Add a little ${cfg.collateralSymbol} to your wallet and close again.`,
+      upside
+        ? `Turbo positions close only through a keeper order, which costs one execution fee. Add a little ${cfg.collateralSymbol} to your wallet and close again.`
+        : `Positions above 100x close only through a keeper order, which costs one execution fee. Add a little ${cfg.collateralSymbol} to your wallet and close again.`,
     );
   }
 
@@ -253,7 +280,7 @@ export async function submitClose(ctx: ActionContext, req: CloseRequest, label: 
     return { receipt, orderId: null, direct: true };
   }
 
-  if (cfg.oracleMode === "publisher" || req.highLeverage) {
+  if (cfg.oracleMode === "publisher" || keeperOnly) {
     await ensureAllowance(ctx, cfg.perpEngine, req.executionFee);
     const receipt = await sendEngine(ctx, label, "setTriggerOrder", [instrument.id, ORDER_TYPE.Close, worst, size]);
     return { receipt, orderId: orderIdFrom(receipt, "OrderCreated") ?? orderIdFrom(receipt, "OrderUpdated"), direct: false };
@@ -286,6 +313,40 @@ export async function submitTrigger(
 export async function submitAddMargin(ctx: ActionContext, marketId: Hex, amount: bigint, label: string): Promise<TransactionReceipt> {
   await ensureAllowance(ctx, ctx.cfg.perpEngine, amount);
   return sendEngine(ctx, label, "addMargin", [marketId, amount]);
+}
+
+/**
+ * Takes margin back out of the caller's position (v3.2). The engine checks it against a price newer than the
+ * position's last change; in publisher mode that is the one on-chain (the publisher posts on every 5 bp move and at
+ * each heartbeat), in Pyth mode a fresh update goes with it.
+ */
+export async function submitRemoveMargin(ctx: ActionContext, instrument: Instrument, amount: bigint, label: string): Promise<TransactionReceipt> {
+  if (ctx.cfg.oracleMode === "pyth") {
+    ctx.api.preparing(`Fetching the latest ${instrument.symbol} price`);
+    const oracle = await freshOracleUpdate(ctx, instrument);
+    return sendEngine(ctx, label, "removeMargin", [instrument.id, amount, oracle.updateData], oracle.fee);
+  }
+  return sendEngine(ctx, label, "removeMargin", [instrument.id, amount, []]);
+}
+
+/** Sets when one of the caller's orders stops being executable (0: never). v3.2. */
+export async function submitOrderExpiry(ctx: ActionContext, orderId: bigint, expiresAt: number, label: string): Promise<TransactionReceipt> {
+  return sendEngine(ctx, label, "setOrderExpiry", [orderId, BigInt(Math.floor(expiresAt))]);
+}
+
+/**
+ * Records the trader's referrer (once, v3.2): their fees are discounted and the referrer earns a share. With
+ * instant trading the trader is the agent account, whose owner (the wallet) must sign it.
+ */
+export async function submitSetReferrer(ctx: ActionContext, referrer: Address, label: string): Promise<TransactionReceipt> {
+  const { wagmi, cfg, api, account, session } = ctx;
+  const params = session
+    ? ({ abi: agentAccountAbi, address: session.account, functionName: "setReferrer", args: [referrer], account, chainId: cfg.chainId } as never)
+    : ({ abi: perpEngineAbi, address: cfg.perpEngine, functionName: "setReferrer", args: [referrer], account, chainId: cfg.chainId } as never);
+  return api.send(label, async () => {
+    const { request } = await simulateContract(wagmi, params);
+    return writeContract(wagmi, { ...(request as object), gas: await walletGas(wagmi, cfg.chainId, params) } as never);
+  });
 }
 
 export type BatchCall = { functionName: EngineFn; args: readonly unknown[]; label: string };

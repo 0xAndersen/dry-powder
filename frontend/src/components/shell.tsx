@@ -7,6 +7,7 @@ import { Header } from "@/components/header";
 import { CommandPalette } from "@/components/command-palette";
 import { FollowWatcher } from "@/components/follow-watcher";
 import { MobileNav } from "@/components/mobile-nav";
+import { ReferralCapture } from "@/components/referral/referral";
 import { ServiceWorkerManager } from "@/components/pwa";
 import { RiskWatcher } from "@/components/risk-watcher";
 import { Toasts } from "@/components/toasts";
@@ -63,6 +64,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </>
       )}
       <ServiceWorkerManager />
+      <ReferralCapture />
       <AlertWatcher />
       <RiskWatcher />
       <FollowWatcher />

@@ -37,7 +37,7 @@ function Wordmark() {
         <rect x="6.5" y="12.25" width="11" height="5.25" rx="1.5" fill="var(--color-accent)" />
         <path d="M6.5 9.25h11" stroke="var(--color-text)" strokeWidth="1.25" strokeLinecap="round" strokeDasharray="1.5 2.25" opacity="0.55" />
       </svg>
-      <span className="wide text-[1.0625rem] leading-none lg:hidden xl:inline">Dry Powder</span>
+      <span className="wide text-[1.0625rem] leading-none lg:hidden min-[1680px]:inline">Dry Powder</span>
     </AppLink>
   );
 }
@@ -70,20 +70,20 @@ function NetworkStatus() {
     {statusOpen ? <StatusSheet onClose={() => setStatusOpen(false)} /> : null}
     <button
       type="button"
-      className="hidden items-center gap-3 whitespace-nowrap rounded-[var(--radius-sm-ui)] px-1 text-xs text-muted hover:text-text xl:flex 2xl:gap-4"
+      className="hidden items-center gap-2 whitespace-nowrap rounded-[var(--radius-sm-ui)] px-1 text-xs text-muted hover:text-text xl:flex 2xl:gap-3 min-[1760px]:gap-4"
       onClick={() => setStatusOpen(true)}
       aria-label="Venue status"
       data-testid="network-status"
     >
       <span className="flex items-center gap-1.5" title={`${chain.name}: ${chainText}`}>
         <StatusDot tone={chainTone} />
-        <span className="hidden 2xl:inline">{chain.name}</span>
-        <span className="num text-faint">{chainText}</span>
+        <span className="hidden min-[1760px]:inline">{chain.name}</span>
+        <span className="num hidden text-faint 2xl:inline">{chainText}</span>
       </span>
       <span className="flex items-center gap-1.5" title={feedText}>
         <StatusDot tone={feedTone} />
-        <span className="hidden 2xl:inline">{feedText}</span>
-        <span className="2xl:hidden">Prices</span>
+        <span className="hidden min-[1760px]:inline">{feedText}</span>
+        <span className="hidden 2xl:inline min-[1760px]:hidden">Prices</span>
       </span>
       {config.chainId === 5042002 ? <KeeperStatus /> : null}
     </button>
@@ -99,8 +99,8 @@ function KeeperStatus() {
   return (
     <span className="flex items-center gap-1.5" title={title} data-testid="keeper-status">
       <StatusDot tone={keeper.tone} />
-      <span className="hidden 2xl:inline">{keeper.text}</span>
-      <span className="2xl:hidden">Keeper</span>
+      <span className="hidden min-[1760px]:inline">{keeper.text}</span>
+      <span className="hidden 2xl:inline min-[1760px]:hidden">Keeper</span>
     </span>
   );
 }
@@ -153,8 +153,8 @@ function WatchControl() {
           <path d="M1.5 9s2.8-5 7.5-5 7.5 5 7.5 5-2.8 5-7.5 5-7.5-5-7.5-5Z" fill="none" stroke="currentColor" strokeWidth="1.5" />
           <circle cx="9" cy="9" r="2.2" fill="currentColor" />
         </svg>
-        <span className="hidden sm:inline md:hidden">Watch</span>
-        <span className="hidden md:inline">Watch an account</span>
+        <span className="hidden sm:inline min-[1680px]:hidden">Watch</span>
+        <span className="hidden min-[1680px]:inline">Watch an account</span>
       </button>
       {open ? (
         <form
@@ -199,7 +199,7 @@ export function Header() {
   const route = currentRoute(pathname);
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-bg/95 pt-[env(safe-area-inset-top)] backdrop-blur">
-      <div className="mx-auto flex h-12 w-full max-w-[1760px] items-center gap-1 px-2 sm:gap-5 sm:px-3">
+      <div className="mx-auto flex h-12 w-full max-w-[1760px] items-center gap-1 px-2 sm:gap-3 sm:px-3 2xl:gap-5">
         <Wordmark />
         {/* Phones and tablets navigate with the bottom tab bar (MobileNav). */}
         <nav aria-label="Main" className="hidden h-full items-stretch lg:flex">
@@ -210,15 +210,15 @@ export function Header() {
                 key={item.route}
                 route={item.route}
                 aria-current={active ? "page" : undefined}
-                className={`relative flex items-center px-2 text-sm font-medium xl:px-3 ${active ? "text-text" : "text-muted hover:text-text"}`}
+                className={`relative flex items-center whitespace-nowrap px-2 text-sm font-medium 2xl:px-3 ${active ? "text-text" : "text-muted hover:text-text"}`}
               >
                 {item.label}
-                {active ? <span aria-hidden="true" className="absolute inset-x-2 bottom-0 h-0.5 bg-accent xl:inset-x-3" /> : null}
+                {active ? <span aria-hidden="true" className="absolute inset-x-2 bottom-0 h-0.5 bg-accent 2xl:inset-x-3" /> : null}
               </AppLink>
             );
           })}
         </nav>
-        <div className="ml-auto flex items-center gap-1 sm:gap-3">
+        <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2 2xl:gap-3">
           {config.overrides.length > 0 ? (
             <span
               className="hidden rounded-sm border border-warn/50 px-1.5 py-0.5 text-2xs text-warn md:inline"
