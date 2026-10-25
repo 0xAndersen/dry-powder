@@ -4,8 +4,10 @@ The goal: the most used trading app on Arc, for people on phones and at desks an
 comes from what traders on Hyperliquid, Papertrade and FOMO have, and what they still ask for (sources at the
 end), filtered through Dry Powder's rule that the worst case is always on screen.
 
-Status: **Live** on the venue now (v3.1, deployed 2026-10-18) · **Next** designed, not built · **Later** larger
-work · **Decision** needs the owner's call · **Mainnet** depends on real funds, a partner or an audit.
+Status: **Live** on the venue now (v3.2, deployed 2026-10-25) · **Ready** built and tested, waiting on an outside
+party (a host, a key, a second operator) · **Mainnet** depends on real funds, a partner or an audit.
+
+All hundred are now Live, Ready or waiting on mainnet. What comes after them is in "Beyond the hundred" at the end.
 
 ## What the research said
 
@@ -22,8 +24,8 @@ work · **Decision** needs the owner's call · **Mainnet** depends on real funds
   leaderboards and referral discounts.
 
 Dry Powder answers the Papertrade concerns in the contracts (winners are paid in full up to a 10x profit cap;
-prices are the median of three exchanges; the farming issue is open and listed in `SECURITY.md`, with a fix in
-item 98), and takes the rest as the list below.
+prices are the median of three exchanges; the farming issue is reduced in v3.2 by item 98 and the rest is listed
+in `SECURITY.md`), and takes the rest as the list below.
 
 ## 1. Prices and the keeper
 
@@ -37,8 +39,8 @@ item 98), and takes the rest as the list below.
 | 6 | Keeper fills stop-entry orders and additions, and leaves a fill resting if it would gap through its own bracket | Live |
 | 7 | Serverless indexer: per-trader and per-market totals in `stats.json`, every 5 minutes | Live |
 | 8 | 24h volume per market in the indexer, on the Markets page | Live |
-| 9 | Funding-rate and open-interest history in the indexer | Next |
-| 10 | A second keeper run by someone else, so fills never depend on one operator | Next |
+| 9 | Funding-rate and open-interest history in the indexer (hourly and 5-minute) | Live |
+| 10 | A second keeper run by someone else, so fills never depend on one operator (`KEEPER_MODE=executor`: no publisher key needed) | Ready |
 
 ## 2. Protocol
 
@@ -54,11 +56,11 @@ item 98), and takes the rest as the list below.
 | 18 | One transaction creates an agent account, approves its key and funds the key's gas | Live |
 | 19 | Events for additions, partial closes and margin added, so history and stats see them | Live |
 | 20 | Trailing stops without an engine change: a contract approved as an agent ratchets the stop from on-chain prices | Live |
-| 21 | Order expiry (good-til-time) | Next |
-| 22 | `setTriggerOrder` checks which side of the price a trigger sits (a known low issue) | Next |
-| 23 | Take margin out of a position, within the leverage limit | Next |
+| 21 | Order expiry (good-til-time); anyone sweeps expired orders for the execution fee | Live |
+| 22 | `setTriggerOrder` checks which side of a fresh price a trigger sits | Live |
+| 23 | Take margin out of a position, within the leverage limit (never profit) | Live |
 | 24 | TWAP orders without an engine change: a size split into 2-100 slices, one every 30 s to a day, each filled by the keeper inside its own slippage bound | Live |
-| 25 | Builder codes: front-ends and agents earn part of the fees they bring | Later |
+| 25 | Builder codes: front-ends and agents earn part of the fees they bring (referral links, 10% of fees) | Live |
 
 ## 3. The trading screen
 
@@ -78,9 +80,9 @@ item 98), and takes the rest as the list below.
 | 37 | Scale orders in the ticket: a ladder of limits in one step (one transaction with instant trading) | Live |
 | 38 | Sized take-profit and stop-loss in the positions table | Live |
 | 39 | Chart drawing tools: horizontal lines (trend lines next) | Live |
-| 40 | Several charts side by side on wide screens | Later |
+| 40 | Several charts side by side on wide screens (the chart wall) | Live |
 | 41 | A depth view for a vault venue: the open fee at each size, both sides | Live |
-| 42 | Funding and open-interest history charts (needs 9) | Next |
+| 42 | Funding and open-interest history charts | Live |
 
 ## 4. Phone and the installable app
 
@@ -93,8 +95,8 @@ item 98), and takes the rest as the list below.
 | 47 | Offline shell and an update prompt (service worker) | Live |
 | 48 | System notifications for fills and liquidation warnings | Live |
 | 49 | Haptics and a price ticker in the tab title | Live |
-| 50 | Push notifications while the app is closed (needs a push relay) | Later |
-| 51 | Sign in with a passkey and an embedded wallet: no extension, no seed phrase | Next |
+| 50 | Push notifications while the app is closed (relay built; needs a host with TLS and VAPID keys) | Ready |
+| 51 | Sign in with a passkey and an embedded wallet: no extension, no seed phrase | Live |
 
 ## 5. Risk
 
@@ -142,9 +144,9 @@ item 98), and takes the rest as the list below.
 | 76 | Follow, private nicknames, a Following filter in Activity | Live |
 | 77 | PnL share cards: an image of a trade, an open position or a profile to post | Live |
 | 78 | Alerts when someone you follow opens, adds to, closes or is liquidated on a position | Live |
-| 79 | Referral links with on-chain attribution and a fee discount | Later |
-| 80 | Automatic copy trading: an agent mirrors a trader you follow, inside your policy | Later |
-| 81 | Season prizes and competitions | Decision |
+| 79 | Referral links with on-chain attribution and a 5% fee discount | Live |
+| 80 | Automatic copy trading: an on-chain copy strategy mirrors a trader you choose, inside your policy | Live |
+| 81 | Season prizes: pools anyone can fund, results from the indexer, claims on the Portfolio page | Live |
 
 ## 9. Practice trading
 
@@ -165,25 +167,41 @@ item 98), and takes the rest as the list below.
 | 89 | MCP: partial closes, sized take-profit and stop-loss, add margin, stop entries | Live |
 | 90 | Public `stats.json` for builders | Live |
 | 91 | Docs: `AGENTS.md`, `llms.txt`, this roadmap | Live |
-| 92 | Agents on the leaderboard, marked as agents | Next |
-| 93 | A stream of venue events for bots (webhooks or a websocket relay) | Later |
+| 92 | Agents on the leaderboard, marked as agents, with a public agent registry | Live |
+| 93 | A stream of venue events for bots (SSE and WebSocket relay built; needs a host) | Ready |
 
 ## 11. USDC on Arc
 
 | # | Item | Status |
 | --- | --- | --- |
-| 94 | Deposit USDC from other chains with CCTP | Next |
-| 95 | One USDC balance across chains with Gateway | Later |
+| 94 | Deposit USDC from other chains with CCTP | Live |
+| 95 | One USDC balance across chains with Gateway | Live |
 | 96 | Card and Apple Pay on-ramp | Mainnet |
 
 ## 12. Economics and launch
 
 | # | Item | Status |
 | --- | --- | --- |
-| 97 | Fee model: no fee unless you win | Decision |
-| 98 | DRY emissions that decay as the vault grows, minted on net rather than gross losses | Decision |
+| 97 | Fee model: no fee unless you win, as Turbo markets beside the Standard ones | Live |
+| 98 | DRY emissions that decay as issuance grows, minted on net rather than gross losses | Live |
 | 99 | Pyth or Stork prices instead of the publisher key | Mainnet |
-| 100 | A professional audit, a timelock and a multisig before real funds | Mainnet |
+| 100 | A professional audit, a timelock and a multisig before real funds (the timelock and Safe hand-over script is built) | Mainnet |
+
+## Beyond the hundred
+
+Shipped in v3.2 on top of the list:
+
+- **Turbo markets**: BTC, ETH and EUR to 5000x, gold to 2500x; no fee unless you win, mid-price keeper fills.
+- **Simple and Advanced**: two apps in one. Simple is a tile per market, up or down, and one sheet with what you
+  can win and lose; Advanced is the terminal.
+- **Agent Studio**: build, replay on past prices, launch and manage trend, mean-reversion and copy strategies
+  that run on-chain; daily spending budgets for agent keys.
+- **Exposure-based vault caps**, which let leverage rise without the vault taking more risk, and a mark that no
+  longer counts losses it cannot collect.
+
+Next: the twenty improvements in the analysis that accompanies this release, led by breadth (200+ markets with
+market hours, weekend markets, baskets), capacity (hedging the vault, LP tranches) and trust (a multi-publisher
+oracle, audits, an insurance fund and a public solvency page).
 
 ## Sources
 

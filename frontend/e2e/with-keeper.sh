@@ -33,7 +33,8 @@ if [ -n "${GITHUB_ACTIONS:-}" ]; then
   grep -E "\[error\]|failed" "$LOGS/keeper.log" | tail -5 | cut -c1-400 | sed 's/^/::warning::keeper /' || true
 fi
 [ "$status" -eq 0 ] || exit "$status"
-# The SDK: 1000x through keeper orders with a stop, then an agent account trading 500x.
+# The SDK: a 5000x Turbo trade with a stop and an expiry, margin out, a referrer, a refused daily budget, an
+# expired-order refund, a strategy and a registry listing, against the deployment's own contracts.
 if [ -d ../sdk/node_modules ]; then (cd ../sdk && npm run build >/dev/null && RPC_URL=http://127.0.0.1:${ANVIL_PORT:-8645} node test/smoke.mjs 2>&1 | tail -60) || { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error::SDK smoke test failed"; exit 1; }; fi
 # The MCP server, driven through a real MCP client from an agent account on the same chain.
 if [ -d ../mcp/node_modules ]; then (cd ../mcp && RPC_URL=http://127.0.0.1:${ANVIL_PORT:-8645} KRAKEN_URL=http://127.0.0.1:${KRAKEN_PORT:-8647} node test/smoke.mjs 2>&1 | tail -40) || { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error::MCP smoke test failed"; exit 1; }; fi
