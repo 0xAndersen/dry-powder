@@ -1,6 +1,6 @@
 {
   "name": "dry-powder-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "MCP server that lets AI agents read Dry Powder markets and trade with guardrails, from an agent account they can never withdraw from",
   "type": "module",

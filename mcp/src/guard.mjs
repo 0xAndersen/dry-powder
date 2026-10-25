@@ -3,9 +3,11 @@
 import { randomBytes } from "node:crypto";
 
 export class ToolError extends Error {
-  constructor(code, message) {
+  /** `details`: anything the caller can act on (e.g. a transaction prepared for the owner). */
+  constructor(code, message, details) {
     super(message);
     this.code = code;
+    if (details !== undefined) this.details = details;
   }
 }
 
