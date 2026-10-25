@@ -6,28 +6,53 @@ How Dry Powder works, in more depth than the README. Addresses: `deployments/arc
 
 | Contract | Role |
 | --- | --- |
-| `PerpEngine` | Positions, orders, fees, funding, liquidations, dated-market settlement. One position per market per trader; an open on the same side adds to it. |
+| `PerpEngine` | Positions, orders, fees, funding, liquidations, dated-market settlement. One position per market per trader; an open on the same side adds to it. Holds the trading path and forwards every other call to its extension. |
+| `PerpEngineExt` | The engine's second half (v3.2): admin, margin top-ups and removals, referrals, order expiry, settlement and views, run by `delegatecall` from `PerpEngine` on the same storage (`PerpEngineBase`). One address, one ABI (the union). |
 | `HouseVault` | ERC-4626 USDC vault (`dpUSDC`): the counterparty to every trade. Epochs stream 15% of profit above the high-water mark to DRY stakers. |
-| `RewardToken` | `DRY`: 100 DRY minted per 1 USDC a trader loses; stake it for a share of house profit. |
+| `RewardToken` | `DRY`: minted when an account's net result makes a new low (each close reports at most 1% of its notional), 100 per 1 USDC halving as rebated losses grow; stake it for a share of house profit. |
 | `EngineLens` | Read-only views: every market with its price and funding, a trader's positions and orders. |
 | `PythOracle` | Adapter from Pyth-style feeds to bid/ask/mid, crosses and inversion. |
 | `PublisherOracle` | Testnet stand-in for Pyth: prices signed by the publisher key (the median of Kraken, Coinbase and Bitstamp). |
-| `AgentAccount(Factory)` | A wallet-owned account agents can trade from within an on-chain policy, and never withdraw from. |
+| `AgentAccount(Factory)` | A wallet-owned account agents can trade from within an on-chain policy (now with a daily budget), and never withdraw from. |
+| `Strategies`, `AgentRegistry` | Add-ons: trend, mean-reversion and copy strategies an account approves as an agent and the keeper pokes; a public registry of agents with their descriptions. |
+| `TrailingStops`, `TwapOrders` | Add-ons: a stop that ratchets behind the best price; a size split into timed slices. |
+| `PrizeDistributor` | Season prize pools anyone can fund, paid out from a published Merkle root of results; unclaimed prizes roll into a later season. |
 
 ## Risk rules
 
-- **Leverage.** 1x up to the market's maximum (at most `MAX_LEVERAGE` = 1000).
+- **Leverage.** 1x up to the market's maximum (at most `MAX_LEVERAGE` = 5000).
 - **Above 100x** (`DIRECT_MAX_LEVERAGE`), positions open and close only through keeper-filled orders. A keeper
   order fills at a price published after the order was placed, so nobody can trade against a price they already
   know is stale. At 1000x a 0.1% stale-price edge would be the whole margin; this rule removes it.
 - **Liquidation** when losses plus funding reach 90% of margin. Losses are bounded by margin: no negative
   balances, no socialised losses.
-- **Fees.** 5 bp of size plus a skew surcharge (up to 10 bp) on the side that makes the market more one-sided,
-  each side capped at 10% of margin (`MARGIN_FEE_CAP_BPS`).
+- **Fees.** Standard markets: 5 bp of size plus a skew surcharge (up to 10 bp) on the side that makes the market
+  more one-sided, each side capped at 10% of margin (`MARGIN_FEE_CAP_BPS`). Turbo markets (fee mode Upside):
+  nothing to open or close; the house keeps 20% of a winning close's profit (`profitShareBps`).
 - **Profit cap.** 10x margin per position (`maxProfitMultiple`), which bounds what one position can take from the
   vault.
-- **Open-interest caps** per market and side, plus a vault-wide cap as a share of NAV; the withdrawal reserve
-  is based on net exposure.
+- **Open-interest caps** per market and side, plus a vault-wide cap on exposure (what positions can actually
+  win: open interest, but at most margin times the profit cap) as a share of NAV; the withdrawal reserve is based
+  on the net exposure, and the vault's mark holds each side between losing its margin and winning its cap.
+
+## What v3.2 added (2026-10-25)
+
+- **Turbo markets.** A per-market fee mode. Upside markets (BTC, ETH and EUR to 5000x, gold to 2500x) charge no
+  fee unless you win, fill both ways at the oracle mid, and take keeper orders only, so every fill uses a price
+  published after the order. The house keeps 20% of a winning close's profit.
+- **Exposure, not notional.** At 5000x notional is thousands of times margin, while the vault can lose at most
+  the capped profit. Caps, the reserve and the mark are measured in that exposure.
+- **Orders that expire** (`createLimitOrderUntil`, `setOrderExpiry`); anyone sweeps expired ones for the
+  execution fee (`cancelExpired`). Triggers are checked against a fresh price when set.
+- **Margin out** (`removeMargin`), never profit.
+- **Referrals** (`setReferrer`, once): 5% off every fee for the trader, 10% of it to the referrer, collected with
+  `claim`. Front-ends and agent builders use the same link as a builder code.
+- **DRY on net results**, capped per close and decaying as issuance grows (the loss-mining fix, reduced).
+- **Agent budgets.** An agent key's policy can cap what it spends per UTC day.
+- **The split engine.** `PerpEngine` + `PerpEngineExt` behind one address, to stay under the contract size
+  limit; the extension refuses direct calls and cannot be swapped.
+- **Keeper.** Turbo orders checked at the mid, expired orders swept, an executor-only mode so a second operator
+  can fill orders and liquidate, price pushes on any 5 bp move, and direct trades limited to prices 10 s old.
 
 ## What v3.1 added (2026-10-18)
 
