@@ -5,7 +5,9 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Base} from "./Base.t.sol";
 import {DeployAddons} from "../script/DeployAddons.s.sol";
 import {AgentAccountFactory} from "../src/AgentAccount.sol";
+import {AgentRegistry} from "../src/AgentRegistry.sol";
 import {PerpEngine} from "../src/PerpEngine.sol";
+import {Strategies} from "../src/Strategies.sol";
 import {TrailingStops} from "../src/TrailingStops.sol";
 import {TwapOrders} from "../src/TwapOrders.sol";
 
@@ -15,14 +17,19 @@ contract DeployAddonsTest is Base {
         AgentAccountFactory factory = new AgentAccountFactory(IERC20(address(usdc)), engine);
         vm.setEnv("ENGINE_ADDRESS", vm.toString(address(engine)));
         vm.setEnv("AGENT_FACTORY_ADDRESS", vm.toString(address(factory)));
-        (TrailingStops ts, TwapOrders tw) = new DeployAddons().run();
+        (TrailingStops ts, TwapOrders tw, Strategies st, AgentRegistry ar) = new DeployAddons().run();
         assertEq(address(ts.engine()), address(engine));
         assertEq(address(ts.factory()), address(factory));
         assertEq(address(tw.engine()), address(engine));
         assertEq(address(tw.factory()), address(factory));
+        assertEq(address(st.engine()), address(engine));
+        assertEq(address(st.factory()), address(factory));
+        assertEq(address(ar.factory()), address(factory));
         string memory json = vm.readFile(string.concat("./deployments/", vm.toString(block.chainid), "-addons.json"));
         assertEq(vm.parseJsonAddress(json, ".trailingStops"), address(ts));
         assertEq(vm.parseJsonAddress(json, ".twapOrders"), address(tw));
+        assertEq(vm.parseJsonAddress(json, ".strategies"), address(st));
+        assertEq(vm.parseJsonAddress(json, ".agentRegistry"), address(ar));
         assertEq(vm.parseJsonAddress(json, ".engine"), address(engine));
 
         // A factory deployed for another engine is refused.

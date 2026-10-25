@@ -19,6 +19,8 @@ const contracts = [
   ["AgentAccountFactory", "AgentAccount"],
   ["TrailingStops", "TrailingStops"],
   ["TwapOrders", "TwapOrders"],
+  ["Strategies", "Strategies"],
+  ["AgentRegistry", "AgentRegistry"],
 ];
 const targets = [
   ["frontend/src/lib/abi.ts", "ts"],

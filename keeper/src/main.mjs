@@ -47,6 +47,7 @@ function addresses() {
     usdc: env.USDC_ADDRESS || d.usdc || null,
     trailingStops: env.TRAILING_STOPS_ADDRESS || d.trailingStops || null,
     twapOrders: env.TWAP_ORDERS_ADDRESS || d.twapOrders || null,
+    strategies: env.STRATEGIES_ADDRESS || d.strategies || null,
   };
   for (const [k, v] of Object.entries(a)) if (!/^0x[0-9a-fA-F]{40}$/.test(v || "")) throw fatal(`missing ${k} address (DEPLOYMENT file or env)`);
   return { ...a, ...optional, rpcUrl: env.RPC_URL || d.rpcUrl, chainId: num("CHAIN_ID", d.chainId ?? 5042002) };
@@ -109,6 +110,8 @@ const opts = {
   settleEpochs: !["0", "false"].includes(String(env.SETTLE_EPOCHS ?? "1")),
   settlePositionsDelaySeconds: num("SETTLE_POSITIONS_DELAY_SECONDS", 600),
   batchSize: num("BATCH_SIZE", 20),
+  // Strategy pokes that place orders take about 470k gas each, so they go in smaller batches.
+  strategyBatchSize: num("STRATEGY_BATCH_SIZE", 8),
   // A trailing stop moves only when its level improves by at least this many bps (one transaction per step).
   trailStepBps: num("TRAIL_STEP_BPS", 10),
   priorityFeeGwei: num("PRIORITY_FEE_GWEI", 1),

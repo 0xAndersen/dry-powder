@@ -75,8 +75,10 @@ export async function deploy({ lockSeconds, epochSeconds, streamSeconds, expiryS
   const agentFactory = await deployContract("AgentAccountFactory", [usdc, engine]);
   const trailingStops = await deployContract("TrailingStops", [engine, agentFactory]);
   const twapOrders = await deployContract("TwapOrders", [engine, agentFactory]);
+  const strategies = await deployContract("Strategies", [engine, agentFactory]);
+  const agentRegistry = await deployContract("AgentRegistry", [agentFactory]);
 
-  const addresses = { publisherOracle, pythOracle, usdc, vault, token, engine, lens, agentFactory, trailingStops, twapOrders, expiry, datedSymbol, uiTrader: UI_TRADER.address, markets };
+  const addresses = { publisherOracle, pythOracle, usdc, vault, token, engine, lens, agentFactory, trailingStops, twapOrders, strategies, agentRegistry, expiry, datedSymbol, uiTrader: UI_TRADER.address, markets };
   log("deploy", `engine ${engine} lens ${lens} vault ${vault}; ${datedSymbol} expires in ${expirySeconds}s`);
   return addresses;
 }

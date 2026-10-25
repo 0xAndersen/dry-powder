@@ -6,8 +6,8 @@
 //       the same rule as keeper/src/main.mjs and ops/run-testnet.mjs), for $GITHUB_ENV.
 //
 //   DEPLOYER_KEY=0x… node keeper/scripts/forge-deployment.mjs addons [contracts/deployments/5042002-addons.json]
-//       merges add-ons deployed by contracts/script/DeployAddons.s.sol (TrailingStops, TwapOrders) into the
-//       deployment file.
+//       merges add-ons deployed by contracts/script/DeployAddons.s.sol (TrailingStops, TwapOrders, Strategies,
+//       AgentRegistry) into the deployment file.
 //
 //   DEPLOYER_KEY=0x… node keeper/scripts/forge-deployment.mjs write [contracts/deployments/5042002.json]
 //       turns the Forge script's output into deployments/arc-testnet.json, the file the keeper, the MCP server,
@@ -42,7 +42,7 @@ if (cmd === "addons") {
   const target = join(root, "deployments/arc-testnet.json");
   const d = JSON.parse(readFileSync(target, "utf8"));
   if (String(a.engine).toLowerCase() !== String(d.engine).toLowerCase()) throw new Error(`add-ons are for engine ${a.engine}, the deployment is ${d.engine}`);
-  const keys = ["trailingStops", "twapOrders"].filter((k) => /^0x[0-9a-fA-F]{40}$/.test(a[k] || "") && !/^0x0{40}$/.test(a[k]));
+  const keys = ["trailingStops", "twapOrders", "strategies", "agentRegistry"].filter((k) => /^0x[0-9a-fA-F]{40}$/.test(a[k] || "") && !/^0x0{40}$/.test(a[k]));
   if (keys.length === 0) throw new Error("add-ons file has no add-on addresses");
   for (const k of keys) {
     console.log(`${k} ${d[k] ?? "(none)"} -> ${a[k]} in ${target}`);
@@ -81,6 +81,8 @@ const deployment = {
   agentFactory: f.agentFactory,
   ...(f.trailingStops && !/^0x0{40}$/.test(f.trailingStops) ? { trailingStops: f.trailingStops } : {}),
   ...(f.twapOrders && !/^0x0{40}$/.test(f.twapOrders) ? { twapOrders: f.twapOrders } : {}),
+  ...(f.strategies && !/^0x0{40}$/.test(f.strategies) ? { strategies: f.strategies } : {}),
+  ...(f.agentRegistry && !/^0x0{40}$/.test(f.agentRegistry) ? { agentRegistry: f.agentRegistry } : {}),
   publisher: roles.publisher,
   keeper: roles.keeper,
   deployer: roles.deployer,
