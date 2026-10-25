@@ -145,11 +145,17 @@ const balBefore = await agent.balance();
 const far = await agent.open({ market: "ETH", side: "long", margin: usd(5), leverage: 2, limitPrice: ((eth.price ?? eth.lastPrice).mid * 50n) / 100n, expiresIn: 5 });
 await sleep(7_000);
 await funder.sendTransaction({ to: acct(0).address, value: 0n }); // a block past the expiry
+// The venue's keeper sweeps expired orders too and keeps the execution fee for it, so whoever lands first sweeps.
 const expired = await agent.expiredOrders();
-assert.deepEqual(expired.map((o) => o.id), [far.orderId]);
-await agent.cancelExpired();
-assert.equal(await agent.balance(), balBefore, "the escrow came back in full");
-step("expired order cancelled with a full refund");
+if (expired.some((o) => o.id === far.orderId)) {
+  await agent.cancelExpired();
+  assert.equal(await agent.balance(), balBefore, "the escrow came back in full");
+  step("expired order cancelled with a full refund");
+} else {
+  assert.equal((await agent.orders()).some((o) => o.id === far.orderId), false, "the expired order is gone");
+  assert.ok((await agent.balance()) >= balBefore - 100_000n, "the escrow came back less the keeper's 0.1 fee");
+  step("expired order already swept by the keeper; the escrow came back less its fee");
+}
 
 // ── A strategy the owner approved, started by the agent ──
 await owner.approveStrategies(account, { expiresInSeconds: 86_400, maxLeverage: 100, maxMarginPerOrder: usd(10), dailyBudget: usd(30) });

@@ -158,7 +158,10 @@ await sleep(8_000);
 await send(deployer, { address: addrs.usdc, abi: testUSDCAbi, functionName: "mint", args: [deployer.address, 1n] }); // a block past the expiry
 const swept = await call("dp_cancel", { expired: true });
 console.log("expired orders:", swept);
-assert.deepEqual(swept.cancelled, [limit.orderId]);
+// The venue's keeper sweeps expired orders too (it earns the execution fee for it), so either sweep may land first.
+const left = await pub.readContract({ address: addrs.engine, abi: [{ type: "function", name: "orderTrader", stateMutability: "view", inputs: [{ name: "orderId", type: "uint256" }], outputs: [{ type: "address" }] }], functionName: "orderTrader", args: [BigInt(limit.orderId)] });
+assert.equal(left, "0x0000000000000000000000000000000000000000", "the expired order is gone");
+assert.ok(swept.cancelled.length === 0 || swept.cancelled.includes(limit.orderId), JSON.stringify(swept));
 
 // A strategy: refused until the owner approves Strategies; the owner signs the prepared transaction.
 const spec = { kind: "trend", market: "BTC-TURBO", marginUsd: "10", leverage: 10, intervalSeconds: 60, fastPeriod: 2, slowPeriod: 4, stopLossBps: 50 };
