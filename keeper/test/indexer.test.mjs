@@ -4,23 +4,33 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { encodeAbiParameters, encodeEventTopics, pad } from "viem";
+import { encodeAbiParameters, encodeEventTopics, encodeFunctionResult, pad } from "viem";
+import { engineLensAbi } from "../src/abi.mjs";
 import {
   DAY,
   DAYS_KEPT,
   EVENT_ABI,
+  FINE,
+  FINE_POINTS,
+  HISTORY_HOURS,
   HOUR,
   applyEvent,
+  boundHistory,
   decodeLogs,
   deserialize,
+  emptyHistory,
   emptyState,
   findBlockAtTime,
   findDeployBlock,
   isRangeError,
   pricePnl,
   prune,
+  pruneHistory,
+  readHistory,
   recent,
   runIndexer,
+  sampleMarkets,
+  samplePoint,
   serialize,
 } from "../src/indexer.mjs";
 
@@ -272,6 +282,110 @@ test("the file format round-trips exactly", () => {
   assert.equal(deserialize({ schema: 99 }), null, "another schema starts over");
 });
 
+// ─────────────────────────────── Market history ───────────────────────────────
+
+const ZERO32 = `0x${"0".repeat(64)}`;
+/** One EngineLens.getMarkets() entry as viem decodes it. */
+function view(id, { rate = 0n, longOi = 0n, shortOi = 0n, mid = 0n, hasPrice = true, symbol = "BTC-USD" } = {}) {
+  return {
+    id,
+    market: {
+      enabled: true,
+      invert: false,
+      maxLeverage: 1000,
+      lastFundingTime: 0n,
+      expiry: 0n,
+      feedId: id,
+      quoteFeedId: ZERO32,
+      maxOiPerSide: usd(5_000_000),
+      skewScale: usd(1_000_000),
+      longOi,
+      shortOi,
+      longUnits: 0n,
+      shortUnits: 0n,
+      fundingIndex: 0n,
+      settlementPrice: 0n,
+      symbol,
+    },
+    fundingRate: rate,
+    hasPrice,
+    price: { mid, bid: mid, ask: mid, publishTime: 0n },
+  };
+}
+// 10% a year, per second, in 1e18.
+const TEN_PCT = (10n ** 17n) / BigInt(365 * DAY);
+
+test("a market sample: annualised funding in bp (sign = who pays), open interest in whole USDC, mid to 7 digits", () => {
+  const p = samplePoint(view(BTC, { rate: TEN_PCT, longOi: usd(1_234_567.89), shortOi: usd(0.4), mid: px(106_450.123456) }));
+  assert.ok(Math.abs(p.f - 1_000) <= 1, `10% a year is 1,000 bp (got ${p.f})`);
+  assert.equal(p.l, 1_234_567, "whole USDC, rounded down");
+  assert.equal(p.s, 0);
+  assert.equal(p.p, 106_450.1);
+  const shortsPay = samplePoint(view(BTC, { rate: -TEN_PCT * 3n }));
+  assert.ok(Math.abs(shortsPay.f + 3_000) <= 1, "negative: shorts pay");
+  assert.equal(samplePoint(view(BTC, { mid: px(100), hasPrice: false })).p, null, "no usable price: no mid");
+  assert.equal(samplePoint(view(ETH, { mid: 6_689_123_456_789_012n })).p, 0.006689123, "small prices keep 7 significant digits");
+});
+
+test("samples bucket by the hour and by 5 minutes: a later sample in the same bucket replaces the earlier", () => {
+  const h = emptyHistory();
+  sampleMarkets(h, [view(BTC, { longOi: usd(100) }), view(ETH, { shortOi: usd(7) })], T0 + 10);
+  sampleMarkets(h, [view(BTC, { longOi: usd(200) })], T0 + 290);
+  sampleMarkets(h, [view(BTC, { longOi: usd(300) })], T0 + 310);
+  assert.deepEqual(h.hourly[BTC], [[T0 / HOUR, 0, 300, 0, null]], "one point per hour: the latest");
+  assert.deepEqual(
+    h.fine[BTC].map((r) => [r[0], r[2]]),
+    [
+      [T0 / FINE, 200],
+      [T0 / FINE + 1, 300],
+    ],
+  );
+  assert.deepEqual(h.hourly[ETH], [[T0 / HOUR, 0, 0, 7, null]]);
+  assert.equal(h.sampledAt, T0 + 310);
+  // A sample older than the last one lands in its own place.
+  sampleMarkets(h, [view(BTC, { longOi: usd(50) })], T0 - HOUR);
+  assert.deepEqual(h.hourly[BTC].map((r) => r[0]), [T0 / HOUR - 1, T0 / HOUR]);
+  assert.equal(h.sampledAt, T0 + 310);
+});
+
+test("history keeps 30 days hourly and 24 hours of 5-minute points, and only the markets with the most open interest", () => {
+  const h = emptyHistory();
+  for (let k = 0; k < HISTORY_HOURS + 50; k += 1) sampleMarkets(h, [view(BTC, { longOi: usd(1) })], T0 + k * HOUR);
+  for (let k = 0; k < FINE_POINTS + 30; k += 1) sampleMarkets(h, [view(ETH, { shortOi: usd(2) })], T0 + k * FINE);
+  const now = T0 + (HISTORY_HOURS + 49) * HOUR;
+  pruneHistory(h, now);
+  assert.equal(h.hourly[BTC].length, HISTORY_HOURS);
+  assert.equal(h.hourly[BTC][0][0], Math.floor(now / HOUR) - HISTORY_HOURS + 1);
+  assert.equal(h.fine[ETH], undefined, "5-minute points from a month ago are gone");
+  assert.equal(h.fine[BTC].length, 24, "the last day of 5-minute buckets stays (BTC was sampled once an hour)");
+  assert.ok(h.fine[BTC][0][0] > Math.floor(now / FINE) - FINE_POINTS);
+  assert.ok(h.hourly[ETH] === undefined, "a market sampled only a month ago drops out");
+
+  const many = emptyHistory();
+  const ids = Array.from({ length: 6 }, (_, k) => `0x${String(k + 1).repeat(64)}`);
+  sampleMarkets(many, ids.map((id, k) => view(id, { longOi: usd(1_000 * (k + 1)) })), T0);
+  boundHistory(many, 4, 2);
+  assert.deepEqual(Object.keys(many.hourly).sort(), ids.slice(2).sort(), "the four with the most open interest");
+  assert.deepEqual(Object.keys(many.fine).sort(), ids.slice(4).sort());
+});
+
+test("market history round-trips in the file; old files and malformed points are read without failing", () => {
+  const s = fresh();
+  sampleMarkets(s.marketHistory, [view(BTC, { rate: TEN_PCT, longOi: usd(10), shortOi: usd(20), mid: px(100_000) })], T0);
+  const text = JSON.stringify(serialize(s));
+  const back = deserialize(JSON.parse(text));
+  assert.equal(JSON.stringify(serialize(back)), text);
+  assert.deepEqual(back.marketHistory.hourly[BTC][0].slice(2), [10, 20, 100_000]);
+
+  const old = JSON.parse(text);
+  delete old.marketHistory;
+  assert.deepEqual(deserialize(old).marketHistory, emptyHistory(), "a file from before market history");
+  const messy = readHistory({ v: 1, sampledAt: T0, hourly: { [BTC.toUpperCase().replace("0X", "0x")]: [[2, 1, 1, 1, null], ["x"], [1, 0, 0, 0, 5], [3, 0, 0, 0, "7"]] }, fine: { [ETH]: "nope" } });
+  assert.deepEqual(messy.hourly[BTC].map((r) => r[0]), [1, 2], "valid points kept, in order; ids lower-cased");
+  assert.deepEqual(messy.fine, {});
+  assert.deepEqual(readHistory({ v: 2 }), emptyHistory(), "an unknown version starts empty");
+});
+
 // ─────────────────────────────── Logs and RPC ───────────────────────────────
 
 function rawLog(eventName, args, blockNumber, logIndex = 0, extra = {}) {
@@ -324,8 +438,8 @@ test("range errors shrink the request; rate limits do not", () => {
 });
 
 /** A tiny JSON-RPC node: answers what the indexer asks, caps eth_getLogs ranges and rate-limits the first call. */
-function fakeNode({ head, deployBlock, logs, maxRange, rateLimitFirst = true, timestamps = true }) {
-  const seen = { getLogs: 0, ranges: [], limited: 0, getCode: 0 };
+function fakeNode({ head, deployBlock, logs, maxRange, rateLimitFirst = true, timestamps = true, markets = null }) {
+  const seen = { getLogs: 0, ranges: [], limited: 0, getCode: 0, calls: 0 };
   let first = rateLimitFirst;
   const server = createServer((req, res) => {
     let body = "";
@@ -340,7 +454,16 @@ function fakeNode({ head, deployBlock, logs, maxRange, rateLimitFirst = true, ti
         seen.getCode += 1;
         return reply(Number(BigInt(params[1])) >= deployBlock ? "0x6080" : "0x");
       }
-      if (method === "eth_getBlockByNumber") return reply({ number: params[0], timestamp: `0x${(T0 + Number(BigInt(params[0]))).toString(16)}` });
+      if (method === "eth_getBlockByNumber") {
+        const n = params[0] === "latest" ? head : Number(BigInt(params[0]));
+        return reply({ number: `0x${n.toString(16)}`, timestamp: `0x${(T0 + n).toString(16)}` });
+      }
+      if (method === "eth_call") {
+        seen.calls += 1;
+        if (!markets) return fail(-32000, "execution reverted");
+        // One output that is an array: viem takes an array result as the list of outputs, so wrap it.
+        return reply(encodeFunctionResult({ abi: engineLensAbi, functionName: "getMarkets", result: [markets] }));
+      }
       if (method === "eth_getLogs") {
         if (first) {
           first = false;
@@ -402,6 +525,40 @@ test("runIndexer: finds the deploy block, survives a 429 and a range cap, then r
     const reset = await runIndexer({ ...opts }, quiet);
     assert.equal(reset.state.deployBlock, 4_321);
     assert.equal(reset.state.traders[ALICE].trades, 1);
+  } finally {
+    node.close();
+  }
+});
+
+test("runIndexer samples funding and open interest from the lens each run, and a failed sample costs only that point", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "dp-indexer-"));
+  const statsFile = join(dir, "stats.json");
+  const LENS = "0x00000000000000000000000000000000000000f1";
+  const markets = [view(BTC, { rate: TEN_PCT, longOi: usd(1_500), shortOi: usd(500), mid: px(100_000) }), view(ETH, { rate: -TEN_PCT, shortOi: usd(80), mid: px(4_000), symbol: "ETH-USD" })];
+  const node = await fakeNode({ head: 7_200, deployBlock: 0, logs: [], maxRange: 10_000, rateLimitFirst: false, markets });
+  const opts = { urls: [node.url], chainId: 31337, engine: ENGINE, lens: LENS, statsFile, startBlock: 0, deployedAt: null, maxSeconds: 60, logRange: 10_000, safetyBlocks: 0 };
+  try {
+    const first = await runIndexer(opts, () => {});
+    const hour = Math.floor((T0 + 7_200) / HOUR);
+    assert.deepEqual(first.state.marketHistory.hourly[BTC], [[hour, 999, 1_500, 500, 100_000]]);
+    assert.deepEqual(first.state.marketHistory.fine[ETH][0].slice(1), [-999, 0, 80, 4_000]);
+    const file = JSON.parse(readFileSync(statsFile, "utf8"));
+    assert.equal(file.marketHistory.sampledAt, T0 + 7_200);
+    assert.deepEqual(file.marketHistory.hourly[BTC][0], [hour, 999, 1_500, 500, 100_000]);
+
+    // Without a lens nothing is asked; with a lens that fails, the run still writes the file and keeps old points.
+    const calls = node.seen.calls;
+    await runIndexer({ ...opts, lens: null }, () => {});
+    assert.equal(node.seen.calls, calls);
+    const broken = await fakeNode({ head: 7_300, deployBlock: 0, logs: [], maxRange: 10_000, rateLimitFirst: false, markets: null });
+    try {
+      const notes = [];
+      const third = await runIndexer({ ...opts, urls: [broken.url] }, (m) => notes.push(m));
+      assert.ok(notes.some((m) => /market sample skipped/.test(m)));
+      assert.deepEqual(third.state.marketHistory.hourly[BTC], [[hour, 999, 1_500, 500, 100_000]]);
+    } finally {
+      broken.close();
+    }
   } finally {
     node.close();
   }

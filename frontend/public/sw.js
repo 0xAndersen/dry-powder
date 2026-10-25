@@ -3,7 +3,7 @@
 const VERSION = "__SW_VERSION__";
 const SHELL = `dp-shell-${VERSION}`;
 const ASSETS = `dp-assets-${VERSION}`;
-const PAGES = ["simple/", "trade/", "markets/", "portfolio/", "activity/", "leaderboard/", "trader/", "house/", "agents/"];
+const PAGES = ["simple/", "trade/", "markets/", "charts/", "portfolio/", "activity/", "leaderboard/", "trader/", "house/", "agents/"];
 const STATIC = ["manifest.webmanifest", "favicon.svg", "icon-192.png", "icon-512.png", "apple-touch-icon.png"];
 
 self.addEventListener("install", (event) => {

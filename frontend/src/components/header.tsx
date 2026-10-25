@@ -20,6 +20,7 @@ import { currentRoute, type Route } from "@/lib/nav";
 const NAV: readonly { route: Route; label: string }[] = [
   { route: "trade", label: "Trade" },
   { route: "markets", label: "Markets" },
+  { route: "charts", label: "Charts" },
   { route: "portfolio", label: "Portfolio" },
   { route: "activity", label: "Activity" },
   { route: "leaderboard", label: "Leaderboard" },

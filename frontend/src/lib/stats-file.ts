@@ -31,10 +31,66 @@ export function statsUrlFor(cfg: RuntimeConfig): string | null {
 }
 
 export type StatsFileResult =
-  | { status: "ready"; state: StatsState }
+  | { status: "ready"; state: StatsState; history: MarketHistory }
   | { status: "missing" }
   | { status: "mismatch"; engine: string; chainId: number }
   | { status: "error"; error: string };
+
+// ─────────────────────────────── Market history ───────────────────────────────
+
+/** One sample of a market's funding and open interest (stats.json `marketHistory`, keeper/src/indexer.mjs). */
+export type HistoryPoint = {
+  /** Unix seconds at the start of the hour (hourly series) or of the 5 minutes (fine series). */
+  time: number;
+  /** Funding, annualised, in basis points; positive: longs pay shorts. */
+  fundingBps: number;
+  /** Long and short open interest, whole USDC. */
+  longOi: number;
+  shortOi: number;
+  /** Oracle mid, or null when the market had no usable price. */
+  mid: number | null;
+};
+
+/** Hourly points for 30 days and 5-minute points for the last 24 hours, by lower-case market id. */
+export type MarketHistory = { sampledAt: number; hourly: Record<string, HistoryPoint[]>; fine: Record<string, HistoryPoint[]> };
+
+export const HISTORY_HOUR_SECONDS = 3_600;
+export const HISTORY_FINE_SECONDS = 300;
+
+export function emptyMarketHistory(): MarketHistory {
+  return { sampledAt: 0, hourly: {}, fine: {} };
+}
+
+const finiteOrNull = (v: unknown): v is number | null => v === null || (typeof v === "number" && Number.isFinite(v));
+
+/** Reads `marketHistory` (points `[i, f, l, s, p]`). Optional: a file without it, or with bad points, still loads. */
+export function parseMarketHistory(raw: unknown): MarketHistory {
+  const out = emptyMarketHistory();
+  if (!raw || typeof raw !== "object") return out;
+  const r = raw as Raw;
+  if (r.v !== 1) return out;
+  out.sampledAt = Number(r.sampledAt) || 0;
+  for (const [name, seconds] of [
+    ["hourly", HISTORY_HOUR_SECONDS],
+    ["fine", HISTORY_FINE_SECONDS],
+  ] as const) {
+    const series = r[name];
+    if (!series || typeof series !== "object") continue;
+    for (const [id, list] of Object.entries(series as Raw)) {
+      if (!Array.isArray(list)) continue;
+      const points: HistoryPoint[] = [];
+      for (const p of list) {
+        if (!Array.isArray(p) || p.length !== 5) continue;
+        const [i, f, l, s, mid] = p as unknown[];
+        if (!Number.isInteger(i) || typeof f !== "number" || typeof l !== "number" || typeof s !== "number" || !finiteOrNull(mid)) continue;
+        if (!Number.isFinite(f) || !Number.isFinite(l) || !Number.isFinite(s)) continue;
+        points.push({ time: (i as number) * seconds, fundingBps: f, longOi: l, shortOi: s, mid: mid as number | null });
+      }
+      if (points.length > 0) out[name][id.toLowerCase()] = points.sort((a, b) => a.time - b.time);
+    }
+  }
+  return out;
+}
 
 type Raw = Record<string, unknown>;
 
@@ -117,7 +173,7 @@ export function parseStatsFile(json: unknown, cfg: Pick<RuntimeConfig, "chainId"
     state.traders[id.toLowerCase()] = trader;
   }
   for (const [key, p] of Object.entries((j.open as Raw) ?? {})) state.open[key.toLowerCase()] = shaped(OPEN, p);
-  return { status: "ready", state };
+  return { status: "ready", state, history: parseMarketHistory(j.marketHistory) };
 }
 
 export async function fetchStatsFile(url: string, cfg: Pick<RuntimeConfig, "chainId" | "perpEngine">, signal?: AbortSignal): Promise<StatsFileResult> {

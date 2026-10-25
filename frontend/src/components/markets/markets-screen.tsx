@@ -1,12 +1,15 @@
 "use client";
 
-import { useDeferredValue, useMemo, useState } from "react";
+import { Fragment, useDeferredValue, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { AppLink } from "@/components/app-link";
+import { FundingOiPanel } from "@/components/market-history/funding-oi-panel";
 import { Tip } from "@/components/tip";
 import { Sparkline } from "@/components/ui/sparkline";
 import { useDayStatsMany, type DayView } from "@/hooks/use-day-stats";
 import { useLocalStore } from "@/hooks/use-local-store";
 import { useChainNow, useMarketData, type MarketPrice } from "@/hooks/use-market-data";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { useVenueStats } from "@/hooks/use-venue-stats";
 import { recentBig } from "@/lib/aggregate";
 import { USDC_DECIMALS, fmtCompact, fmtDuration, fmtNum, fmtPercent, fmtUsdc } from "@/lib/format";
@@ -135,6 +138,10 @@ export function MarketsScreen() {
   const [favourites] = useLocalStore(watchlist);
   const [view, setView] = useLocalStore(viewStore);
   const [query, setQuery] = useState("");
+  // The market whose funding and open-interest history is unfolded (one at a time), drawn only in the layout shown.
+  const [historyOf, setHistoryOf] = useState<string | null>(null);
+  const toggleHistory = (id: string) => setHistoryOf((current) => (current === id ? null : id));
+  const wide = useMediaQuery("(min-width: 768px)");
   const q = useDeferredValue(query.trim().toLowerCase());
   const searchParams = useSearchParams();
   const hrefOf = (i: Instrument) => hrefFor("trade", stickyQuery(new URLSearchParams(searchParams.toString()), { market: marketSlug(i) }));
@@ -204,6 +211,9 @@ export function MarketsScreen() {
             {instruments.length > 0 ? `${instruments.length} markets. Prices from the tape; trades fill at the on-chain oracle price.` : loading ? "Loading markets…" : error ? "Markets unavailable: the RPC did not answer. Retrying." : "No markets listed."}
           </p>
         </div>
+        <AppLink route="charts" className="btn btn-sm" data-testid="open-chart-wall">
+          Chart wall
+        </AppLink>
       </div>
 
       <section className="panel" aria-label="Venue totals">
@@ -342,7 +352,26 @@ export function MarketsScreen() {
               </thead>
               <tbody>
                 {rows.map((i) => (
-                  <TableRow key={i.id} href={hrefOf(i)} instrument={i} price={prices.get(i.id)} day={day.get(i.id)} starred={favourites.includes(i.symbol)} chainNow={chainNow} volume={volumeKnown ? (volume.get(i.id) ?? 0n) : null} />
+                  <Fragment key={i.id}>
+                    <TableRow
+                      href={hrefOf(i)}
+                      instrument={i}
+                      price={prices.get(i.id)}
+                      day={day.get(i.id)}
+                      starred={favourites.includes(i.symbol)}
+                      chainNow={chainNow}
+                      volume={volumeKnown ? (volume.get(i.id) ?? 0n) : null}
+                      historyOpen={historyOf === i.id}
+                      onToggleHistory={() => toggleHistory(i.id)}
+                    />
+                    {historyOf === i.id && wide ? (
+                      <tr className="history-row" data-testid={`market-history-${i.symbol}`}>
+                        <td colSpan={10} className="bg-bg/40 p-0">
+                          <FundingOiPanel marketId={i.id} />
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -350,7 +379,18 @@ export function MarketsScreen() {
 
           <ul className="grid grid-cols-1 gap-1.5 md:hidden" aria-label="Markets">
             {rows.map((i) => (
-              <MarketCard key={i.id} href={hrefOf(i)} instrument={i} price={prices.get(i.id)} day={day.get(i.id)} starred={favourites.includes(i.symbol)} chainNow={chainNow} volume={volumeKnown ? (volume.get(i.id) ?? 0n) : null} />
+              <MarketCard
+                key={i.id}
+                href={hrefOf(i)}
+                instrument={i}
+                price={prices.get(i.id)}
+                day={day.get(i.id)}
+                starred={favourites.includes(i.symbol)}
+                chainNow={chainNow}
+                volume={volumeKnown ? (volume.get(i.id) ?? 0n) : null}
+                historyOpen={historyOf === i.id && !wide}
+                onToggleHistory={() => toggleHistory(i.id)}
+              />
             ))}
           </ul>
         </>
@@ -364,9 +404,39 @@ export function MarketsScreen() {
   );
 }
 
-type RowProps = { href: string; instrument: Instrument; price: MarketPrice | undefined; day: DayView | undefined; starred: boolean; chainNow: number; volume: bigint | null };
+type RowProps = {
+  href: string;
+  instrument: Instrument;
+  price: MarketPrice | undefined;
+  day: DayView | undefined;
+  starred: boolean;
+  chainNow: number;
+  volume: bigint | null;
+  historyOpen: boolean;
+  onToggleHistory: () => void;
+};
 
-function TableRow({ href, instrument: i, price, day, starred, chainNow, volume }: RowProps) {
+/** Unfolds the market's funding and open-interest history. */
+function HistoryToggle({ instrument, open, onToggle, className = "" }: { instrument: Instrument; open: boolean; onToggle: () => void; className?: string }) {
+  return (
+    <button
+      type="button"
+      className={`btn btn-sm btn-ghost ${className}`}
+      aria-expanded={open}
+      aria-label={`${open ? "Hide" : "Show"} ${instrument.symbol} funding and open-interest history`}
+      title="Funding and open interest over time"
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle();
+      }}
+      data-testid={`history-toggle-${instrument.symbol}`}
+    >
+      History <span aria-hidden="true">{open ? "▴" : "▾"}</span>
+    </button>
+  );
+}
+
+function TableRow({ href, instrument: i, price, day, starred, chainNow, volume, historyOpen, onToggleHistory }: RowProps) {
   const change = day?.change ?? null;
   const total = i.longOi + i.shortOi;
   return (
@@ -407,15 +477,18 @@ function TableRow({ href, instrument: i, price, day, starred, chainNow, volume }
       </td>
       <td className="r num">{i.maxLeverage}x</td>
       <td className="r">
-        <a href={href} className="btn btn-sm" aria-label={`Trade ${i.symbol}`}>
-          Trade
-        </a>
+        <span className="inline-flex items-center gap-1">
+          <HistoryToggle instrument={i} open={historyOpen} onToggle={onToggleHistory} />
+          <a href={href} className="btn btn-sm" aria-label={`Trade ${i.symbol}`}>
+            Trade
+          </a>
+        </span>
       </td>
     </tr>
   );
 }
 
-function MarketCard({ href, instrument: i, price, day, starred, chainNow, volume }: RowProps) {
+function MarketCard({ href, instrument: i, price, day, starred, chainNow, volume, historyOpen, onToggleHistory }: RowProps) {
   const change = day?.change ?? null;
   const total = i.longOi + i.shortOi;
   return (
@@ -461,6 +534,15 @@ function MarketCard({ href, instrument: i, price, day, starred, chainNow, volume
           <dd className="num text-xs text-text">{i.maxLeverage}x</dd>
         </div>
       </dl>
+      {/* Above the card-wide link, so the toggle and the charts take their own taps. */}
+      <div className="relative z-[1] mt-1.5 flex justify-end">
+        <HistoryToggle instrument={i} open={historyOpen} onToggle={onToggleHistory} className="-mr-1 h-7" />
+      </div>
+      {historyOpen ? (
+        <div className="relative z-[1] -mx-3 -mb-2.5 mt-1 border-t border-line bg-bg/40" data-testid={`market-history-${i.symbol}`}>
+          <FundingOiPanel marketId={i.id} height={220} />
+        </div>
+      ) : null}
     </li>
   );
 }

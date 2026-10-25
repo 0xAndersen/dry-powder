@@ -96,11 +96,13 @@ export function CommandPalette() {
     const pages: [Route, string, string][] = [
       ["trade", "Trade", "chart ticket"],
       ["markets", "Markets", "prices funding open interest"],
+      ["charts", "Chart wall", "multi chart grid layout"],
       ["portfolio", "Portfolio", "pnl journal stats"],
       ["activity", "Activity", "feed trades liquidations"],
       ["leaderboard", "Leaderboard", "season top traders"],
       ["house", "House", "vault stake DRY yield"],
-      ["agents", "Agents", "bots api accounts"],
+      ["agents", "Agents", "bots api accounts strategies studio"],
+      ["simple", "Simple mode", "easy up down beginner"],
     ];
     for (const [r, label, keywords] of pages) out.push({ id: `p-${r}`, label, group: "Go to", keywords, run: () => go(r) });
     out.push(

@@ -53,6 +53,7 @@ const TABS: readonly { route: Route; label: string }[] = [
 ];
 
 const MORE: readonly { route: Route; label: string; hint: string }[] = [
+  { route: "charts", label: "Chart wall", hint: "Up to six charts side by side" },
   { route: "leaderboard", label: "Leaderboard", hint: "Top traders this season" },
   { route: "house", label: "House", hint: "Be the counterparty: the vault and DRY staking" },
   { route: "agents", label: "Agents", hint: "Accounts that bots and AI agents trade from" },

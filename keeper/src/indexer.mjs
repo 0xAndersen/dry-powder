@@ -9,15 +9,19 @@
 // engine or chain) it starts again from the block the engine was deployed in, found by binary search on eth_getCode.
 // A run stops after MAX_SECONDS and saves its progress, so a long back-fill spreads over several runs.
 //
-// Environment: DEPLOYMENT (deployment JSON with engine, chainId, rpcUrl, deployedAt), STATS_FILE (default ./stats.json),
-// RPC_URL / RPC_URLS, CHAIN_ID, PERP_ENGINE_ADDRESS, START_BLOCK (skips the deploy-block search), MAX_SECONDS
-// (default 240), LOG_RANGE (blocks per eth_getLogs, default 10000, halved on range errors), SAFETY_BLOCKS (how far
-// behind the head to stop, default 10, so a lagging RPC node behind a load balancer cannot hide recent logs).
+// Environment: DEPLOYMENT (deployment JSON with engine, lens, chainId, rpcUrl, deployedAt), STATS_FILE (default
+// ./stats.json), RPC_URL / RPC_URLS, CHAIN_ID, PERP_ENGINE_ADDRESS, ENGINE_LENS_ADDRESS, START_BLOCK (skips the
+// deploy-block search), MAX_SECONDS (default 240), LOG_RANGE (blocks per eth_getLogs, default 10000, halved on range
+// errors), SAFETY_BLOCKS (how far behind the head to stop, default 10, so a lagging RPC node behind a load balancer
+// cannot hide recent logs).
+//
+// Funding and open interest are state, not events: each run also samples EngineLens.getMarkets() once (when the
+// lens address is known) into `marketHistory` (see "Market history" below).
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { decodeEventLog, encodeEventTopics } from "viem";
-import { perpEngineAbi } from "./abi.mjs";
+import { decodeEventLog, decodeFunctionResult, encodeEventTopics, encodeFunctionData } from "viem";
+import { engineLensAbi, perpEngineAbi } from "./abi.mjs";
 
 export const SCHEMA = 1;
 export const DAY = 86_400;
@@ -189,6 +193,7 @@ export function emptyState({ chainId, engine, deployBlock = 0, deployTime = 0 })
     markets: {},
     traders: {},
     open: {},
+    marketHistory: emptyHistory(),
   };
 }
 
@@ -429,6 +434,10 @@ export function prune(state, now) {
     t.hours = t.hours.filter((b) => b.i >= firstHour);
   }
   for (const m of Object.values(state.markets)) m.hours = (m.hours ?? []).filter((b) => b.i >= firstHour);
+  // Counted back from the latest sample (the chain's clock), so a pause in sampling never empties the history.
+  state.marketHistory ??= emptyHistory();
+  pruneHistory(state.marketHistory, state.marketHistory.sampledAt || now);
+  boundHistory(state.marketHistory);
 }
 
 /** Sum of `field` over the hourly buckets of the `seconds` up to `now` (default: the last 24 hours, by the hour). */
@@ -438,6 +447,141 @@ export function recent(buckets, field, now, seconds = DAY) {
   let total = typeof (buckets[0]?.[field] ?? 0n) === "bigint" ? 0n : 0;
   for (const b of buckets) if (b.i >= from && b.i <= to) total += b[field];
   return total;
+}
+
+// ─────────────────────────────── Market history ───────────────────────────────
+//
+// `marketHistory` in stats.json (optional: files without it still parse, and readers that do not know it ignore it):
+//   { v: 1, sampledAt, hourly: { [marketId]: Point[] }, fine: { [marketId]: Point[] } }
+// A Point is [i, f, l, s, p]:
+//   i  hour number (hourly) or 5-minute number (fine): unix seconds / 3600 or / 300, floored
+//   f  funding, annualised, in basis points (the engine's rate per second x seconds in a year); positive: longs pay
+//   l  long open interest, whole USDC        s  short open interest, whole USDC (skew = l - s)
+//   p  oracle mid price to 7 significant digits, or null when the market had no usable price
+// One sample per run; a later sample in the same hour (or 5 minutes) replaces the earlier one. Hourly points are kept
+// for 30 days and fine points for 24 hours. With many markets only those with the most open interest are kept
+// (MAX_HOURLY_MARKETS / MAX_FINE_MARKETS), so the file stays small: about 30 kB per market at most.
+
+export const FINE = 300;
+export const HISTORY_HOURS = 30 * 24;
+export const FINE_POINTS = 24 * 12;
+export const MAX_HOURLY_MARKETS = 32;
+export const MAX_FINE_MARKETS = 16;
+const YEAR = 365 * DAY;
+
+export function emptyHistory() {
+  return { v: 1, sampledAt: 0, hourly: {}, fine: {} };
+}
+
+/** A point's figures from one EngineLens.getMarkets() view (as viem decodes it: bigints). */
+export function samplePoint(view) {
+  const rate = BigInt(view.fundingRate);
+  const f = Number((rate * BigInt(YEAR) * 10_000n) / 10n ** 18n);
+  const l = Number(BigInt(view.market.longOi) / 1_000_000n);
+  const s = Number(BigInt(view.market.shortOi) / 1_000_000n);
+  const mid = view.hasPrice ? Number(BigInt(view.price.mid)) / 1e18 : 0;
+  const p = mid > 0 && Number.isFinite(mid) ? Number(mid.toPrecision(7)) : null;
+  return { f, l, s, p };
+}
+
+function put(list, row) {
+  const i = row[0];
+  const last = list[list.length - 1];
+  if (!last || last[0] < i) {
+    list.push(row);
+    return;
+  }
+  if (last[0] === i) {
+    list[list.length - 1] = row;
+    return;
+  }
+  // Out of order (a sample older than the last one): replace or insert in place.
+  const at = list.findIndex((r) => r[0] >= i);
+  if (list[at][0] === i) list[at] = row;
+  else list.splice(at, 0, row);
+}
+
+/** Records one sample of every market at `time` (unix seconds). `history` is mutated. */
+export function sampleMarkets(history, views, time) {
+  const hour = Math.floor(time / HOUR);
+  const fine = Math.floor(time / FINE);
+  for (const view of views) {
+    const id = String(view.id).toLowerCase();
+    const { f, l, s, p } = samplePoint(view);
+    put((history.hourly[id] ??= []), [hour, f, l, s, p]);
+    put((history.fine[id] ??= []), [fine, f, l, s, p]);
+  }
+  if (time > history.sampledAt) history.sampledAt = time;
+}
+
+/** Drops hourly points older than 30 days and fine points older than 24 hours, counted back from `now`. */
+export function pruneHistory(history, now) {
+  const firstHour = Math.floor(now / HOUR) - (HISTORY_HOURS - 1);
+  const firstFine = Math.floor(now / FINE) - (FINE_POINTS - 1);
+  for (const [series, first] of [
+    [history.hourly, firstHour],
+    [history.fine, firstFine],
+  ]) {
+    for (const [id, list] of Object.entries(series)) {
+      const kept = list.filter((r) => r[0] >= first);
+      if (kept.length > 0) series[id] = kept;
+      else delete series[id];
+    }
+  }
+}
+
+/** Keeps at most `maxHourly` / `maxFine` markets: those with the most open interest at their latest point. */
+export function boundHistory(history, maxHourly = MAX_HOURLY_MARKETS, maxFine = MAX_FINE_MARKETS) {
+  for (const [series, max] of [
+    [history.hourly, maxHourly],
+    [history.fine, maxFine],
+  ]) {
+    const ids = Object.keys(series);
+    if (ids.length <= max) continue;
+    const oi = (id) => {
+      const last = series[id][series[id].length - 1];
+      return last ? last[2] + last[3] : 0;
+    };
+    for (const id of ids.sort((a, b) => oi(b) - oi(a) || a.localeCompare(b)).slice(max)) delete series[id];
+  }
+}
+
+const isPoint = (r) =>
+  Array.isArray(r) &&
+  r.length === 5 &&
+  Number.isInteger(r[0]) &&
+  Number.isFinite(r[1]) &&
+  Number.isFinite(r[2]) &&
+  Number.isFinite(r[3]) &&
+  (r[4] === null || Number.isFinite(r[4]));
+
+/** Reads `marketHistory` from a parsed file; anything malformed is dropped rather than failing the file. */
+export function readHistory(raw) {
+  const out = emptyHistory();
+  if (!raw || typeof raw !== "object" || raw.v !== 1) return out;
+  out.sampledAt = Number(raw.sampledAt) || 0;
+  for (const name of ["hourly", "fine"]) {
+    for (const [id, list] of Object.entries(raw[name] ?? {})) {
+      if (!Array.isArray(list)) continue;
+      const points = list.filter(isPoint).sort((a, b) => a[0] - b[0]);
+      if (points.length > 0) out[name][id.toLowerCase()] = points;
+    }
+  }
+  return out;
+}
+
+const GET_MARKETS = encodeFunctionData({ abi: engineLensAbi, functionName: "getMarkets" });
+
+/** Samples EngineLens.getMarkets() at the latest block into `state.marketHistory`. Returns the number of markets. */
+export async function sampleFromLens(rpc, lens, state) {
+  const latest = await rpc.call("eth_getBlockByNumber", ["latest", false]);
+  if (!latest) throw new Error("no latest block");
+  const time = Number(BigInt(latest.timestamp));
+  const data = await rpc.call("eth_call", [{ to: lens, data: GET_MARKETS }, latest.number]);
+  const views = decodeFunctionResult({ abi: engineLensAbi, functionName: "getMarkets", data });
+  state.marketHistory ??= emptyHistory();
+  sampleMarkets(state.marketHistory, views, time);
+  return views.length;
 }
 
 // ─────────────────────────────── File format ───────────────────────────────
@@ -502,6 +646,7 @@ export function deserialize(json) {
   }
   const OPEN = { trader: "", market: "", long: false, size: 0n, margin: 0n, entry: 0n, fees: 0n, realised: 0n, openTime: 0, openBlock: 0 };
   for (const [key, p] of Object.entries(json.open ?? {})) state.open[key] = shaped(OPEN, p);
+  state.marketHistory = readHistory(json.marketHistory);
   return state;
 }
 
@@ -633,8 +778,10 @@ function settings(env) {
   ];
   if (!urls.length) throw new Error("set RPC_URL or RPC_URLS");
   const deployedAt = d.deployedAt ? Math.floor(Date.parse(d.deployedAt) / 1000) : null;
+  const lens = env.ENGINE_LENS_ADDRESS || d.lens || "";
   return {
     engine: engine.toLowerCase(),
+    lens: /^0x[0-9a-fA-F]{40}$/.test(lens) ? lens.toLowerCase() : null,
     chainId,
     urls,
     deployedAt: Number.isFinite(deployedAt) ? deployedAt : null,
@@ -758,13 +905,23 @@ export async function runIndexer(opts, log = (...m) => console.log(new Date().to
   }
 
   if (state.cursorBlock >= state.deployBlock) state.cursorTime = await timeOfBlock(state.cursorBlock);
+  // One sample of funding and open interest per run; a failure costs this point only, never the run.
+  let sampled = 0;
+  if (opts.lens) {
+    try {
+      sampled = await sampleFromLens(rpc, opts.lens, state);
+    } catch (error) {
+      log(`market sample skipped: ${String(error?.shortMessage ?? error?.message ?? error).split("\n")[0]}`);
+    }
+  }
   state.updatedAt = new Date().toISOString();
   prune(state, Math.max(state.cursorTime, Math.floor(Date.now() / 1000)));
   writeAtomic(opts.statsFile, state);
   const behind = target - state.cursorBlock;
   log(
     `cursor ${state.cursorBlock} (head ${head}${behind > 0 ? `, ${behind} blocks still to read` : ""}), ${chunks} log requests, ` +
-      `${state.events} events, ${Object.keys(state.traders).length} traders, ${Object.keys(state.open).length} open positions -> ${opts.statsFile}`,
+      `${state.events} events, ${Object.keys(state.traders).length} traders, ${Object.keys(state.open).length} open positions, ` +
+      `${sampled} markets sampled -> ${opts.statsFile}`,
   );
   return { state, head, behind };
 }

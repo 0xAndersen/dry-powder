@@ -6,6 +6,7 @@ import type { TradeCommand } from "@/components/command-palette";
 import { AccountBar } from "@/components/trade/account-bar";
 import { Onboarding } from "@/components/trade/onboarding";
 import { AccountTables, type TablesHandle } from "@/components/trade/account-tables";
+import { FundingOiToggle } from "@/components/trade/funding-oi-toggle";
 import { MarketHeader } from "@/components/trade/market-header";
 import { OrderTicket, type TicketDraft, type TicketHandle } from "@/components/trade/order-ticket";
 import { PriceChart, type ChartLine, type ChartMarker, type PickTarget } from "@/components/trade/price-chart";
@@ -348,6 +349,7 @@ export function TradeScreen() {
             chainNow={chainNow}
             markers={markers}
           />
+          <FundingOiToggle marketId={instrument.id} />
         </div>
         {!desktop && ticketOpen ? <div className="ticket-backdrop" aria-hidden="true" onClick={() => setTicketOpen(false)} /> : null}
         <div

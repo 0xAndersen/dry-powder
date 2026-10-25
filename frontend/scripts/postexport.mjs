@@ -63,7 +63,7 @@ writeFileSync(
 <body>
 <div>
 <h1 style="font-size:22px;margin:0 0 8px">This page does not exist</h1>
-<p style="color:#b0a898;margin:0 0 16px">The address may be mistyped. Pages live at <code>trade/</code>, <code>markets/</code>, <code>portfolio/</code>, <code>activity/</code>, <code>leaderboard/</code>, <code>house/</code>, <code>agents/</code> and <code>simple/</code>, with the trailing slash.</p>
+<p style="color:#b0a898;margin:0 0 16px">The address may be mistyped. Pages live at <code>simple/</code>, <code>trade/</code>, <code>markets/</code>, <code>charts/</code>, <code>portfolio/</code>, <code>activity/</code>, <code>leaderboard/</code>, <code>house/</code> and <code>agents/</code>, with the trailing slash.</p>
 <p><a id="home" href="./trade/">Go to trading</a></p>
 </div>
 <script>
