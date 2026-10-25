@@ -21,8 +21,8 @@ async function loadPlaywright() {
   }
 }
 
+/** A Chromium installed outside Playwright's cache, for machines where Playwright's own build is missing. */
 function findChromium() {
-  if (process.env.CHROMIUM) return process.env.CHROMIUM;
   const root = process.env.PLAYWRIGHT_BROWSERS_PATH ?? "/opt/pw-browsers";
   if (!existsSync(root)) return undefined;
   const dir = readdirSync(root).find((d) => /^chromium-\d+$/.test(d));
@@ -49,9 +49,22 @@ export const walletScript = (address = UI_TRADER.address, rpc = RPC_URL) => `
     },
   };`;
 
+/**
+ * Headless Chromium as the app's users run it. CHROMIUM names a binary; otherwise Playwright's own Chromium in the
+ * new headless mode (`channel: "chromium"`), because the old headless shell Playwright launches by default reports
+ * notifications as denied whatever the context grants, which hides the push setting's real path.
+ */
 export async function launch() {
   const { chromium } = await loadPlaywright();
-  return chromium.launch({ args: ["--no-proxy-server"], executablePath: findChromium() });
+  const args = ["--no-proxy-server"];
+  if (process.env.CHROMIUM) return chromium.launch({ args, executablePath: process.env.CHROMIUM });
+  try {
+    return await chromium.launch({ args, channel: "chromium" });
+  } catch (e) {
+    const executablePath = findChromium();
+    if (!executablePath) throw e;
+    return chromium.launch({ args, executablePath });
+  }
 }
 
 /** A page in a fresh context. `wallet: false` gives a browser with no wallet extension. */

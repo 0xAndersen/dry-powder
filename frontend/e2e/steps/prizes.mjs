@@ -118,7 +118,10 @@ export default async function prizes({ step, page, t, read, shot, addresses, pub
       // Headless Chromium has no push service to register with: the relay is asked for its key, then the browser's
       // subscribe() fails or (with a push service) the subscription reaches the relay.
       await page.waitForFunction(() => document.querySelector('[data-testid="push-setting"] [role="alert"]') || /Watching/.test(document.querySelector('[data-testid="push-status"]')?.textContent ?? ""), null, { timeout: 20_000 });
-      if (!seen.some((s) => s.startsWith("GET /vapid"))) throw new Error(`the app never asked the relay for its key (${seen.join(", ")})`);
+      if (!seen.some((s) => s.startsWith("GET /vapid"))) {
+        const alert = await page.locator('[data-testid="push-setting"] [role="alert"]').first().innerText().catch(() => "");
+        throw new Error(`the app never asked the relay for its key (requests: ${seen.join(", ") || "none"}; the app said: ${alert || "nothing"})`);
+      }
       const said = (await t("push-setting").innerText()).replace(/\s+/g, " ");
       if (store.size === 1) return `subscribed: ${said}`;
       if (await t("push-toggle").isChecked()) throw new Error("the toggle shows on although subscribing failed");
