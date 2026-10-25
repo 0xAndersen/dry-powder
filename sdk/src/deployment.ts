@@ -3,12 +3,17 @@ import type { Address, Hex } from "viem";
 /** The shape of deployments/arc-testnet.json, written by the deploy workflows. */
 export interface Deployment {
   network?: string;
+  /** "v3.2" for the deployment this SDK version targets. */
+  version?: string;
   chainId: number;
   rpcUrl?: string;
   explorerUrl?: string;
   appUrl?: string;
   collateral?: "test" | "usdc";
+  /** The one engine address (v3.2: PerpEngine, which runs PerpEngineExt for everything off the trading path). */
   engine: Address;
+  /** PerpEngineExt (v3.2), for reference only: every call goes to `engine`. */
+  engineExt?: Address;
   lens: Address;
   vault: Address;
   token: Address;
@@ -20,6 +25,12 @@ export interface Deployment {
   trailingStops?: Address;
   /** TwapOrders add-on (v3.1 deployments). */
   twapOrders?: Address;
+  /** Strategies add-on (v3.2): on-chain trend, mean-reversion and copy agents for agent accounts. */
+  strategies?: Address;
+  /** AgentRegistry (v3.2): agent accounts listed with a name, kind and description. */
+  agentRegistry?: Address;
+  /** PrizeDistributor (v3.2): season prizes, claimed with a Merkle proof. */
+  prizeDistributor?: Address;
   markets?: { symbol: string; id: Hex }[];
 }
 
