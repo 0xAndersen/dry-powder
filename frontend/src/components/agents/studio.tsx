@@ -471,7 +471,7 @@ export function AgentStudio({ account, accountKnown, prefill }: { account: Addre
       </div>
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-4 py-2">
-        <div role="radiogroup" aria-label="Strategy" className="segmented min-w-0 flex-1 sm:max-w-[34rem]" onKeyDown={onTemplateKey}>
+        <div role="radiogroup" aria-label="Strategy" className="segmented w-full min-w-0 sm:w-auto sm:flex-1 sm:max-w-[34rem]" onKeyDown={onTemplateKey}>
           {TEMPLATES.map((t) => (
             <button
               key={t.key}
