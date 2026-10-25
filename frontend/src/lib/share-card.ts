@@ -271,7 +271,7 @@ export function cardFileName(card: ShareCard, date = new Date()): string {
 export function displayUrl(href: string): string {
   try {
     const u = new URL(href);
-    const path = u.pathname.replace(/\/(trade|markets|portfolio|activity|leaderboard|trader|house|agents)\/?$/, "").replace(/\/$/, "");
+    const path = u.pathname.replace(/\/(trade|markets|portfolio|activity|leaderboard|trader|house|agents|simple|charts)\/?$/, "").replace(/\/$/, "");
     return `${u.host}${path}`;
   } catch {
     return href;

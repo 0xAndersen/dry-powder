@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import { AlertWatcher } from "@/components/alert-watcher";
 import { Header } from "@/components/header";
 import { CommandPalette } from "@/components/command-palette";
@@ -9,6 +10,7 @@ import { MobileNav } from "@/components/mobile-nav";
 import { ServiceWorkerManager } from "@/components/pwa";
 import { RiskWatcher } from "@/components/risk-watcher";
 import { Toasts } from "@/components/toasts";
+import { currentRoute } from "@/lib/nav";
 
 /**
  * Everything below the providers is live chain and wallet state, none of which exists on the server. The shell
@@ -18,11 +20,20 @@ import { Toasts } from "@/components/toasts";
 export function Shell({ children }: { children: ReactNode }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  // Simple mode is a different room: its own palette (on the root, so portals follow) and its own chrome.
+  const simple = currentRoute(usePathname() ?? "") === "simple";
+  useEffect(() => {
+    const root = document.documentElement;
+    if (simple) root.dataset.ui = "simple";
+    else delete root.dataset.ui;
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (meta) meta.content = getComputedStyle(root).getPropertyValue("--color-bg").trim() || meta.content;
+  }, [simple]);
 
   if (!mounted) {
     return (
       <>
-        <div className="h-12 border-b border-line" />
+        {simple ? null : <div className="h-12 border-b border-line" />}
         <main className="mx-auto flex h-64 w-full max-w-[1760px] items-center justify-center gap-2 text-muted" role="status">
           <span className="spinner" aria-hidden="true" /> Loading
         </main>
@@ -38,11 +49,19 @@ export function Shell({ children }: { children: ReactNode }) {
       >
         Skip to content
       </a>
-      <Header />
-      <main id="main" className="app-main mx-auto w-full max-w-[1760px] px-2 pt-2 sm:px-3">
-        {children}
-      </main>
-      <MobileNav />
+      {simple ? (
+        <main id="main" className="simple-main">
+          {children}
+        </main>
+      ) : (
+        <>
+          <Header />
+          <main id="main" className="app-main mx-auto w-full max-w-[1760px] px-2 pt-2 sm:px-3">
+            {children}
+          </main>
+          <MobileNav />
+        </>
+      )}
       <ServiceWorkerManager />
       <AlertWatcher />
       <RiskWatcher />

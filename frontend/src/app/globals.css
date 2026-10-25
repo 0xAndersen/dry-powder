@@ -196,13 +196,13 @@
   .btn-primary {
     background: var(--color-accent);
     border-color: var(--color-accent);
-    color: #0b1220;
+    color: var(--color-on-accent);
     font-weight: 650;
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: #9bbaff;
-    border-color: #9bbaff;
+    background: color-mix(in srgb, var(--color-accent) 84%, white);
+    border-color: color-mix(in srgb, var(--color-accent) 84%, white);
   }
 
   .btn-long {
@@ -1230,5 +1230,241 @@
 
   .chart-expanded .chart-box {
     height: calc(100dvh - 3rem - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+  }
+}
+
+/* ─────────────────────────────── Simple mode ───────────────────────────────
+   A different room from the terminal: paper instead of ink, big expanded figures, plain words. The palette
+   swaps on the root (data-ui="simple", set by the shell on the simple route), so sheets and toasts rendered in
+   portals follow it. Light by default; the system's dark setting gets a dark paper, not the terminal's ink. */
+:root {
+  --color-fuse: #f5b342;
+  --color-spark: #ffd27a;
+  /* Text on the accent and on the up/down colours. */
+  --color-on-accent: #0b1220;
+  --color-on-signal: #06140d;
+}
+
+:root[data-ui="simple"] {
+  color-scheme: light;
+  --color-bg: #eef2f7;
+  --color-panel: #ffffff;
+  --color-raised: #f5f7fb;
+  --color-line: #dbe2eb;
+  --color-line-strong: #bfc9d6;
+  --color-text: #111723;
+  --color-muted: #4f5b6c;
+  --color-faint: #677385;
+  --color-accent: #2f5bd3;
+  --color-accent-deep: #2248b5;
+  --color-long: #0a8754;
+  --color-short: #c92f3a;
+  --color-warn: #9c6200;
+  --color-hot: #c0600d;
+  --color-fuse: #d98a12;
+  --color-spark: #ffb547;
+  --color-on-accent: #ffffff;
+  --color-on-signal: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-ui="simple"] {
+    color-scheme: dark;
+    --color-bg: #0e1422;
+    --color-panel: #161e2e;
+    --color-raised: #1d2738;
+    --color-line: #2a3448;
+    --color-line-strong: #3a465d;
+    --color-text: #edf2fa;
+    --color-muted: #a3afc2;
+    --color-faint: #8592a8;
+    --color-accent: #86a8ff;
+    --color-accent-deep: #5f86f0;
+    --color-long: #3dd598;
+    --color-short: #ff6b72;
+    --color-warn: #f2c063;
+    --color-hot: #ff9a52;
+    --color-fuse: #f5b342;
+    --color-spark: #ffd27a;
+    --color-on-accent: #0b1220;
+    --color-on-signal: #0b1220;
+  }
+}
+
+@layer components {
+  /* Display type for Simple: Archivo stretched wide, so a price reads like a headline. */
+  .s-display {
+    font-family: "Archivo Variable", var(--font-sans);
+    font-stretch: 116%;
+    font-weight: 720;
+    letter-spacing: -0.012em;
+    line-height: 1.02;
+  }
+
+  .s-num {
+    font-family: "Archivo Variable", var(--font-sans);
+    font-stretch: 108%;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  .s-name {
+    font-family: "Archivo Variable", var(--font-sans);
+    font-stretch: 100%;
+    font-weight: 640;
+  }
+
+  .mode-switch {
+    display: inline-grid;
+    grid-auto-flow: column;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--color-line);
+    border-radius: 999px;
+    background: var(--color-bg);
+  }
+
+  .mode-switch > button {
+    height: 1.75rem;
+    padding: 0 0.75rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 560;
+    color: var(--color-muted);
+  }
+
+  .mode-switch > button[aria-pressed="true"] {
+    background: var(--color-text);
+    color: var(--color-panel);
+  }
+
+  /* Market tile: flat paper, a hairline, and the price as the loudest thing in it. */
+  .s-tile {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    min-width: 0;
+    padding: 0.85rem 0.9rem 0.6rem;
+    border: 1px solid var(--color-line);
+    border-radius: 14px;
+    background: var(--color-panel);
+    text-align: left;
+    transition: border-color 120ms, transform 120ms;
+  }
+
+  .s-tile:hover {
+    border-color: var(--color-line-strong);
+  }
+
+  .s-tile:active {
+    transform: scale(0.985);
+  }
+
+  .s-chip {
+    height: 2.25rem;
+    padding: 0 0.95rem;
+    border-radius: 999px;
+    border: 1px solid var(--color-line);
+    background: var(--color-panel);
+    color: var(--color-muted);
+    font-size: 0.8125rem;
+    font-weight: 560;
+    white-space: nowrap;
+  }
+
+  .s-chip[aria-pressed="true"] {
+    background: var(--color-text);
+    border-color: var(--color-text);
+    color: var(--color-panel);
+  }
+
+  .s-choice {
+    height: 2.75rem;
+    border-radius: 12px;
+    border: 1px solid var(--color-line);
+    background: var(--color-raised);
+    color: var(--color-text);
+    font-weight: 620;
+  }
+
+  .s-choice[aria-pressed="true"] {
+    border-color: var(--color-text);
+    box-shadow: inset 0 0 0 1px var(--color-text);
+    background: var(--color-panel);
+  }
+
+  /* Up / Down: the one big decision. */
+  .s-dir {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    height: 4rem;
+    border-radius: 16px;
+    border: 1.5px solid var(--color-line-strong);
+    background: var(--color-panel);
+    font-family: "Archivo Variable", var(--font-sans);
+    font-stretch: 112%;
+    font-size: 1.375rem;
+    font-weight: 720;
+    color: var(--color-text);
+    transition: background-color 120ms, border-color 120ms, color 120ms;
+  }
+
+  .s-dir[data-dir="up"][aria-pressed="true"] {
+    background: var(--color-long);
+    border-color: var(--color-long);
+    color: var(--color-on-signal);
+  }
+
+  .s-dir[data-dir="down"][aria-pressed="true"] {
+    background: var(--color-short);
+    border-color: var(--color-short);
+    color: var(--color-on-signal);
+  }
+
+  .s-go {
+    width: 100%;
+    height: 3.5rem;
+    border-radius: 16px;
+    font-family: "Archivo Variable", var(--font-sans);
+    font-stretch: 108%;
+    font-size: 1.0625rem;
+    font-weight: 700;
+    color: var(--color-panel);
+    background: var(--color-text);
+  }
+
+  .s-go[data-dir="up"] {
+    background: var(--color-long);
+    color: var(--color-on-signal);
+  }
+
+  .s-go[data-dir="down"] {
+    background: var(--color-short);
+    color: var(--color-on-signal);
+  }
+
+  .s-go:disabled {
+    background: var(--color-raised);
+    color: var(--color-muted);
+    border: 1px solid var(--color-line);
+    cursor: not-allowed;
+  }
+
+  .fuse-spark {
+    animation: fuse-spark 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes fuse-spark {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  45% {
+    opacity: 0.78;
+    transform: scale(0.82);
   }
 }

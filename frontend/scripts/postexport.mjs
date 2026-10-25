@@ -3,7 +3,8 @@
 // Next exports every route one directory deep (trade/index.html, ...) with assets referenced as "../_next/...",
 // which is what makes the bundle work under any sub-path. Two files sit at the root, where "../" would point
 // outside the bundle, so they are replaced with tiny hand-written pages that only use relative links:
-//   - index.html: forwards to ./trade/ and keeps the query string (deployment overrides, ?account=).
+//   - index.html: forwards to the mode the visitor chose (./simple/ unless they picked Advanced, ./trade/) and keeps
+//     the query string (deployment overrides, ?account=).
 //   - 404.html:   static hosts serve it for unknown paths at any depth, so it only offers a link back.
 // A sample config.json is written if the bundle has none.
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -41,10 +42,10 @@ writeFileSync(
 <title>Dry Powder</title>
 <link rel="icon" href="./favicon.svg">
 <style>${style}</style>
-<script>location.replace("./trade/" + location.search + location.hash);</script>
-<noscript><meta http-equiv="refresh" content="0; url=./trade/"></noscript>
+<script>var m=null;try{m=JSON.parse(localStorage.getItem("dp:ui-mode:v1"))}catch(e){}location.replace((m==="advanced"?"./trade/":"./simple/")+location.search+location.hash);</script>
+<noscript><meta http-equiv="refresh" content="0; url=./simple/"></noscript>
 </head>
-<body><p>Opening <a href="./trade/">Dry Powder trading</a>&hellip;</p></body>
+<body><p>Opening <a href="./simple/">Dry Powder</a>&hellip;</p></body>
 </html>
 `,
 );
@@ -62,13 +63,13 @@ writeFileSync(
 <body>
 <div>
 <h1 style="font-size:22px;margin:0 0 8px">This page does not exist</h1>
-<p style="color:#b0a898;margin:0 0 16px">The address may be mistyped. Pages live at <code>trade/</code>, <code>markets/</code>, <code>portfolio/</code>, <code>activity/</code>, <code>leaderboard/</code>, <code>house/</code> and <code>agents/</code>, with the trailing slash.</p>
+<p style="color:#b0a898;margin:0 0 16px">The address may be mistyped. Pages live at <code>trade/</code>, <code>markets/</code>, <code>portfolio/</code>, <code>activity/</code>, <code>leaderboard/</code>, <code>house/</code>, <code>agents/</code> and <code>simple/</code>, with the trailing slash.</p>
 <p><a id="home" href="./trade/">Go to trading</a></p>
 </div>
 <script>
 // Unknown paths can be any depth below the app, so find the app root from a known page name when there is one.
 (function () {
-  var m = location.pathname.match(/^(.*?\\/)(trade|markets|portfolio|activity|leaderboard|trader|house|agents)(\\.html)?$/);
+  var m = location.pathname.match(/^(.*?\\/)(trade|markets|portfolio|activity|leaderboard|trader|house|agents|simple|charts)(\\.html)?$/);
   if (m) { location.replace(m[1] + m[2] + "/" + location.search); return; }
 })();
 </script>

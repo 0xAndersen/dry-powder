@@ -9,6 +9,7 @@ import { useApp } from "@/components/providers";
 import { HelpButton } from "@/components/help-sheet";
 import { StatusSheet } from "@/components/status-sheet";
 import { SettingsButton } from "@/components/settings-sheet";
+import { ModeSwitch } from "@/components/simple/mode-switch";
 import { WalletButton } from "@/components/wallet-button";
 import { useKeeperStatus } from "@/hooks/use-keeper-status";
 import { useMarketData } from "@/hooks/use-market-data";
@@ -226,6 +227,7 @@ export function Header() {
             </span>
           ) : null}
           <NetworkStatus />
+          <ModeSwitch current="advanced" className="hidden sm:inline-grid" />
           <WatchControl />
           <HelpButton className="hidden sm:inline-flex" />
           <SettingsButton className="hidden sm:inline-flex" />

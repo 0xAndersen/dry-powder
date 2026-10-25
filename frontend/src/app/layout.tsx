@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { connection } from "next/server";
 import { Suspense, type ReactNode } from "react";
 import "@fontsource-variable/inter";
+import "@fontsource-variable/archivo/wdth.css";
 import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "@fontsource/ibm-plex-mono/600.css";
@@ -9,6 +10,8 @@ import "./globals.css";
 import { IS_STATIC_BUILD, rawFromEnv, readRuntimeConfig, type RuntimeConfigResult } from "@/lib/config";
 import { ConfigGate } from "@/components/config-gate";
 import { Shell } from "@/components/shell";
+
+const SIMPLE_THEME_SCRIPT = `if(/\\/simple(\\/|\\.html)?$/.test(location.pathname))document.documentElement.dataset.ui="simple";`;
 
 export const metadata: Metadata = {
   title: { default: "Dry Powder", template: "%s | Dry Powder" },
@@ -46,6 +49,10 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
 
   return (
     <html lang="en">
+      <head>
+        {/* Simple mode's palette before first paint, so the page does not flash the terminal's ink. */}
+        <script dangerouslySetInnerHTML={{ __html: SIMPLE_THEME_SCRIPT }} />
+      </head>
       <body>
         <ConfigGate server={server}>
           <Suspense fallback={null}>

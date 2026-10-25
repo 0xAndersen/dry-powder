@@ -15,15 +15,16 @@ import { useLocalStore } from "@/hooks/use-local-store";
 import { useLogFeed } from "@/hooks/use-log-feed";
 import { useChainNow, useMarketData, useMarketPrice } from "@/hooks/use-market-data";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { useRiskLimits } from "@/hooks/use-risk-limits";
 import { useAccountView } from "@/hooks/use-wallet";
-import { fmtClock, fmtNum, fmtPercent, fmtPrice, fmtUsdc, priceToNum } from "@/lib/format";
+import { fmtNum, fmtPercent, fmtPrice, fmtUsdc, priceToNum } from "@/lib/format";
 import { isOpenOrder } from "@/lib/events";
 import { findBySlug, groupInstruments, marketSlug, type Instrument } from "@/lib/instruments";
 import { orderTracker } from "@/lib/order-tracker";
 import { valuePosition } from "@/lib/position";
 import { chartLines, priceAlerts, type PriceAlert } from "@/lib/storage";
 import { notify } from "@/lib/notify";
-import { prefs, utcDayStart } from "@/lib/prefs";
+import { prefs } from "@/lib/prefs";
 import { toast } from "@/lib/toasts";
 
 /** How far back the account history is read on load. "Load earlier" extends it. */
@@ -125,39 +126,8 @@ export function TradeScreen() {
     }
     return out.slice(-80);
   }, [feed.events, instrument]);
-  // Self-imposed daily loss limit: realised result since 00:00 UTC (price PnL, fees and liquidations).
-  const dayStart = utcDayStart();
-  const limit = preferences.dailyLossLimit;
-  useEffect(() => {
-    // Make sure the history covers the whole UTC day when a limit is set.
-    if (limit !== null && feed.status.phase === "live" && feed.status.loadedFromTime > dayStart) void feed.extend(feed.status.loadedFromTime - dayStart + 60);
-  }, [limit, feed, dayStart]);
-  const todayResult = useMemo(() => {
-    if (limit === null) return null;
-    let total = 0n;
-    for (const e of feed.events) {
-      if (e.time < dayStart) continue;
-      if (e.type === "close") total += e.pnl - e.fee;
-      else if (e.type === "open") total -= e.fee;
-      else if (e.type === "liquidation") total -= e.margin;
-    }
-    return total;
-  }, [limit, feed.events, dayStart]);
-  const dailyLimitText =
-    limit !== null && todayResult !== null && todayResult <= -BigInt(Math.round(limit * 1e6))
-      ? `Daily loss limit reached (${fmtUsdc(todayResult, 2, { sign: true })} today). New positions reopen at 00:00 UTC`
-      : null;
-  // Self-imposed cool-off: no new positions for a while after a liquidation.
-  const coolOff = preferences.coolOffMinutes;
-  const lastLiquidation = useMemo(() => {
-    if (coolOff === null) return null;
-    let last = 0;
-    for (const e of feed.events) if (e.type === "liquidation" && e.time > last) last = e.time;
-    return last || null;
-  }, [coolOff, feed.events]);
-  const coolOffUntil = coolOff !== null && lastLiquidation !== null ? lastLiquidation + coolOff * 60 : null;
-  const coolOffText = coolOffUntil !== null && chainNow < coolOffUntil ? `Cooling off after a liquidation. New positions reopen at ${fmtClock(coolOffUntil)}` : null;
-  const lossLimitReached = dailyLimitText ?? coolOffText;
+  // Self-imposed limits from Settings (daily loss limit, cool-off after a liquidation).
+  const lossLimitReached = useRiskLimits(feed, chainNow);
   // Tab title ticker: price, and the position's PnL, readable from another tab or the task switcher.
   const titlePrice = instrument && price.display !== null ? fmtNum(price.display, instrument.priceDecimals) : null;
   const titlePnl = positionValue?.pnl ?? null;
