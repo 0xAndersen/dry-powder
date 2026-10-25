@@ -1,15 +1,19 @@
 // Configuration, chain access, market data and the trading identity for the MCP server.
 import { readFileSync } from "node:fs";
-import { createPublicClient, createWalletClient, defineChain, fallback, http, parseEventLogs } from "viem";
+import { createPublicClient, createWalletClient, defineChain, encodeFunctionData, fallback, http, parseEventLogs } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { agentAccountAbi, engineLensAbi, perpEngineAbi, rewardTokenAbi, testUSDCAbi } from "./abi.mjs";
+import { agentAccountAbi, agentAccountFactoryAbi, agentRegistryAbi, engineLensAbi, perpEngineAbi, rewardTokenAbi, strategiesAbi, testUSDCAbi } from "./abi.mjs";
 import { ConfirmationStore, Guardrails, ToolError } from "./guard.mjs";
 
 export const DEFAULT_DEPLOYMENT = "https://raw.githubusercontent.com/0xAndersen/dry-powder/main/deployments/arc-testnet.json";
+export const ZERO = "0x0000000000000000000000000000000000000000";
 const ZERO32 = "0x" + "0".repeat(64);
 const E18 = 10n ** 18n;
+/** Custom errors of every contract the server calls, so a revert from any of them decodes by name. */
+const ERRORS = [...perpEngineAbi, ...agentAccountAbi, ...strategiesAbi, ...agentRegistryAbi, ...testUSDCAbi].filter((x) => x.type === "error");
 
 // Kraken pairs for each Pyth feed id the venue uses (reference prices for marketable orders and price bands).
+// The Turbo markets share the feeds of BTC, ETH, EUR and gold.
 const FEEDS = {
   "0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43": ["XBTUSD", "XXBTZUSD"],
   "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace": ["ETHUSD", "XETHZUSD"],
@@ -37,7 +41,7 @@ export function loadConfig(env = process.env) {
     agentKey: key("DP_AGENT_KEY"),
     walletKey: key("DP_PRIVATE_KEY"),
     guard: {
-      allowedMarkets: allowed.length && !allowed.includes("*") ? allowed.map((s) => (s.includes("-") ? s : `${s}-USD`)) : undefined,
+      allowedMarkets: allowed.length && !allowed.includes("*") ? allowed.map(normalizeSymbol) : undefined,
       maxNotional: BigInt(Math.round(num("DP_MAX_NOTIONAL_USD", 10_000) * 1e6)),
       maxLeverage: num("DP_MAX_LEVERAGE", 20),
       maxSlippageBps: num("DP_MAX_SLIPPAGE_BPS", 300),
@@ -46,6 +50,35 @@ export function loadConfig(env = process.env) {
     requireConfirm: !["0", "false", "no"].includes(String(env.DP_REQUIRE_CONFIRM ?? "true").toLowerCase()),
     confirmTtlMs: num("DP_CONFIRM_TTL_SECONDS", 120) * 1000,
     fillTimeoutMs: num("DP_FILL_TIMEOUT_SECONDS", 30) * 1000,
+  };
+}
+
+/** "BTC" -> "BTC-USD", "BTC-TURBO" -> "BTC-USD-TURBO"; anything else as given (upper case). */
+export function normalizeSymbol(s) {
+  const u = String(s).trim().toUpperCase();
+  if (u.startsWith("0X")) return u;
+  if (/^[A-Z0-9]+-TURBO$/.test(u)) return u.replace(/-TURBO$/, "-USD-TURBO");
+  return u.includes("-") ? u : `${u}-USD`;
+}
+
+/** A node that answered from behind the head, or (anvil --prune-history) dropped the state it had just resolved. */
+const TRANSIENT_RPC = /BlockOutOfRange|header not found|block not found|unknown block|missing trie node/i;
+
+/** `t`, retrying reads, calls and estimates (never a send) that failed with a transient RPC error, up to 3 times. */
+export function retryTransient(t) {
+  return (opts) => {
+    const inner = t(opts);
+    const request = async (args, options) => {
+      for (let i = 0; ; i++) {
+        try {
+          return await inner.request(args, options);
+        } catch (e) {
+          if (i >= 3 || /^eth_send/.test(args.method) || !TRANSIENT_RPC.test(`${e?.details ?? ""} ${e?.message ?? ""}`)) throw e;
+          await new Promise((r) => setTimeout(r, 100 * (i + 1)));
+        }
+      }
+    };
+    return { ...inner, request };
   };
 }
 
@@ -79,10 +112,11 @@ export class Context {
     const chainId = Number(d.chainId ?? 5042002);
     this.chain = defineChain({ id: chainId, name: `chain ${chainId}`, nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 }, rpcUrls: { default: { http: [rpcUrl] } } });
     const rpcs = [rpcUrl, ...(chainId === 5042002 ? ["https://rpc.testnet.arc.io", "https://rpc.quicknode.testnet.arc.io", "https://rpc.drpc.testnet.arc.io"] : [])];
-    this.transport = fallback([...new Set(rpcs)].map((u) => http(u, { retryCount: 1, timeout: 20_000 })), { rank: false });
+    this.transport = fallback([...new Set(rpcs)].map((u) => retryTransient(http(u, { retryCount: 1, timeout: 20_000 }))), { rank: false });
     this.pub = createPublicClient({ chain: this.chain, transport: this.transport, pollingInterval: 500 });
     this.d = {
       engine: d.engine, lens: d.lens, vault: d.vault, token: d.token, usdc: d.usdc, factory: d.agentFactory ?? null,
+      strategies: d.strategies ?? null, registry: d.agentRegistry ?? null,
       collateralIsTest: d.collateral ? d.collateral === "test" : d.collateralIsTest ?? true,
       explorer: d.explorerUrl ?? "https://explorer.testnet.arc.io", app: d.appUrl ?? null, chainId,
     };
@@ -99,6 +133,7 @@ export class Context {
       if (owner.toLowerCase() === this.wallet.account.address.toLowerCase()) {
         throw new ToolError("CONFIG_ERROR", "DP_AGENT_KEY is the account owner's key. Give the agent its own key and approve it with setAgent: the owner key can withdraw.");
       }
+      this.owner = owner;
     }
     return this;
   }
@@ -117,10 +152,11 @@ export class Context {
       return {
         id: v.id, symbol: m.symbol, enabled: m.enabled, maxLeverage: Number(m.maxLeverage),
         kind: Number(m.expiry) ? "dated future" : m.quoteFeedId !== ZERO32 ? "cross" : m.invert ? "inverted" : "perpetual",
+        feeModel: Number(m.feeMode) === 1 ? "upside" : "standard",
         expiry: Number(m.expiry) || 0, settled, settlementPrice: settled ? m.settlementPrice : 0n,
         feedId: m.feedId, quoteFeedId: m.quoteFeedId, invert: m.invert,
         longOi: m.longOi, shortOi: m.shortOi, maxOiPerSide: m.maxOiPerSide, fundingRatePerSecond: v.fundingRate,
-        onchain: v.hasPrice ? { mid: v.price.mid, bid: v.price.bid, ask: v.price.ask, ageSeconds: now - Number(v.price.publishTime) } : null,
+        onchain: v.hasPrice ? { mid: v.price.mid, bid: v.price.bid, ask: v.price.ask, ageSeconds: now - Number(v.price.publishTime), publishTime: Number(v.price.publishTime) } : null,
         reference: ref.get(v.id.toLowerCase()) ?? null,
       };
     });
@@ -128,9 +164,9 @@ export class Context {
 
   async market(symbolOrId) {
     const want = String(symbolOrId).toUpperCase();
-    const s = want.startsWith("0X") ? want : want.includes("-") ? want : `${want}-USD`;
+    const s = normalizeSymbol(want);
     const all = await this.markets();
-    const m = all.find((x) => x.symbol.toUpperCase() === s || x.id.toUpperCase() === s);
+    const m = all.find((x) => x.symbol.toUpperCase() === s || x.symbol.toUpperCase() === want || x.id.toUpperCase() === want);
     if (!m) throw new ToolError("UNKNOWN_MARKET", `no market ${symbolOrId}; markets: ${all.map((x) => x.symbol).join(", ")}`);
     return m;
   }
@@ -174,6 +210,23 @@ export class Context {
     if (!this.wallet) throw new ToolError("TRADING_DISABLED", "read-only: set DP_ACCOUNT + DP_AGENT_KEY (recommended) or DP_PRIVATE_KEY to trade");
   }
 
+  async now() {
+    return Number((await this.pub.getBlock()).timestamp);
+  }
+
+  engineRead(functionName, args = []) {
+    return this.pub.readContract({ address: this.d.engine, abi: perpEngineAbi, functionName, args });
+  }
+
+  /** The Upside share and the referral parameters, and whether `trader` has a referrer. */
+  async feeParams(trader = this.trader) {
+    const [profitShareBps, discountBps, referralShareBps, referrer] = await Promise.all([
+      this.engineRead("profitShareBps"), this.engineRead("referralDiscountBps"), this.engineRead("referralShareBps"),
+      trader ? this.engineRead("referrerOf", [trader]) : ZERO,
+    ]);
+    return { profitShareBps, discountBps, referralShareBps, referrer, referred: referrer !== ZERO };
+  }
+
   async positions(trader = this.trader) {
     if (!trader) return [];
     return this.pub.readContract({ address: this.d.lens, abi: engineLensAbi, functionName: "getTraderPositions", args: [trader] });
@@ -189,9 +242,40 @@ export class Context {
     const [usdc, keg, claimable] = await Promise.all([
       this.pub.readContract({ address: this.d.usdc, abi: testUSDCAbi, functionName: "balanceOf", args: [trader] }),
       this.d.token ? this.pub.readContract({ address: this.d.token, abi: rewardTokenAbi, functionName: "balanceOf", args: [trader] }) : 0n,
-      this.pub.readContract({ address: this.d.engine, abi: perpEngineAbi, functionName: "claimable", args: [trader] }),
+      this.engineRead("claimable", [trader]),
     ]);
     return { usdc, keg, claimable };
+  }
+
+  /** An agent's policy and today's budget on an account. */
+  async agentPolicy(account, agent) {
+    const [[expiry, maxLeverage, maxMargin], [perDay, day, spent], now] = await Promise.all([
+      this.pub.readContract({ address: account, abi: agentAccountAbi, functionName: "agents", args: [agent] }),
+      this.pub.readContract({ address: account, abi: agentAccountAbi, functionName: "budgets", args: [agent] }),
+      this.now(),
+    ]);
+    const spentToday = Number(day) === Math.floor(now / 86_400) ? spent : 0n;
+    return { expiry: Number(expiry), active: Number(expiry) > now, maxLeverage: Number(maxLeverage), maxMargin, perDay, spentToday, remainingToday: perDay === 0n ? null : perDay > spentToday ? perDay - spentToday : 0n };
+  }
+
+  /**
+   * The agent account that strategies, budgets and listings concern: DP_ACCOUNT, or in wallet mode the wallet's
+   * own account from the factory (when it has one). Also returns its owner.
+   */
+  async strategyAccount() {
+    let account = this.config.account ?? null;
+    if (!account && this.wallet && this.d.factory) {
+      const a = await this.pub.readContract({ address: this.d.factory, abi: agentAccountFactoryAbi, functionName: "accountOf", args: [this.wallet.account.address] });
+      if (a !== ZERO) account = a;
+    }
+    if (!account) throw new ToolError("NO_AGENT_ACCOUNT", "strategies, budgets and listings belong to an agent account: set DP_ACCOUNT + DP_AGENT_KEY (or, with DP_PRIVATE_KEY, create the wallet's agent account in the app first)");
+    const owner = this.owner ?? (await this.pub.readContract({ address: account, abi: agentAccountAbi, functionName: "owner" }));
+    return { account, owner };
+  }
+
+  requireAddress(k, what) {
+    if (!this.d[k]) throw new ToolError("NOT_DEPLOYED", `this deployment has no ${what} (protocol v3.2)`);
+    return this.d[k];
   }
 
   /** Send a trading call: through the agent account in agent mode, straight to the engine in wallet mode. */
@@ -199,8 +283,13 @@ export class Context {
     this.requireTrading();
     const viaAccount = this.mode === "agent-account";
     const target = viaAccount ? { address: this.config.account, abi: agentAccountAbi } : { address: this.d.engine, abi: perpEngineAbi };
-    const errors = [...agentAccountAbi, ...perpEngineAbi].filter((x) => x.type === "error");
-    const call = { ...target, abi: [...target.abi, ...errors], functionName, args, account: this.wallet.account };
+    return this.send(target.address, target.abi, functionName, args);
+  }
+
+  /** Send any call from the configured key (simulated first, so reverts come back by name). */
+  async send(address, abi, functionName, args) {
+    this.requireTrading();
+    const call = { address, abi: [...abi, ...ERRORS], functionName, args, account: this.wallet.account };
     const { request, result } = await this.pub.simulateContract(call);
     // The estimate is the least gas that works on the state it ran on; the transaction runs on a later one.
     // By address: with a local account viem estimates twice and caps the second at the first.
@@ -216,6 +305,16 @@ export class Context {
     return { hash, result, receipt, url: `${this.d.explorer}/tx/${hash}` };
   }
 
+  /** Several agent-account calls in one atomic transaction (agent mode), or one transaction each (wallet mode). */
+  async tradeMany(calls) {
+    if (this.mode === "agent-account" && calls.length > 1) {
+      return [await this.trade("multicall", [calls.map(([fn, args]) => encodeFunctionData({ abi: agentAccountAbi, functionName: fn, args }))])];
+    }
+    const out = [];
+    for (const [fn, args] of calls) out.push(await this.trade(fn, args));
+    return out;
+  }
+
   /** Wallet mode only: make sure the engine may pull `amount` of collateral. */
   async ensureAllowance(amount) {
     if (this.mode !== "wallet") return null;
@@ -226,15 +325,19 @@ export class Context {
     return hash;
   }
 
-  /** Waits until order `id` leaves the book; reports whether a position now exists. */
-  async waitForFill(id, marketId) {
+  /**
+   * Waits until order `id` leaves the book; reports whether a position now exists. With `expiresAt` (unix
+   * seconds) it stops waiting once the order has expired, since it can no longer fill.
+   */
+  async waitForFill(id, marketId, expiresAt = 0) {
     const until = Date.now() + this.config.fillTimeoutMs;
     while (Date.now() < until) {
-      const o = await this.pub.readContract({ address: this.d.engine, abi: perpEngineAbi, functionName: "getOrder", args: [id] });
-      if (o.trader === "0x0000000000000000000000000000000000000000") {
-        const p = await this.pub.readContract({ address: this.d.engine, abi: perpEngineAbi, functionName: "getPosition", args: [this.trader, marketId] });
-        return { status: "done", position: p.trader !== "0x0000000000000000000000000000000000000000" ? p : null };
+      const trader = await this.engineRead("orderTrader", [id]);
+      if (trader === ZERO) {
+        const p = await this.engineRead("getPosition", [this.trader, marketId]);
+        return { status: "done", position: p.trader !== ZERO ? p : null };
       }
+      if (expiresAt && (await this.now()) > expiresAt) break;
       await new Promise((r) => setTimeout(r, 1000));
     }
     return { status: "resting" };
@@ -243,6 +346,11 @@ export class Context {
   orderIdFrom(receipt) {
     const logs = parseEventLogs({ abi: perpEngineAbi, logs: receipt.logs, eventName: "OrderCreated" });
     return logs.length ? logs[logs.length - 1].args.orderId : null;
+  }
+
+  strategyIdFrom(receipt) {
+    const logs = parseEventLogs({ abi: strategiesAbi, logs: receipt.logs, eventName: "StrategyCreated" });
+    return logs.length ? logs[logs.length - 1].args.id : null;
   }
 }
 

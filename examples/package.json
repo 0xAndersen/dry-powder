@@ -6,7 +6,9 @@
   "scripts": {
     "quickstart": "node quickstart.mjs",
     "agent": "node risk-capped-agent.mjs",
-    "swarm": "node swarm.mjs"
+    "swarm": "node swarm.mjs",
+    "turbo": "node turbo-stop.mjs",
+    "strategy": "node strategy-launcher.mjs"
   },
   "dependencies": {
     "@dry-powder/sdk": "file:../sdk",
