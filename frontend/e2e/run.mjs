@@ -98,8 +98,12 @@ async function waitPosition(symbol, present = true, timeout = 30_000) {
 
 // ─────────────────────────────── trade ───────────────────────────────
 if (want("trade")) {
-  await step(`app loads from ${WEB_URL} and lists markets from the chain`, async () => {
+  await step(`app loads from ${WEB_URL}, a first visit chooses Advanced, and the terminal lists markets from the chain`, async () => {
+    // The root opens Simple mode and asks first-time visitors how they want to trade; Advanced is the terminal.
     await page.goto(`${WEB_URL}/`);
+    await page.waitForURL(/\/simple\/?(\?|$)/, { timeout: 10_000 });
+    await t("mode-chooser").waitFor({ timeout: 20_000 });
+    await t("choose-advanced").click();
     await page.waitForURL(/\/trade\/?(\?|$)/, { timeout: 10_000 });
     await t("market-price").waitFor({ timeout: 20_000 });
     const tabs = await page.getByRole("tablist", { name: "Markets" }).getByRole("tab").count();
