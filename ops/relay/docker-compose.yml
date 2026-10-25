@@ -1,0 +1,60 @@
+# The venue's event stream for bots (keeper/src/relay.mjs) and the Web Push relay (keeper/src/push.mjs), both from
+# the keeper image. They need a host that stays up; neither holds a funded key. See README.md here.
+#
+#   cd ops/relay
+#   cp .env.example .env      # VAPID keys (node keeper/src/push.mjs keys), a contact, the app's origin
+#   docker compose up --build -d
+#
+# Event stream: http://localhost:8091/events (SSE) and ws://localhost:8091/ws. Push API: http://localhost:8092.
+# Serve both over TLS (a reverse proxy or a tunnel): an https app can only call an https push API, and bots should
+# connect with wss://.
+
+services:
+  relay:
+    build: ../../keeper
+    command: ["node", "src/relay.mjs"]
+    restart: unless-stopped
+    ports:
+      - "${RELAY_PORT:-8091}:8091"
+    environment:
+      DEPLOYMENT: /deployments/arc-testnet.json
+      PORT: "8091"
+      RPC_URL: ${RPC_URL:-}
+      BACKFILL_BLOCKS: ${BACKFILL_BLOCKS:-5000}
+      MAX_CLIENTS: ${RELAY_MAX_CLIENTS:-500}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+    volumes:
+      - ../../deployments:/deployments:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8091/health"]
+      interval: 30s
+      timeout: 5s
+
+  push:
+    build: ../../keeper
+    command: ["node", "src/push.mjs"]
+    restart: unless-stopped
+    ports:
+      - "${PUSH_PORT:-8092}:8092"
+    environment:
+      DEPLOYMENT: /deployments/arc-testnet.json
+      PORT: "8092"
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:?run node keeper/src/push.mjs keys and put both keys in .env}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:?set VAPID_PRIVATE_KEY in .env}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:?set VAPID_SUBJECT in .env (mailto:you@example.com or an https URL)}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://0xandersen.github.io}
+      STORE_FILE: /home/keeper/push-subscriptions.json
+      POLL_SECONDS: ${PUSH_POLL_SECONDS:-15}
+      RPC_URL: ${RPC_URL:-}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+    volumes:
+      - ../../deployments:/deployments:ro
+      # The image's home directory (owned by the keeper user) holds the subscriptions across restarts.
+      - push-data:/home/keeper
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8092/health"]
+      interval: 30s
+      timeout: 5s
+
+volumes:
+  push-data:

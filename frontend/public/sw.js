@@ -68,3 +68,53 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(caches.match(request).then((hit) => hit ?? fetch(request)));
   }
 });
+
+/* Web Push from the venue's push relay (keeper/src/push.mjs): liquidation warnings, fills and closes while the app
+   is closed. The payload is JSON { title, body, tag, url }; url is a page of the app, relative to its scope. */
+const inScope = (raw) => {
+  try {
+    const target = new URL(String(raw || "portfolio/"), self.registration.scope);
+    if (target.href.startsWith(self.registration.scope)) return target.href;
+  } catch {
+    // Not a URL: the portfolio below.
+  }
+  return new URL("portfolio/", self.registration.scope).href;
+};
+
+self.addEventListener("push", (event) => {
+  let msg = {};
+  try {
+    msg = event.data ? event.data.json() : {};
+  } catch {
+    msg = { body: event.data ? event.data.text() : "" };
+  }
+  const title = String(msg.title || "Update").slice(0, 120);
+  const icon = new URL("icon-192.png", self.registration.scope).href;
+  event.waitUntil(
+    self.registration.showNotification(`Dry Powder: ${title}`, {
+      body: String(msg.body || "").slice(0, 400),
+      tag: msg.tag ? String(msg.tag).slice(0, 120) : undefined,
+      renotify: Boolean(msg.tag),
+      icon,
+      badge: icon,
+      data: { url: inScope(msg.url) },
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = inScope(event.notification.data && event.notification.data.url);
+  event.waitUntil(
+    (async () => {
+      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const open = windows.find((w) => w.url.startsWith(self.registration.scope));
+      if (open) {
+        await open.focus();
+        if (open.url !== target && "navigate" in open) await open.navigate(target).catch(() => undefined);
+        return;
+      }
+      await self.clients.openWindow(target);
+    })(),
+  );
+});
