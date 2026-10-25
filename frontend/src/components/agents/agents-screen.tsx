@@ -467,8 +467,8 @@ function AgentsCard({ account, owner }: { account: Address; owner: Address }) {
             agent now. It can only trade within this policy, never withdraw.
           </div>
         ) : null}
-        <div className="grid grid-cols-3 gap-2">
-          <div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="col-span-2">
             <label className="field-label" htmlFor={`${id}-e`}>
               Expires in
             </label>
