@@ -25,6 +25,9 @@ const config = {
   krakenUrl: "https://api.kraken.com",
   explorerUrl: d.explorerUrl,
   ...(d.deployedAt ? { deployedAt: d.deployedAt } : {}),
+  // Optional services a deployment can name: the push relay (ops/relay) and where season results are published.
+  ...(d.pushRelayUrl ? { pushRelayUrl: d.pushRelayUrl } : {}),
+  ...(d.prizesUrl ? { prizesUrl: d.prizesUrl } : {}),
 };
 writeFileSync(dest, JSON.stringify(config, null, 2) + "\n");
 console.log(`wrote ${dest}`);
