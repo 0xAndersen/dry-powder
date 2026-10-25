@@ -505,7 +505,8 @@ export const OrderTicket = forwardRef<
   // Order expiry needs a v3.2 engine (which also has the Upside profit share).
   const expirySupported = params?.profitShareBps !== null && params?.profitShareBps !== undefined;
   const expirySeconds = EXPIRY_CHOICES.find((c) => c.key === expiryKey)?.seconds ?? 0;
-  const expiresAt = kind !== "market" && expirySupported && expirySeconds > 0 ? chainNow + expirySeconds : undefined;
+  // Whole seconds: the chain clock here is fractional, the engine takes a uint64.
+  const expiresAt = kind !== "market" && expirySupported && expirySeconds > 0 ? Math.floor(chainNow) + expirySeconds : undefined;
 
   // The engine checks each order's brackets against its own price: with a ladder, against every rung.
   const tpRef = ladder ? (isLong ? ladderHigh : ladderLow) : bracketRef;

@@ -8,6 +8,7 @@ import { InstantTradingSheet } from "@/components/instant-trading";
 import { SettingsSheet } from "@/components/settings-sheet";
 import { ModeChooser } from "@/components/simple/mode-chooser";
 import { ModeSwitch } from "@/components/simple/mode-switch";
+import { ReferralPrompt } from "@/components/referral/referral";
 import { PositionCard } from "@/components/simple/position-card";
 import { TradeSheet } from "@/components/simple/trade-sheet";
 import { ShareSheet } from "@/components/social/share-sheet";
@@ -164,6 +165,9 @@ export function SimpleScreen() {
             </button>
           ) : null}
           {tx.state.phase !== "idle" ? <TxStatus state={tx.state} onDismiss={tx.reset} className="mt-4" /> : null}
+          <div className="mt-4 empty:hidden">
+            <ReferralPrompt />
+          </div>
         </section>
 
         {positions.length > 0 ? (
@@ -244,16 +248,18 @@ export function SimpleScreen() {
                 const live = price?.status === "live" || price?.status === "awaiting";
                 return (
                   <button key={i.id} type="button" className="s-tile" onClick={() => setOpen(i)} data-testid={`simple-tile-${marketSlug(i)}`}>
-                    <span className="flex items-baseline justify-between gap-2">
-                      <span className="s-name truncate text-[0.9375rem]">{simpleName(i)}</span>
-                      <span className={`s-num shrink-0 text-2xs ${i.upside ? "s-turbo" : "text-muted"}`}>{i.maxLeverage}x</span>
-                    </span>
+                    <span className="s-name truncate text-[0.9375rem]">{simpleName(i)}</span>
                     {(() => {
                       const text = price?.display !== null && price?.display !== undefined ? fmtNum(price.display, i.priceDecimals) : "—";
                       return <span className={`s-display truncate ${text.length > 9 ? "text-[1.125rem] sm:text-[1.375rem]" : "text-[1.375rem] sm:text-[1.625rem]"}`}>{text}</span>;
                     })()}
-                    <span className={`s-num text-xs ${!live ? "text-muted" : change === null ? "text-muted" : change >= 0 ? "text-long" : "text-short"}`}>
-                      {!live ? "Closed now" : change === null ? "Today: —" : `${change >= 0 ? "+" : "−"}${Math.abs(change * 100).toFixed(2)}% today`}
+                    <span className="flex items-baseline justify-between gap-2">
+                      <span className={`s-num truncate text-xs ${!live ? "text-muted" : change === null ? "text-muted" : change >= 0 ? "text-long" : "text-short"}`}>
+                        {!live ? "Closed now" : change === null ? "Today: —" : `${change >= 0 ? "+" : "−"}${Math.abs(change * 100).toFixed(2)}% today`}
+                      </span>
+                      <span className={`s-num shrink-0 text-2xs ${i.upside ? "s-turbo" : "text-muted"}`} title={`Up to ${i.maxLeverage}x`}>
+                        {i.maxLeverage}x
+                      </span>
                     </span>
                     <Sparkline values={day?.closes ?? null} width={210} height={30} tone={change === null ? "flat" : change >= 0 ? "up" : "down"} className="mt-1 max-w-full" />
                   </button>

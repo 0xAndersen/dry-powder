@@ -1163,7 +1163,8 @@ if (want("instant")) {
 }
 
 if (want("responsive")) {
-  for (const width of [360, 768]) {
+  // Phones, a tablet, and the two common laptop widths (the header is the usual culprit there).
+  for (const width of [360, 768, 1280, 1440]) {
     await step(`no horizontal overflow at ${width}px on /trade, /activity, /house`, async () => {
       const { page: small, context } = await newPage(browser, { viewport: { width, height: 800 } });
       const notes = [];

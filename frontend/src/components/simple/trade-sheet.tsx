@@ -336,9 +336,9 @@ export function TradeSheet({
             {upside ? (
               <>
                 <div className="flex justify-between gap-3">
-                  <dt className="text-muted">Trading fee</dt>
+                  <dt className="text-muted">Fee</dt>
                   <dd className="s-num text-right" data-testid="simple-turbo-fee">
-                    None unless you win, then {fmtBps(shareBps)} of the profit
+                    Only if you win: {fmtBps(shareBps)} of profit
                   </dd>
                 </div>
                 <div className="flex justify-between gap-3">

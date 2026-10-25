@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Address } from "viem";
 import { AppLink } from "@/components/app-link";
 import { Challenges } from "@/components/portfolio/challenges";
+import { ReferralCard } from "@/components/referral/referral";
 import { PnlCalendar } from "@/components/portfolio/pnl-calendar";
 import { PnlCurve } from "@/components/portfolio/pnl-curve";
 import { Journal } from "@/components/portfolio/journal";
@@ -406,6 +407,8 @@ export function PortfolioScreen() {
           onShare={(r, label) => setShare({ card: profileCard(r, label, cardContext(address)), title: "Share your challenge" })}
         />
       ) : null}
+
+      {!view.watching ? <ReferralCard /> : null}
 
       <Journal trades={trades} readOnly={view.watching} onShare={(t) => setShare({ card: closedTradeCard(t, cardContext(address)), title: "Share this trade" })} />
 

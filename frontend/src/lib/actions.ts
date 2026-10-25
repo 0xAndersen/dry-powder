@@ -202,7 +202,7 @@ export async function submitOpen(ctx: ActionContext, req: OpenRequest, label: st
     const order = { priceId: instrument.id, isLong, margin, size, triggerPrice, takeProfit, stopLoss, stopEntry: req.type === "stop" };
     // Good-til-time (v3.2): the order cannot execute after `expiresAt` and a keeper sweeps it, refunding the escrow.
     const receipt = req.expiresAt
-      ? await sendEngine(ctx, label, "createLimitOrderUntil", [order, BigInt(req.expiresAt)])
+      ? await sendEngine(ctx, label, "createLimitOrderUntil", [order, BigInt(Math.floor(req.expiresAt))])
       : await sendEngine(ctx, label, "createLimitOrder", [order]);
     return { receipt, orderId: orderIdFrom(receipt, "OrderCreated"), trigger: triggerPrice };
   }
@@ -331,7 +331,7 @@ export async function submitRemoveMargin(ctx: ActionContext, instrument: Instrum
 
 /** Sets when one of the caller's orders stops being executable (0: never). v3.2. */
 export async function submitOrderExpiry(ctx: ActionContext, orderId: bigint, expiresAt: number, label: string): Promise<TransactionReceipt> {
-  return sendEngine(ctx, label, "setOrderExpiry", [orderId, BigInt(expiresAt)]);
+  return sendEngine(ctx, label, "setOrderExpiry", [orderId, BigInt(Math.floor(expiresAt))]);
 }
 
 /**
