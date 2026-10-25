@@ -35,10 +35,11 @@ rmSync(ADDRESSES_FILE, { force: true });
 writeFileSync(join(STATE_DIR, "stack.pid"), String(process.pid));
 
 // --prune-history keeps old states in memory only: without it a long run persists every state to
-// ~/.foundry/anvil/tmp and never removes them, which filled a 26 GB disk over a few days of e2e runs.
+// ~/.foundry/anvil/tmp and never removes them, which filled a 26 GB disk over a few days of e2e runs. It keeps the
+// last 200 in memory: with none kept, a read racing a new block now and then failed with "invalid params".
 // Accounts: 0 deployer, 1 the UI trader, 2 the bot, then the scripted traders, then fresh ones for step modules
 // (steps/simple.mjs takes the last of the first max(10, traders + 5), steps/v32.mjs the three after it).
-const anvil = spawn(findAnvil(), ["--port", String(PORTS.anvil), "--chain-id", "31337", "--accounts", String(Math.max(10, traderCount + 5) + 3), "--balance", "100000", "--prune-history", "--silent"], {
+const anvil = spawn(findAnvil(), ["--port", String(PORTS.anvil), "--chain-id", "31337", "--accounts", String(Math.max(10, traderCount + 5) + 3), "--balance", "100000", "--prune-history", "200", "--silent"], {
   stdio: ["ignore", "inherit", "inherit"],
 });
 anvil.on("exit", (code) => {

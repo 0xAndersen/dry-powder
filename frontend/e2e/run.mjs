@@ -703,8 +703,9 @@ if (want("activity")) {
     // 24h volume from the venue's events (the scripted traders trade all the time).
     await page.waitForFunction(() => /[1-9]/.test(document.querySelector('[data-testid="venue-volume"]')?.textContent ?? ""), null, { timeout: 30_000 });
     const volume = (await t("venue-volume").innerText()).replace(/\s+/g, " ");
+    // Gold has a Standard and a Turbo market.
     await t("markets-search").fill("gold");
-    await page.waitForFunction(() => document.querySelectorAll('[data-testid^="market-row-"]').length === 1, null, { timeout: 5_000 });
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid^="market-row-"]').length === 2, null, { timeout: 5_000 });
     await t("markets-search").fill("");
     await t("star-SOL-USD").click();
     await t("filter-favourites").click();
