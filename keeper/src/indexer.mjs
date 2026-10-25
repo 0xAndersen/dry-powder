@@ -90,6 +90,7 @@ export const INDEXED_EVENTS = [
   "PositionIncreased",
   "PositionDecreased",
   "MarginAdded",
+  "MarginRemoved",
   "MarketListed",
   "MarketSettled",
   "MaxProfitMultipleSet",
@@ -147,6 +148,7 @@ const TOTALS = () => ({
   increases: 0,
   decreases: 0,
   marginAdds: 0,
+  marginRemovals: 0,
   volume: 0n,
   fees: 0n,
   realised: 0n,
@@ -380,6 +382,12 @@ export function applyEvent(state, ev) {
       add("marginAdds", 1);
       break;
     }
+    // v3.2: margin taken back out. The position's margin is what a later close is measured against.
+    case "MarginRemoved": {
+      if (pos) pos.margin = BigInt(a.newMargin);
+      add("marginRemovals", 1);
+      break;
+    }
     case "PositionDecreased": {
       const closed = BigInt(a.closedSize);
       const released = BigInt(a.releasedMargin);
@@ -422,7 +430,7 @@ export function applyEvent(state, ev) {
   }
 }
 
-const POSITION_EVENTS = new Set(["PositionOpened", "PositionIncreased", "MarginAdded", "PositionDecreased", "PositionClosed", "PositionLiquidated"]);
+const POSITION_EVENTS = new Set(["PositionOpened", "PositionIncreased", "MarginAdded", "MarginRemoved", "PositionDecreased", "PositionClosed", "PositionLiquidated"]);
 
 /** Drops buckets older than the retention window, counted back from `now` (unix seconds). */
 export function prune(state, now) {
