@@ -7,6 +7,7 @@ import { AccountBar } from "@/components/trade/account-bar";
 import { Onboarding } from "@/components/trade/onboarding";
 import { AccountTables, type TablesHandle } from "@/components/trade/account-tables";
 import { FundingOiToggle } from "@/components/trade/funding-oi-toggle";
+import { ReferralPrompt } from "@/components/referral/referral";
 import { MarketHeader } from "@/components/trade/market-header";
 import { OrderTicket, type TicketDraft, type TicketHandle } from "@/components/trade/order-ticket";
 import { PriceChart, type ChartLine, type ChartMarker, type PickTarget } from "@/components/trade/price-chart";
@@ -328,6 +329,7 @@ export function TradeScreen() {
       ) : null}
 
       <Onboarding account={account.data} hasTraded={(account.data?.positions.length ?? 0) > 0 || feed.events.some((e) => e.type === "open" || e.type === "close")} />
+      <ReferralPrompt />
       <AccountBar view={view} account={account.data} loading={account.isLoading} />
 
       <div className="trade-grid">

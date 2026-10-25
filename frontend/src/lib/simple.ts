@@ -1,11 +1,12 @@
 import { assetName } from "./feeds";
 import type { Instrument } from "./instruments";
 
-/** Simple mode groups markets the way people talk about them. */
-export type SimpleCategory = "crypto" | "currencies" | "metals" | "pairs" | "futures";
+/** Simple mode groups markets the way people talk about them. Turbo markets are their own group. */
+export type SimpleCategory = "turbo" | "crypto" | "currencies" | "metals" | "pairs" | "futures";
 
 export const SIMPLE_CATEGORIES: readonly { key: SimpleCategory | "all"; label: string }[] = [
   { key: "all", label: "Everything" },
+  { key: "turbo", label: "Turbo" },
   { key: "crypto", label: "Crypto" },
   { key: "currencies", label: "Currencies" },
   { key: "metals", label: "Gold" },
@@ -14,6 +15,7 @@ export const SIMPLE_CATEGORIES: readonly { key: SimpleCategory | "all"; label: s
 ];
 
 export function simpleCategory(i: Instrument): SimpleCategory {
+  if (i.upside) return "turbo";
   if (i.kind === "dated") return "futures";
   if (i.kind === "cross") return "pairs";
   if (i.feed?.class === "metal") return "metals";
@@ -23,17 +25,23 @@ export function simpleCategory(i: Instrument): SimpleCategory {
 
 const SHORT_DATE = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
 
-/** What the market is, in words: "Bitcoin", "Japanese yen", "Ether in bitcoin", "Bitcoin, 30 Oct". */
-export function simpleName(i: Instrument): string {
+/** What is priced, in words: "Bitcoin", "Japanese yen", "Ether in bitcoin", "Bitcoin, 30 Oct". */
+function underlyingName(i: Instrument): string {
   if (i.expiry !== 0) return `${assetName(i.base)}, ${SHORT_DATE.format(new Date(i.expiry * 1000))}`;
   if (i.kind === "cross") return `${assetName(i.base)} in ${assetName(i.quote).toLowerCase()}`;
   if (i.feed?.class === "metal") return i.feed.name.replace(/ \(.*\)$/, "");
   return assetName(i.base);
 }
 
-/** The subject of a sentence about the price: "Bitcoin", "the yen", "gold". */
+/** What the market is, in words: "Bitcoin", "Bitcoin Turbo", "Japanese yen", "Ether in bitcoin", "Bitcoin, 30 Oct". */
+export function simpleName(i: Instrument): string {
+  const name = underlyingName(i);
+  return i.upside ? `${name} Turbo` : name;
+}
+
+/** The subject of a sentence about the price: "Bitcoin", "the yen", "gold" (never "Turbo": the price is the same). */
 export function simpleSubject(i: Instrument): string {
-  const name = simpleName(i);
+  const name = underlyingName(i);
   if (i.feed?.class === "metal") return name.toLowerCase();
   if (i.feed?.class === "fx" || i.kind === "fx") return `the ${assetName(i.base).replace(/^Japanese /, "").toLowerCase()}`;
   return name;

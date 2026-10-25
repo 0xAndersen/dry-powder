@@ -1360,6 +1360,15 @@
     transform: scale(0.985);
   }
 
+  /* Turbo: the one loud mark on a tile is its leverage. */
+  .s-turbo {
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-hot) 15%, transparent);
+    color: var(--color-hot);
+    font-weight: 700;
+  }
+
   .s-chip {
     height: 2.25rem;
     padding: 0 0.95rem;
