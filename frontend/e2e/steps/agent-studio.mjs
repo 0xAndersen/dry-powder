@@ -10,7 +10,7 @@ export const section = "agent-studio";
 
 const CLOSE = 3; // OrderType.Close
 
-export default async function run({ step, browser, read, addresses, pub, WEB_URL, DEPLOYER, artifact, sleep, shot, log }) {
+export default async function run({ step: runStep, browser, read, addresses, pub, WEB_URL, DEPLOYER, artifact, sleep, shot, log }) {
   if (!addresses.strategies || !addresses.agentRegistry) {
     log("e2e", "agent-studio: no Strategies or AgentRegistry in this deployment, skipped");
     return;
@@ -46,9 +46,26 @@ export default async function run({ step, browser, read, addresses, pub, WEB_URL
   const p = await context.newPage();
   const errors = [];
   p.on("pageerror", (e) => errors.push(e.message.slice(0, 200)));
+  p.on("console", (m) => {
+    if (m.type() === "error") errors.push(`console: ${m.text().slice(0, 200)}`);
+  });
   const t = (id) => p.getByTestId(id);
   let agentAccount = null;
   let strategyId = null;
+  // The runner reports failures from its own page; this one's alerts, errors and a screenshot go with them.
+  let failures = 0;
+  const step = (name, fn) =>
+    runStep(name, async () => {
+      try {
+        return await fn();
+      } catch (error) {
+        failures += 1;
+        const said = await p.locator('[role="alert"]').allInnerTexts().catch(() => []);
+        await shot(p, `agent-studio-fail-${failures}`).catch(() => {});
+        const app = said.map((x) => x.trim()).filter(Boolean).join(" / ").slice(0, 300);
+        throw new Error(`${String(error?.message ?? error).split("\n")[0]}${app ? ` | app: ${app}` : ""}${errors.length ? ` | page: ${errors.slice(-3).join(" / ")}` : ""}`);
+      }
+    });
 
   try {
     await step("agent studio: the trend and mean-reversion templates replay on recent candles", async () => {

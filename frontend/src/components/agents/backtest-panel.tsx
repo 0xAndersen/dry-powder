@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import type { BtFees, BtResult, BtTrade } from "@/lib/backtest";
-import { fmtDateTime, fmtNum, fmtPercent } from "@/lib/format";
+import { fmtNum, fmtPercent } from "@/lib/format";
 import { bpsText } from "@/lib/strategies";
-import { BacktestChart } from "./backtest-chart";
+import { BacktestChart, fmtWhen } from "./backtest-chart";
 
 const EXIT_WORDS: Record<BtTrade["exit"], string> = {
   signal: "Signal",
@@ -145,7 +145,7 @@ export function BacktestPanel({
               {shown.map((t, i) => (
                 <tr key={`${t.entryTime}-${i}`}>
                   <td className={t.side === "long" ? "text-long" : "text-short"}>{t.side === "long" ? "Long" : "Short"}</td>
-                  <td className="num text-muted">{fmtDateTime(t.entryTime)}</td>
+                  <td className="num text-muted">{fmtWhen(t.entryTime)}</td>
                   <td className="r num">{fmtNum(t.entryPrice, priceDecimals)}</td>
                   <td className="r num">{fmtNum(t.exitPrice, priceDecimals)}</td>
                   <td className={t.exit === "liquidation" ? "text-short" : t.exit === "open" ? "text-faint" : "text-muted"}>{EXIT_WORDS[t.exit]}</td>

@@ -406,7 +406,7 @@ export function AgentStudio({ account, accountKnown, prefill }: { account: Addre
             : deposit === null
               ? "Deposit: an amount, or leave it empty"
               : inWallet !== undefined && deposit > inWallet
-                ? `Only ${fmtUsdc(inWallet)} ${sym} in your wallet to deposit`
+                ? `Your wallet holds ${fmtUsdc(inWallet)} ${sym}: deposit less, or get test funds first`
                 : budget === null
                   ? "Daily budget: an amount, or leave it empty"
                   : budget > 0n && budget < margin

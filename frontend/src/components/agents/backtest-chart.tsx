@@ -2,7 +2,11 @@
 
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import type { BtResult } from "@/lib/backtest";
-import { fmtDateTime, fmtNum } from "@/lib/format";
+import { fmtNum } from "@/lib/format";
+
+/** "25 Oct, 07:45": readings are minutes apart, so seconds are noise. */
+export const fmtWhen = (unix: number) => WHEN.format(new Date(unix * 1000));
+const WHEN = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
 
 const H_PRICE = 150;
 const H_STRIP = 6;
@@ -107,6 +111,7 @@ export function BacktestChart({ result, kind, bandBps, priceDecimals, sym }: { r
 
   if (!geo) return <div ref={ref} className="grid h-40 place-items-center text-xs text-faint">Not enough candles to draw.</div>;
   const last = pts[pts.length - 1]!;
+  const lastY = Math.min(PAD_T + H_PRICE - 2, Math.max(PAD_T + 9, geo.y(last.close) + 3));
   const tone = result.net > 0 ? "var(--color-long)" : result.net < 0 ? "var(--color-short)" : "var(--color-muted)";
   const at = cursor === null ? null : pts[Math.max(0, Math.min(pts.length - 1, cursor))]!;
 
@@ -175,13 +180,18 @@ export function BacktestChart({ result, kind, bandBps, priceDecimals, sym }: { r
             </g>
           );
         })}
-        <text x={plotW + 6} y={PAD_T + 9} className="num" fontSize={10} fill="var(--color-faint)">
-          {fmtNum(geo.hi, dp)}
-        </text>
-        <text x={plotW + 6} y={PAD_T + H_PRICE - 2} className="num" fontSize={10} fill="var(--color-faint)">
-          {fmtNum(geo.lo, dp)}
-        </text>
-        <text x={plotW + 6} y={Math.min(PAD_T + H_PRICE - 14, Math.max(PAD_T + 22, geo.y(last.close) + 3))} className="num" fontSize={10} fill="var(--color-text)">
+        {/* The range's ends, unless the last price's label sits on one of them. */}
+        {Math.abs(lastY - (PAD_T + 9)) >= 12 ? (
+          <text x={plotW + 6} y={PAD_T + 9} className="num" fontSize={10} fill="var(--color-faint)">
+            {fmtNum(geo.hi, dp)}
+          </text>
+        ) : null}
+        {Math.abs(lastY - (PAD_T + H_PRICE - 2)) >= 12 ? (
+          <text x={plotW + 6} y={PAD_T + H_PRICE - 2} className="num" fontSize={10} fill="var(--color-faint)">
+            {fmtNum(geo.lo, dp)}
+          </text>
+        ) : null}
+        <text x={plotW + 6} y={lastY} className="num" fontSize={10} fill="var(--color-text)">
           {fmtNum(last.close, dp)}
         </text>
 
@@ -199,10 +209,10 @@ export function BacktestChart({ result, kind, bandBps, priceDecimals, sym }: { r
           {money(last.equity, "")}
         </text>
         <text x={0} y={HEIGHT - 3} className="num" fontSize={10} fill="var(--color-faint)">
-          {fmtDateTime(geo.t0)}
+          {fmtWhen(geo.t0)}
         </text>
         <text x={plotW} y={HEIGHT - 3} textAnchor="end" className="num" fontSize={10} fill="var(--color-faint)">
-          {fmtDateTime(geo.t1)}
+          {fmtWhen(geo.t1)}
         </text>
 
         {at ? (
@@ -218,7 +228,7 @@ export function BacktestChart({ result, kind, bandBps, priceDecimals, sym }: { r
           className="pointer-events-none absolute top-1 rounded-[4px] border border-line-strong bg-raised px-2 py-1.5 text-2xs shadow-lg"
           style={geo.x(at.time) > plotW / 2 ? { right: width - geo.x(at.time) + 10 } : { left: geo.x(at.time) + 10 }}
         >
-          <div className="num text-faint">{fmtDateTime(at.time)}</div>
+          <div className="num text-faint">{fmtWhen(at.time)}</div>
           <div className="num">Price {fmtNum(at.close, dp)}</div>
           {at.a !== null ? (
             <div className="num text-accent">

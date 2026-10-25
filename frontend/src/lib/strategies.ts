@@ -373,7 +373,9 @@ export function planPolicy(args: {
   now: number;
   keepFor: number;
 }): PolicyPlan {
-  const { current, now, keepFor } = args;
+  const { current, keepFor } = args;
+  // Chain clocks in the app carry fractions of a second; BigInt wants whole seconds.
+  const now = Math.floor(args.now);
   const live = args.live ?? [];
   const active = current !== null && current.expiry > BigInt(now);
   const needLeverage = Math.max(args.need.leverage, ...live.map((x) => x.leverage));

@@ -137,6 +137,8 @@ test("the approval plan keeps the larger of each limit and skips a signature whe
   const current = { expiry: BigInt(now + keepFor - 3_600), maxLeverage: 10, maxMargin: 500_000_000n };
   const covered = planPolicy({ current, need: { leverage: 5, margin: 100_000_000n }, now, keepFor });
   assert.equal(covered.change, false, "an hour short of the wanted expiry is close enough");
+  // The app's chain clock has fractions of a second.
+  assert.equal(planPolicy({ current, need: { leverage: 5, margin: 100_000_000n }, now: now + 0.37, keepFor }).change, false);
 
   const more = planPolicy({ current, need: { leverage: 20, margin: 100_000_000n }, live: [{ leverage: 10, margin: 800_000_000n }], now, keepFor });
   assert.equal(more.change, true);
