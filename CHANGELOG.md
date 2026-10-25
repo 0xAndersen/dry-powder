@@ -1,5 +1,57 @@
 # Changelog
 
+## v3.2 (2026-10-25)
+
+**Turbo markets: up to 5000x, no fee unless you win.** (Contracts; a new deployment.)
+- A fee mode per market. Upside (Turbo) markets charge nothing to open or close and keep `profitShareBps` (20%) of
+  a winning close's profit, rounded up; they fill both ways at the oracle mid and take keeper orders only
+  (`OrdersOnly`), so every fill uses a price published after the order. The mode can change only while a market
+  has no open interest. Launch set: BTC, ETH and EUR Turbo to 5000x, gold Turbo to 2500x (`MAX_LEVERAGE` 5000).
+- The vault's risk in exposure, not notional: a side's exposure is its open interest, at most its margin times
+  the profit cap. The vault cap, the withdrawal reserve and the mark use it, and the mark holds each side between
+  losing its margin and winning its cap (N-03 fixed: an uncollectable loss no longer hides a winner).
+- Orders that expire: `createLimitOrderUntil`, `setOrderExpiry`; an expired order cannot execute and anyone can
+  remove it with `cancelExpired` for its execution fee, the rest of the escrow going back to the trader.
+- `removeMargin`: margin out (never profit), keeping the position within the leverage limit and able to cover any
+  loss at the exit price.
+- Referrals: `setReferrer` once; 5% off every fee for the trader, 10% of each fee credited to the referrer and
+  collected with `claim`. The same link is a builder code for front-ends and agents.
+- DRY on net results: each close reports at most 1% of its notional, DRY is minted only on an account's new net
+  low, and the rate halves as rebated losses pass 1,000,000 USDC (N-07 reduced: farming costs about eight times
+  more per DRY).
+- `setTriggerOrder` checks a take-profit or stop-loss against a fresh price.
+- Agent accounts: a daily spending budget per key (`setAgentBudget`, `DailyBudgetExceeded`), `setReferrer`,
+  `createLimitOrderUntil`, `setOrderExpiry`, `removeMargin`.
+- Add-ons: `Strategies` (trend, mean-reversion and copy strategies an account approves as an agent; the keeper
+  pokes them), `AgentRegistry` (a public directory of agents), `PrizeDistributor` (season prize pools paid from a
+  Merkle root of results). `script/Governance.s.sol` hands the engine and oracle to a timelock with a Safe.
+- **Breaking:** the engine is two contracts behind one address (`PerpEngine` forwards what it does not define to
+  `PerpEngineExt` by `delegatecall`); use the union ABI (`IEngine`). `RewardToken.mintLossRebate` is replaced by
+  `recordResult`. 464 tests.
+
+**The keeper.**
+- Turbo orders are checked at the mid; expired orders are swept for their fee; an executor-only mode
+  (`KEEPER_MODE=executor`) lets anyone run a second keeper that fills and liquidates with no publisher key.
+- Prices are pushed on any 5 bp move (15 bp before) and direct trades accept prices at most 10 s old (30 s).
+- New services in `keeper/`: season prizes (`prizes.mjs`; ranking from `stats.json`, Merkle proofs, the
+  `prizes.yml` workflow), an event stream for bots (`relay.mjs`; SSE and WebSocket with filters and replay) and a
+  push relay (`push.mjs`; Web Push for fills, closes and liquidation warnings while the app is closed). The relays
+  need an always-on host; see `ops/relay`.
+
+**Two apps in one.**
+- Simple mode: a tile per market, up or down, how much, and one sheet that says what you can win and lose and how
+  far the price can go against you before you tap; cash out in one tap. Turbo has its own group.
+- Advanced: Turbo pricing in the ticket (mid fills, no fee unless you win, wins shown after the house share),
+  good-until orders (1 hour, 1 day, 1 week), taking margin out, referral links, a chart wall, funding and
+  open-interest history, passkey sign-in, deposits from other chains with CCTP and Gateway.
+- Agent Studio: build a trend, mean-reversion or copy strategy, replay it on past prices with fees, launch it with
+  a budgeted key, then pause, resume or stop it; an agent directory and agent badges on the leaderboard and
+  profiles.
+- Season prizes on the Portfolio page; push notifications while the app is closed where a relay is configured.
+
+**For builders.** SDK 0.4 and MCP 0.2 cover all of v3.2 (Turbo, expiry, margin out, referrals, budgets,
+strategies, the registry, prizes, typed errors); new examples `turbo-stop.mjs` and `strategy-launcher.mjs`.
+
 ## v3.1 (2026-10-18)
 
 **Manage a position, not just open and close it.** (Contracts; a new deployment.)
