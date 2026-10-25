@@ -4,18 +4,23 @@
   "rpcUrl": "https://rpc.testnet.arc.io",
   "explorerUrl": "https://explorer.testnet.arc.io",
   "appUrl": "https://0xandersen.github.io/dry-powder/",
-  "deployedAt": "2026-10-18T05:26:29.260Z",
-  "version": "v3.1",
+  "deployedAt": "2026-10-25T08:42:37.736Z",
+  "version": "v3.2",
   "collateral": "test",
-  "engine": "0xDC96F6Eea9BFBAE3B47898C50213468F61023A2D",
-  "lens": "0x61D511ECD69217E9A3A7f553dE9E91B3fc1765c8",
-  "vault": "0x083EC92ffda9890831C3e6Dea9AE8a9ab20DDf46",
-  "token": "0xd0953C98fBa49d6f707c64b87Cb9663c666A01DF",
-  "usdc": "0xcd55bFE81a94fF0c16A36f47798fe9Ac7d8d6aE5",
-  "pub": "0xB09A73690b518e7B00a46E0153B7ec0f2ff33126",
-  "oracle": "0x9a53E27324C2E730Cd884feC42EB889e446a73b5",
-  "agentFactory": "0xe8Fbf18d5750315Cf8a88453346A2734e32210f2",
-  "trailingStops": "0x1F40245dCD46D799665f470d10023173B8b8Dd70",
+  "engine": "0x2ADD56DdbeF7929b15ea5a31D7F69e71B95A0Ab6",
+  "engineExt": "0x5A4EA8dCa02Ff1aa1fB545C281b34b2F354B07f6",
+  "lens": "0xfeB544232679eF3DcDA339027E9AA1d4944b1257",
+  "vault": "0x7E7B03979D79863f90D61a46F1952d6F18F9A2Ba",
+  "token": "0x5aCD72b3C7590EC8777692d3Ac8341b91ab2221D",
+  "usdc": "0x0C037766dd2960126aeeBD9612aA141F2DA6B890",
+  "pub": "0x412989B4Ab6a19AD98F3777074EE1cD350c776C4",
+  "oracle": "0x33371Dea22557CDe7cA94326c7bFEFD97aF84426",
+  "agentFactory": "0xE3FD0868b0A6cb2c81F092a6f4EB5f4E6bebe886",
+  "trailingStops": "0xbf6E982521A0C58aaff9Ca0e390AAa3B05dd349d",
+  "twapOrders": "0x592772a8cBcA14FE9225C4E51cD737113eA6E6D0",
+  "strategies": "0x667c8d1d998cf2f0e155627B70CDdDA2a2B8Dc31",
+  "agentRegistry": "0x35aAe04F9db47a7E938680434a0B0A6a771048d1",
+  "prizeDistributor": "0xE3e33a8911fec979d70056Cdc878Ee8a304b84c2",
   "publisher": "0xa2744b5Dfd87377900682Ff29bD24BDE9e841Cd2",
   "keeper": "0x15B96DDdC4Af8269bdc28868Df9bF5c742986897",
   "deployer": "0x732E77DBA1623FD77471BDFF9dFEB686Db67C8d7",
@@ -49,9 +54,24 @@
       "id": "0xf5464e72d206a044762e3837bb6c37fd1f1f7484e2d7fa45348b6ea240be558d"
     },
     {
-      "symbol": "BTC-USD-261023",
-      "id": "0x75fcd9ed1c0022585fc469fc5430ffe14abf0938cc7fd7686959e4cdfedd7190"
+      "symbol": "BTC-USD-261030",
+      "id": "0x9b712cdee36997f801a0fc8f0426e3bec2d511e3b377bdb19a1ac5c0777765c0"
+    },
+    {
+      "symbol": "BTC-USD-TURBO",
+      "id": "0xc5d6cb709ab7a16dbf8f3107e3753605f088c214874b61425c1ef66eb60ac2d2"
+    },
+    {
+      "symbol": "ETH-USD-TURBO",
+      "id": "0xc915542d9b780363402785ea7c544511a6d0eb362ba3d26b6f82462813db93f5"
+    },
+    {
+      "symbol": "EUR-USD-TURBO",
+      "id": "0x3cc01ff58edb1f487f30004d496c175d31a4db6e20adc4bb888dc08eb1957ad4"
+    },
+    {
+      "symbol": "XAU-USD-TURBO",
+      "id": "0xec280dea6c00f152d5469788d458a3a6024c43a9533bdbc126a103e7e593d146"
     }
-  ],
-  "twapOrders": "0x335621F6a97D06DFf6463f41BE8998B134FE4142"
+  ]
 }
