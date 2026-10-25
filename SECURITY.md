@@ -190,6 +190,10 @@ Found and fixed while testing v2:
 - **A market with an unusable oracle is marked at zero**, which mis-states NAV for epoch settlement and exits.
 
 **Low**
+- Direct trades (Standard markets, 100x and below) can use an on-chain price up to 10 s old. A bot that sees a
+  jump of 12 bp or more on the exchanges before the publisher pushes it can trade the old price; the v3.2
+  simulation puts that at about +$27k a month for 5% of accounts racing it. Keeper orders, which the app always
+  uses, fill at a newer price and close it; a pull oracle (Pyth, Stork) does the same for direct trades.
 - The reserve nets only within a market (a perp long against a future short on the same asset still reserves).
 - An expired future is not settled until someone calls, and settles at the first price submitted afterwards.
 - A price stamped in the future stays usable for up to twice `maxPriceAge`.
