@@ -114,6 +114,10 @@ contract DeployTest is Test {
         assertEq(address(d.trailingStops.factory()), address(d.agentFactory));
         assertEq(address(d.twapOrders.engine()), address(d.engine));
         assertEq(address(d.twapOrders.factory()), address(d.agentFactory));
+        assertEq(address(d.strategies.engine()), address(d.engine));
+        assertEq(address(d.strategies.factory()), address(d.agentFactory));
+        assertEq(address(d.agentRegistry.factory()), address(d.agentFactory));
+        assertEq(address(d.prizes.usdc()), d.usdc);
         assertEq(d.futureExpiry, expiry);
         _assertMarket(d, 0, BTC, "BTC-USD", BTC, 0, false, 1000, 0);
         _assertMarket(d, 1, ETH, "ETH-USD", ETH, 0, false, 1000, 0);
@@ -167,6 +171,9 @@ contract DeployTest is Test {
         assertEq(vm.parseJsonAddress(json, ".pythOracle"), address(d.oracle));
         assertEq(vm.parseJsonAddress(json, ".perpEngine"), address(d.engine));
         assertEq(vm.parseJsonAddress(json, ".perpEngineExt"), address(d.engineExt));
+        assertEq(vm.parseJsonAddress(json, ".strategies"), address(d.strategies));
+        assertEq(vm.parseJsonAddress(json, ".agentRegistry"), address(d.agentRegistry));
+        assertEq(vm.parseJsonAddress(json, ".prizeDistributor"), address(d.prizes));
         assertEq(vm.parseJsonAddress(json, ".engineLens"), address(d.lens));
         assertEq(vm.parseJsonAddress(json, ".houseVault"), address(d.vault));
         assertEq(vm.parseJsonAddress(json, ".rewardToken"), address(d.rewardToken));

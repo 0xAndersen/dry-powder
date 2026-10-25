@@ -72,3 +72,41 @@ test("a trailing stop moves only by a meaningful step", async () => {
   assert.equal(trailStepTooSmall(100_000n * E, 100_100n * E, 10), false, "0.1% is");
   assert.equal(trailStepTooSmall(100_000n * E, 99_800n * E, 10), false, "either direction (shorts trail down)");
 });
+
+test("strategies: which ones the keeper asks due() about", async () => {
+  const { strategyCandidate } = await import("../src/operator.mjs");
+  const state = (o = {}) => ({ status: 1, todo: false, pendingOrder: 0n, actAt: 0n, nextAt: 100n, blockedAt: 0n, ...o });
+  const trend = (o = {}) => ({ account: "0xA", marketId: "0xM", config: { kind: 0 }, state: state(o) });
+  const none = new Map();
+  assert.equal(strategyCandidate(trend(), 99n, none), false, "before its next sample");
+  assert.equal(strategyCandidate(trend(), 100n, none), true, "a trend samples every interval");
+  assert.equal(strategyCandidate(trend({ status: 2 }), 100n, none), false, "paused");
+  assert.equal(strategyCandidate(trend({ pendingOrder: 7n }), 50n, none), true, "its order may have settled");
+  assert.equal(strategyCandidate(trend({ todo: true, actAt: 60n }), 50n, none), false, "backing off after a refusal");
+  assert.equal(strategyCandidate(trend({ todo: true, actAt: 60n }), 60n, none), true, "a step left to take");
+});
+
+test("strategies: an idle copy is not poked, a copy off its leader is", async () => {
+  const { copyOff, strategyCandidate } = await import("../src/operator.mjs");
+  const copy = (o = {}, c = {}) => ({
+    account: "0xF",
+    marketId: "0xM",
+    config: { kind: 2, leader: "0xL", ratioBps: 5_000, maxSize: 6_000n, allowShort: true, ...c },
+    state: { status: 1, todo: false, pendingOrder: 0n, actAt: 0n, nextAt: 0n, blockedAt: 0n, ...o },
+  });
+  const pos = (isLong, size, openedAt = 1n) => ({ isLong, size: BigInt(size), openedAt });
+  const book = (lead, mine) => new Map([...(lead ? [["0xl0xm", lead]] : []), ...(mine ? [["0xf0xm", mine]] : [])]);
+  assert.equal(copyOff(copy(), book(null, null)), false, "both flat");
+  assert.equal(strategyCandidate(copy(), 10n, book(null, null)), false, "an idle copy costs nothing");
+  assert.equal(copyOff(copy(), book(pos(true, 8_000), null)), true, "the leader opened");
+  assert.equal(copyOff(copy(), book(pos(true, 8_000), pos(true, 4_000))), false, "half of it, held");
+  assert.equal(copyOff(copy(), book(pos(true, 8_800), pos(true, 4_000))), false, "10% off is close enough");
+  assert.equal(copyOff(copy(), book(pos(true, 9_000), pos(true, 4_000))), true, "12.5% off is not");
+  assert.equal(copyOff(copy(), book(pos(true, 20_000), pos(true, 6_000))), false, "capped at maxSize");
+  assert.equal(copyOff(copy(), book(pos(false, 8_000), pos(true, 4_000))), true, "the leader flipped");
+  assert.equal(copyOff(copy(), book(null, pos(true, 4_000))), true, "the leader closed");
+  assert.equal(copyOff(copy({}, { allowShort: false }), book(pos(false, 8_000), null)), false, "long only: shorts ignored");
+  assert.equal(copyOff(copy({ blockedAt: 5n }), book(pos(true, 8_000, 5n), null)), false, "sitting out that trade");
+  assert.equal(copyOff(copy({ blockedAt: 5n }), book(pos(true, 8_000, 9n), null)), true, "the leader's next trade");
+  assert.equal(copyOff(copy({ blockedAt: 5n }), book(null, null)), true, "the block clears once the leader is out");
+});

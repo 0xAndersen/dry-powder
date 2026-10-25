@@ -282,6 +282,12 @@ contract PerpEngine is PerpEngineBase {
         return _orders[orderId];
     }
 
+    /// @notice Who placed order `orderId`; zero once it has been filled, cancelled or expired away. One storage
+    ///         read, for add-ons that only need to know whether an order of theirs is still open.
+    function orderTrader(uint256 orderId) external view returns (address) {
+        return _orders[orderId].trader;
+    }
+
     /// @notice Validated on-chain price of a market; reverts if there is no usable price.
     function getPrice(bytes32 marketId) external view returns (OraclePrice memory) {
         return _readPrice(_existingMarket(marketId));

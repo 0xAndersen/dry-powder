@@ -28,9 +28,22 @@ export const perpEngineAbi = [
         "name": "owner_",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "extension_",
+        "type": "address",
+        "internalType": "contract PerpEngineExt"
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "fallback",
+    "stateMutability": "payable"
+  },
+  {
+    "type": "receive",
+    "stateMutability": "payable"
   },
   {
     "type": "function",
@@ -86,86 +99,21 @@ export const perpEngineAbi = [
   },
   {
     "type": "function",
-    "name": "acceptOwnership",
+    "name": "REBATE_NOTIONAL_BPS",
     "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "addMargin",
-    "inputs": [
+    "outputs": [
       {
-        "name": "marketId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "amount",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "addMarket",
-    "inputs": [
-      {
-        "name": "marketId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "cfg",
-        "type": "tuple",
-        "internalType": "struct MarketConfig",
-        "components": [
-          {
-            "name": "symbol",
-            "type": "string",
-            "internalType": "string"
-          },
-          {
-            "name": "feedId",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "quoteFeedId",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "invert",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "maxLeverage",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "expiry",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "maxOiPerSide",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "skewScale",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      }
-    ],
+    "name": "acceptOwnership",
+    "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -192,13 +140,6 @@ export const perpEngineAbi = [
         "internalType": "uint256"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "claim",
-    "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -312,22 +253,69 @@ export const perpEngineAbi = [
   },
   {
     "type": "function",
-    "name": "currentFundingIndex",
+    "name": "createLimitOrderUntil",
     "inputs": [
       {
-        "name": "marketId",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct LimitParams",
+        "components": [
+          {
+            "name": "priceId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "isLong",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "margin",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "size",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "triggerPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "takeProfit",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "stopLoss",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "stopEntry",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      },
+      {
+        "name": "expiresAt",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [
       {
-        "name": "",
-        "type": "int256",
-        "internalType": "int256"
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
-    "stateMutability": "view"
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -362,19 +350,13 @@ export const perpEngineAbi = [
   },
   {
     "type": "function",
-    "name": "fundingRate",
-    "inputs": [
-      {
-        "name": "marketId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
+    "name": "extension",
+    "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "int256",
-        "internalType": "int256"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -409,6 +391,11 @@ export const perpEngineAbi = [
             "name": "maxLeverage",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "feeMode",
+            "type": "uint8",
+            "internalType": "enum FeeMode"
           },
           {
             "name": "lastFundingTime",
@@ -461,6 +448,16 @@ export const perpEngineAbi = [
             "internalType": "uint256"
           },
           {
+            "name": "longMargin",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "shortMargin",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "fundingIndex",
             "type": "int256",
             "internalType": "int256"
@@ -476,19 +473,6 @@ export const perpEngineAbi = [
             "internalType": "string"
           }
         ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getMarketIds",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
       }
     ],
     "stateMutability": "view"
@@ -531,6 +515,11 @@ export const perpEngineAbi = [
           },
           {
             "name": "createdAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "expiresAt",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -976,37 +965,19 @@ export const perpEngineAbi = [
   },
   {
     "type": "function",
-    "name": "orderCount",
-    "inputs": [],
+    "name": "orderTrader",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "orderIds",
-    "inputs": [
-      {
-        "name": "offset",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "limit",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "out",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -1023,13 +994,6 @@ export const perpEngineAbi = [
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "pause",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -1053,19 +1017,6 @@ export const perpEngineAbi = [
         "name": "",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "positionCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -1096,24 +1047,13 @@ export const perpEngineAbi = [
   },
   {
     "type": "function",
-    "name": "positionKeys",
-    "inputs": [
-      {
-        "name": "offset",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "limit",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
+    "name": "profitShareBps",
+    "inputs": [],
     "outputs": [
       {
-        "name": "out",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -1133,34 +1073,45 @@ export const perpEngineAbi = [
   },
   {
     "type": "function",
-    "name": "quoteOpenFee",
-    "inputs": [
-      {
-        "name": "marketId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "size",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "isLong",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "margin",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
+    "name": "referralDiscountBps",
+    "inputs": [],
     "outputs": [
       {
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "referralShareBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "referrerOf",
+    "inputs": [
+      {
+        "name": "trader",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -1174,19 +1125,6 @@ export const perpEngineAbi = [
   },
   {
     "type": "function",
-    "name": "reservedLiquidity",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "rewardToken",
     "inputs": [],
     "outputs": [
@@ -1197,108 +1135,6 @@ export const perpEngineAbi = [
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "setFeeParams",
-    "inputs": [
-      {
-        "name": "baseFeeBps_",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxSkewFeeBps_",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxFundingRatePerSecond_",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "executionFee_",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setMarket",
-    "inputs": [
-      {
-        "name": "marketId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "enabled",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "maxLeverage",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "maxOiPerSide",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "skewScale",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setMaxProfitMultiple",
-    "inputs": [
-      {
-        "name": "maxProfitMultiple_",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setRiskParams",
-    "inputs": [
-      {
-        "name": "maxPriceAge_",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxConfBps_",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxOiToNavBps_",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minMargin_",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -1336,44 +1172,20 @@ export const perpEngineAbi = [
   },
   {
     "type": "function",
-    "name": "settleMarket",
-    "inputs": [
-      {
-        "name": "marketId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "priceUpdate",
-        "type": "bytes[]",
-        "internalType": "bytes[]"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "settlePositions",
-    "inputs": [
-      {
-        "name": "keys",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      }
-    ],
+    "name": "totalClaimable",
+    "inputs": [],
     "outputs": [
       {
-        "name": "settled",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "totalClaimable",
+    "name": "totalExposure",
     "inputs": [],
     "outputs": [
       {
@@ -1409,26 +1221,6 @@ export const perpEngineAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "unpause",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "unrealizedTraderPnl",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "total",
-        "type": "int256",
-        "internalType": "int256"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1539,6 +1331,37 @@ export const perpEngineAbi = [
   },
   {
     "type": "event",
+    "name": "MarginRemoved",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "trader",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newMargin",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "MarketConfigured",
     "inputs": [
       {
@@ -1576,6 +1399,25 @@ export const perpEngineAbi = [
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MarketFeeModeSet",
+    "inputs": [
+      {
+        "name": "priceId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "mode",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum FeeMode"
       }
     ],
     "anonymous": false
@@ -1756,6 +1598,50 @@ export const perpEngineAbi = [
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OrderExpired",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "trader",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "keeper",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OrderExpirySet",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "expiresAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -2144,6 +2030,82 @@ export const perpEngineAbi = [
   },
   {
     "type": "event",
+    "name": "ProfitShareSet",
+    "inputs": [
+      {
+        "name": "profitShareBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReferralFeePaid",
+    "inputs": [
+      {
+        "name": "referrer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "trader",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReferralParamsSet",
+    "inputs": [
+      {
+        "name": "referralShareBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "referralDiscountBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReferrerSet",
+    "inputs": [
+      {
+        "name": "trader",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "referrer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RiskParamsSet",
     "inputs": [
       {
@@ -2199,6 +2161,11 @@ export const perpEngineAbi = [
   {
     "type": "error",
     "name": "HighLeverageNeedsOrder",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientMargin",
     "inputs": []
   },
   {
@@ -2273,6 +2240,11 @@ export const perpEngineAbi = [
   },
   {
     "type": "error",
+    "name": "NothingToCancel",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NothingToClaim",
     "inputs": []
   },
@@ -2303,7 +2275,17 @@ export const perpEngineAbi = [
   },
   {
     "type": "error",
+    "name": "OrderHasExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "OrderNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OrdersOnly",
     "inputs": []
   },
   {
@@ -2375,6 +2357,11 @@ export const perpEngineAbi = [
   },
   {
     "type": "error",
+    "name": "ReferrerAlreadySet",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RefundFailed",
     "inputs": []
   },
@@ -2430,6 +2417,556 @@ export const perpEngineAbi = [
     "type": "error",
     "name": "ZeroAddress",
     "inputs": []
+  },
+  {
+    "type": "function",
+    "name": "addMargin",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "addMarket",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "cfg",
+        "type": "tuple",
+        "internalType": "struct MarketConfig",
+        "components": [
+          {
+            "name": "symbol",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "feedId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "quoteFeedId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "invert",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "maxLeverage",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "expiry",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "maxOiPerSide",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "skewScale",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "cancelExpired",
+    "inputs": [
+      {
+        "name": "ids",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "cancelled",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claim",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "currentFundingIndex",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "int256",
+        "internalType": "int256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "fundingRate",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "int256",
+        "internalType": "int256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getMarketIds",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "orderCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "orderIds",
+    "inputs": [
+      {
+        "name": "offset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "out",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pause",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "positionCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "positionKeys",
+    "inputs": [
+      {
+        "name": "offset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "out",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "quoteOpenFee",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "size",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "isLong",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "margin",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "removeMargin",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "priceUpdate",
+        "type": "bytes[]",
+        "internalType": "bytes[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "reservedLiquidity",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setFeeParams",
+    "inputs": [
+      {
+        "name": "baseFeeBps_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxSkewFeeBps_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxFundingRatePerSecond_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "executionFee_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMarket",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "enabled",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "maxLeverage",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxOiPerSide",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "skewScale",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMarketFeeMode",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "mode",
+        "type": "uint8",
+        "internalType": "enum FeeMode"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMaxProfitMultiple",
+    "inputs": [
+      {
+        "name": "maxProfitMultiple_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setOrderExpiry",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expiresAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setProfitShare",
+    "inputs": [
+      {
+        "name": "profitShareBps_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setReferralParams",
+    "inputs": [
+      {
+        "name": "referralShareBps_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "referralDiscountBps_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setReferrer",
+    "inputs": [
+      {
+        "name": "referrer",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setRiskParams",
+    "inputs": [
+      {
+        "name": "maxPriceAge_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxConfBps_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxOiToNavBps_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minMargin_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "settleMarket",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "priceUpdate",
+        "type": "bytes[]",
+        "internalType": "bytes[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "settlePositions",
+    "inputs": [
+      {
+        "name": "keys",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "settled",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "unpause",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "unrealizedTraderPnl",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "total",
+        "type": "int256",
+        "internalType": "int256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "error",
+    "name": "NotDelegated",
+    "inputs": []
   }
 ];
 
@@ -2440,7 +2977,7 @@ export const engineLensAbi = [
       {
         "name": "engine_",
         "type": "address",
-        "internalType": "contract PerpEngine"
+        "internalType": "contract IEngine"
       }
     ],
     "stateMutability": "nonpayable"
@@ -2453,7 +2990,7 @@ export const engineLensAbi = [
       {
         "name": "",
         "type": "address",
-        "internalType": "contract PerpEngine"
+        "internalType": "contract IEngine"
       }
     ],
     "stateMutability": "view"
@@ -2492,6 +3029,11 @@ export const engineLensAbi = [
                 "name": "maxLeverage",
                 "type": "uint16",
                 "internalType": "uint16"
+              },
+              {
+                "name": "feeMode",
+                "type": "uint8",
+                "internalType": "enum FeeMode"
               },
               {
                 "name": "lastFundingTime",
@@ -2540,6 +3082,16 @@ export const engineLensAbi = [
               },
               {
                 "name": "shortUnits",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "longMargin",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "shortMargin",
                 "type": "uint256",
                 "internalType": "uint256"
               },
@@ -2650,6 +3202,11 @@ export const engineLensAbi = [
           },
           {
             "name": "createdAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "expiresAt",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -2878,6 +3435,11 @@ export const engineLensAbi = [
           },
           {
             "name": "createdAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "expiresAt",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -4426,7 +4988,20 @@ export const rewardTokenAbi = [
   },
   {
     "type": "function",
-    "name": "REBATE_RATE",
+    "name": "HALVING_LOSS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "INITIAL_REBATE_RATE",
     "inputs": [],
     "outputs": [
       {
@@ -4590,30 +5165,6 @@ export const rewardTokenAbi = [
   },
   {
     "type": "function",
-    "name": "mintLossRebate",
-    "inputs": [
-      {
-        "name": "trader",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "usdcLost",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "minted",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "name",
     "inputs": [],
     "outputs": [
@@ -4647,6 +5198,86 @@ export const rewardTokenAbi = [
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rebateFor",
+    "inputs": [
+      {
+        "name": "loss",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rebateRate",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "recordResult",
+    "inputs": [
+      {
+        "name": "trader",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "result",
+        "type": "int256",
+        "internalType": "int256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "minted",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "results",
+    "inputs": [
+      {
+        "name": "trader",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "net",
+        "type": "int128",
+        "internalType": "int128"
+      },
+      {
+        "name": "low",
+        "type": "int128",
+        "internalType": "int128"
       }
     ],
     "stateMutability": "view"
@@ -4705,6 +5336,19 @@ export const rewardTokenAbi = [
         "name": "",
         "type": "string",
         "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "totalRebatedLoss",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -5128,6 +5772,22 @@ export const rewardTokenAbi = [
     "type": "error",
     "name": "OnlyVault",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedIntDowncast",
+    "inputs": [
+      {
+        "name": "bits",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "value",
+        "type": "int256",
+        "internalType": "int256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -5977,7 +6637,7 @@ export const agentAccountAbi = [
       {
         "name": "engine_",
         "type": "address",
-        "internalType": "contract PerpEngine"
+        "internalType": "contract IEngine"
       },
       {
         "name": "owner_",
@@ -6030,6 +6690,35 @@ export const agentAccountAbi = [
         "name": "maxMargin",
         "type": "uint128",
         "internalType": "uint128"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "budgets",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "perDay",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "day",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "spent",
+        "type": "uint96",
+        "internalType": "uint96"
       }
     ],
     "stateMutability": "view"
@@ -6145,13 +6834,79 @@ export const agentAccountAbi = [
   },
   {
     "type": "function",
+    "name": "createLimitOrderUntil",
+    "inputs": [
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct LimitParams",
+        "components": [
+          {
+            "name": "priceId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "isLong",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "margin",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "size",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "triggerPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "takeProfit",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "stopLoss",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "stopEntry",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      },
+      {
+        "name": "expiresAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "engine",
     "inputs": [],
     "outputs": [
       {
         "name": "",
         "type": "address",
-        "internalType": "contract PerpEngine"
+        "internalType": "contract IEngine"
       }
     ],
     "stateMutability": "view"
@@ -6298,6 +7053,29 @@ export const agentAccountAbi = [
   },
   {
     "type": "function",
+    "name": "removeMargin",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "priceUpdate",
+        "type": "bytes[]",
+        "internalType": "bytes[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
     "name": "restrictMarkets",
     "inputs": [],
     "outputs": [
@@ -6352,6 +7130,24 @@ export const agentAccountAbi = [
   },
   {
     "type": "function",
+    "name": "setAgentBudget",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "perDay",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setMarketAllowed",
     "inputs": [
       {
@@ -6363,6 +7159,37 @@ export const agentAccountAbi = [
         "name": "allowed",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setOrderExpiry",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expiresAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setReferrer",
+    "inputs": [
+      {
+        "name": "referrer",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -6450,6 +7277,25 @@ export const agentAccountAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "AgentBudgetSet",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "perDay",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -6565,6 +7411,11 @@ export const agentAccountAbi = [
   },
   {
     "type": "error",
+    "name": "DailyBudgetExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "FailedCall",
     "inputs": []
   },
@@ -6605,6 +7456,22 @@ export const agentAccountAbi = [
   },
   {
     "type": "error",
+    "name": "SafeCastOverflowedUintDowncast",
+    "inputs": [
+      {
+        "name": "bits",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SafeERC20FailedOperation",
     "inputs": [
       {
@@ -6633,7 +7500,7 @@ export const agentAccountFactoryAbi = [
       {
         "name": "engine_",
         "type": "address",
-        "internalType": "contract PerpEngine"
+        "internalType": "contract IEngine"
       }
     ],
     "stateMutability": "nonpayable"
@@ -6718,7 +7585,7 @@ export const agentAccountFactoryAbi = [
       {
         "name": "",
         "type": "address",
-        "internalType": "contract PerpEngine"
+        "internalType": "contract IEngine"
       }
     ],
     "stateMutability": "view"
@@ -6788,7 +7655,7 @@ export const trailingStopsAbi = [
       {
         "name": "engine_",
         "type": "address",
-        "internalType": "contract PerpEngine"
+        "internalType": "contract IEngine"
       },
       {
         "name": "factory_",
@@ -6863,7 +7730,7 @@ export const trailingStopsAbi = [
       {
         "name": "",
         "type": "address",
-        "internalType": "contract PerpEngine"
+        "internalType": "contract IEngine"
       }
     ],
     "stateMutability": "view"
@@ -7251,7 +8118,7 @@ export const twapOrdersAbi = [
       {
         "name": "engine_",
         "type": "address",
-        "internalType": "contract PerpEngine"
+        "internalType": "contract IEngine"
       },
       {
         "name": "factory_",
@@ -7389,7 +8256,7 @@ export const twapOrdersAbi = [
       {
         "name": "",
         "type": "address",
-        "internalType": "contract PerpEngine"
+        "internalType": "contract IEngine"
       }
     ],
     "stateMutability": "view"
@@ -7833,6 +8700,2178 @@ export const twapOrdersAbi = [
   {
     "type": "error",
     "name": "NotAllowed",
+    "inputs": []
+  }
+];
+
+export const prizeDistributorAbi = [
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "usdc_",
+        "type": "address",
+        "internalType": "contract IERC20"
+      },
+      {
+        "name": "owner_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "acceptOwnership",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "canClaim",
+    "inputs": [
+      {
+        "name": "seasonId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "proof",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "claim",
+    "inputs": [
+      {
+        "name": "seasonId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "proof",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claimed",
+    "inputs": [
+      {
+        "name": "seasonId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "closeSeason",
+    "inputs": [
+      {
+        "name": "seasonId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "toSeason",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "fund",
+    "inputs": [
+      {
+        "name": "seasonId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "owner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingOwner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "publishResults",
+    "inputs": [
+      {
+        "name": "seasonId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "root",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "allocated",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "claimDeadline",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "renounceOwnership",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "seasons",
+    "inputs": [
+      {
+        "name": "seasonId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "funded",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "allocated",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "claimed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "root",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "claimDeadline",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "closed",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "transferOwnership",
+    "inputs": [
+      {
+        "name": "newOwner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "usdc",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IERC20"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "OwnershipTransferStarted",
+    "inputs": [
+      {
+        "name": "previousOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OwnershipTransferred",
+    "inputs": [
+      {
+        "name": "previousOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PrizeClaimed",
+    "inputs": [
+      {
+        "name": "seasonId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ResultsPublished",
+    "inputs": [
+      {
+        "name": "seasonId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "root",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "allocated",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "claimDeadline",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SeasonClosed",
+    "inputs": [
+      {
+        "name": "seasonId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "unclaimed",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toSeason",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SeasonFunded",
+    "inputs": [
+      {
+        "name": "seasonId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "from",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AlreadyClaimed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ClaimWindowClosed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ClaimWindowOpen",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidParam",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidProof",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OwnableInvalidOwner",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OwnableUnauthorizedAccount",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ResultsAlreadyPublished",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ResultsNotPublished",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "Underfunded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAddress",
+    "inputs": []
+  }
+];
+
+export const strategiesAbi = [
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "engine_",
+        "type": "address",
+        "internalType": "contract IEngine"
+      },
+      {
+        "name": "factory_",
+        "type": "address",
+        "internalType": "contract AgentAccountFactory"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "ACTION_GAS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_BAND_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_BRACKET_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_INTERVAL",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_PERIOD",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_RATIO_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_REFUSALS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_SLIPPAGE_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MIN_BRACKET_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MIN_INTERVAL",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MIN_PERIOD",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "RESIZE_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "create",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "contract AgentAccount"
+      },
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "c",
+        "type": "tuple",
+        "internalType": "struct Strategies.Config",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum Strategies.Kind"
+          },
+          {
+            "name": "interval",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "margin",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "leverage",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxSlippageBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "allowShort",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "stopLossBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "takeProfitBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "period",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "slowPeriod",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "bandBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "exitBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "ratioBps",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "leader",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "maxSize",
+            "type": "uint80",
+            "internalType": "uint80"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "due",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "engine",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IEngine"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "factory",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract AgentAccountFactory"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getStrategies",
+    "inputs": [
+      {
+        "name": "offset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ids",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "list",
+        "type": "tuple[]",
+        "internalType": "struct Strategies.Strategy[]",
+        "components": [
+          {
+            "name": "account",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "marketId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "config",
+            "type": "tuple",
+            "internalType": "struct Strategies.Config",
+            "components": [
+              {
+                "name": "kind",
+                "type": "uint8",
+                "internalType": "enum Strategies.Kind"
+              },
+              {
+                "name": "interval",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "margin",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "leverage",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxSlippageBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "allowShort",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stopLossBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "takeProfitBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "period",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "slowPeriod",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "bandBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "exitBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "ratioBps",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "leader",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "maxSize",
+                "type": "uint80",
+                "internalType": "uint80"
+              }
+            ]
+          },
+          {
+            "name": "state",
+            "type": "tuple",
+            "internalType": "struct Strategies.State",
+            "components": [
+              {
+                "name": "status",
+                "type": "uint8",
+                "internalType": "enum Strategies.Status"
+              },
+              {
+                "name": "target",
+                "type": "uint8",
+                "internalType": "enum Strategies.Side"
+              },
+              {
+                "name": "holding",
+                "type": "uint8",
+                "internalType": "enum Strategies.Side"
+              },
+              {
+                "name": "todo",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "refusals",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "pendingAction",
+                "type": "uint8",
+                "internalType": "enum Strategies.Action"
+              },
+              {
+                "name": "pendingSide",
+                "type": "uint8",
+                "internalType": "enum Strategies.Side"
+              },
+              {
+                "name": "nextAt",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "actAt",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "samples",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "pendingOrder",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "pendingSince",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "targetSize",
+                "type": "uint96",
+                "internalType": "uint96"
+              },
+              {
+                "name": "actions",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "emaFast",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "emaSlow",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "lastPrice",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "blockedAt",
+                "type": "uint64",
+                "internalType": "uint64"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getStrategy",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct Strategies.Strategy",
+        "components": [
+          {
+            "name": "account",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "marketId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "config",
+            "type": "tuple",
+            "internalType": "struct Strategies.Config",
+            "components": [
+              {
+                "name": "kind",
+                "type": "uint8",
+                "internalType": "enum Strategies.Kind"
+              },
+              {
+                "name": "interval",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "margin",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "leverage",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxSlippageBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "allowShort",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stopLossBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "takeProfitBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "period",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "slowPeriod",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "bandBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "exitBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "ratioBps",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "leader",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "maxSize",
+                "type": "uint80",
+                "internalType": "uint80"
+              }
+            ]
+          },
+          {
+            "name": "state",
+            "type": "tuple",
+            "internalType": "struct Strategies.State",
+            "components": [
+              {
+                "name": "status",
+                "type": "uint8",
+                "internalType": "enum Strategies.Status"
+              },
+              {
+                "name": "target",
+                "type": "uint8",
+                "internalType": "enum Strategies.Side"
+              },
+              {
+                "name": "holding",
+                "type": "uint8",
+                "internalType": "enum Strategies.Side"
+              },
+              {
+                "name": "todo",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "refusals",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "pendingAction",
+                "type": "uint8",
+                "internalType": "enum Strategies.Action"
+              },
+              {
+                "name": "pendingSide",
+                "type": "uint8",
+                "internalType": "enum Strategies.Side"
+              },
+              {
+                "name": "nextAt",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "actAt",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "samples",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "pendingOrder",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "pendingSince",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "targetSize",
+                "type": "uint96",
+                "internalType": "uint96"
+              },
+              {
+                "name": "actions",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "emaFast",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "emaSlow",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "lastPrice",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "blockedAt",
+                "type": "uint64",
+                "internalType": "uint64"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "nextId",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pause",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "poke",
+    "inputs": [
+      {
+        "name": "ids",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "resume",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "stop",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "strategiesOf",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "strategyCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "strategyOf",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "ActionRefused",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "action",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum Strategies.Action"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ExitedElsewhere",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "side",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum Strategies.Side"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OrderDropped",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OrderPlaced",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "action",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum Strategies.Action"
+      },
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "size",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "price",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OrderSettled",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "filled",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Sampled",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "price",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "a",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "b",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "target",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum Strategies.Side"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StrategyCreated",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "config",
+        "type": "tuple",
+        "indexed": false,
+        "internalType": "struct Strategies.Config",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum Strategies.Kind"
+          },
+          {
+            "name": "interval",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "margin",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "leverage",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxSlippageBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "allowShort",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "stopLossBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "takeProfitBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "period",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "slowPeriod",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "bandBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "exitBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "ratioBps",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "leader",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "maxSize",
+            "type": "uint80",
+            "internalType": "uint80"
+          }
+        ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StrategyPaused",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "afterRefusals",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StrategyResumed",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StrategyStopped",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TargetChanged",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "from",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum Strategies.Side"
+      },
+      {
+        "name": "to",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum Strategies.Side"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AgentPolicyExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientGas",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidStrategy",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MarketTaken",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoStrategy",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotApproved",
+    "inputs": []
+  }
+];
+
+export const agentRegistryAbi = [
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "factory_",
+        "type": "address",
+        "internalType": "contract AgentAccountFactory"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "MAX_DESCRIPTION_BYTES",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_KIND_BYTES",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_NAME_BYTES",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_URI_BYTES",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "agentCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "factory",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract AgentAccountFactory"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getAgent",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct AgentRegistry.Agent",
+        "components": [
+          {
+            "name": "owner",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "registeredAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "updatedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "name",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "description",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "kind",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "uri",
+            "type": "string",
+            "internalType": "string"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getAgents",
+    "inputs": [
+      {
+        "name": "offset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "accounts",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "agents",
+        "type": "tuple[]",
+        "internalType": "struct AgentRegistry.Agent[]",
+        "components": [
+          {
+            "name": "owner",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "registeredAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "updatedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "name",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "description",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "kind",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "uri",
+            "type": "string",
+            "internalType": "string"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isAgent",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "register",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "contract AgentAccount"
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "description",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "kind",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "uri",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "unregister",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "contract AgentAccount"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "update",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "contract AgentAccount"
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "description",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "kind",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "uri",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "AgentRegistered",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "description",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "kind",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "uri",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "AgentUnregistered",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "AgentUpdated",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "description",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "kind",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "uri",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AlreadyRegistered",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidAgent",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotOwner",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotRegistered",
     "inputs": []
   }
 ];

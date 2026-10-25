@@ -42,7 +42,7 @@ export const FEEDS = {
   XAU: { id: "0x765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2", expo: -3, kraken: "PAXGUSD", krakenKey: "PAXGUSD", price: 2_655.4, vol: 0.4 },
 };
 
-export function artifact(name) {
+function readArtifact(name) {
   // Contracts that share a source file with another one.
   const source = { AgentAccountFactory: "AgentAccount" }[name] ?? name;
   const file = join(CONTRACTS_OUT, `${source}.sol`, `${name}.json`);
@@ -50,6 +50,17 @@ export function artifact(name) {
     throw new Error(`Missing ${file}. Build the contracts first: cd contracts && forge build --offline --skip test --skip script`);
   }
   return JSON.parse(readFileSync(file, "utf8"));
+}
+
+/** A Foundry artifact. PerpEngine's ABI is the union with PerpEngineExt's (one address, two contracts: the engine
+ *  forwards every function it does not define to its extension), as scripts/export-abis.mjs exports it. */
+export function artifact(name) {
+  const a = readArtifact(name);
+  if (name !== "PerpEngine") return a;
+  const sig = (x) => `${x.type}:${x.name ?? ""}(${(x.inputs ?? []).map((i) => i.type).join(",")})`;
+  const seen = new Set(a.abi.map(sig));
+  const ext = readArtifact("PerpEngineExt").abi.filter((x) => ["function", "event", "error"].includes(x.type) && !seen.has(sig(x)));
+  return { ...a, abi: [...a.abi, ...ext] };
 }
 
 export const transport = () => http(RPC_URL, { batch: false, retryCount: 0 });

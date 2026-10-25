@@ -17,6 +17,9 @@ import {IRewardToken} from "../src/interfaces/IRewardToken.sol";
 import {PublisherOracle} from "../src/testnet/PublisherOracle.sol";
 import {TestUSDC} from "../src/testnet/TestUSDC.sol";
 import {AgentAccountFactory} from "../src/AgentAccount.sol";
+import {AgentRegistry} from "../src/AgentRegistry.sol";
+import {PrizeDistributor} from "../src/PrizeDistributor.sol";
+import {Strategies} from "../src/Strategies.sol";
 import {TrailingStops} from "../src/TrailingStops.sol";
 import {TwapOrders} from "../src/TwapOrders.sol";
 import {FeeMode, MarketConfig} from "../src/Types.sol";
@@ -89,6 +92,9 @@ contract Deploy is Script {
         AgentAccountFactory agentFactory;
         TrailingStops trailingStops;
         TwapOrders twapOrders;
+        Strategies strategies;
+        AgentRegistry agentRegistry;
+        PrizeDistributor prizes;
         uint64 futureExpiry;
         bytes32[] marketIds;
         string[] marketSymbols;
@@ -134,6 +140,9 @@ contract Deploy is Script {
         d.agentFactory = new AgentAccountFactory(IERC20(d.usdc), d.engine);
         d.trailingStops = new TrailingStops(d.engine, d.agentFactory);
         d.twapOrders = new TwapOrders(d.engine, d.agentFactory);
+        d.strategies = new Strategies(d.engine, d.agentFactory);
+        d.agentRegistry = new AgentRegistry(d.agentFactory);
+        d.prizes = new PrizeDistributor(IERC20(d.usdc), owner);
         _listMarkets(d);
         if (testCollateral) _seedVault(d, deployer, vm.envOr("VAULT_SEED", uint256(0)));
 
@@ -256,6 +265,9 @@ contract Deploy is Script {
         console2.log("AgentAccountFactory: ", address(d.agentFactory));
         console2.log("TrailingStops:       ", address(d.trailingStops));
         console2.log("TwapOrders:          ", address(d.twapOrders));
+        console2.log("Strategies:          ", address(d.strategies));
+        console2.log("AgentRegistry:       ", address(d.agentRegistry));
+        console2.log("PrizeDistributor:    ", address(d.prizes));
         console2.log("Dated future:        ", d.marketSymbols[7]);
 
         string memory json = "deployment";
@@ -275,6 +287,9 @@ contract Deploy is Script {
         vm.serializeAddress(json, "agentFactory", address(d.agentFactory));
         vm.serializeAddress(json, "trailingStops", address(d.trailingStops));
         vm.serializeAddress(json, "twapOrders", address(d.twapOrders));
+        vm.serializeAddress(json, "strategies", address(d.strategies));
+        vm.serializeAddress(json, "agentRegistry", address(d.agentRegistry));
+        vm.serializeAddress(json, "prizeDistributor", address(d.prizes));
         vm.serializeUint(json, "futureExpiry", d.futureExpiry);
         vm.serializeBytes32(json, "marketIds", d.marketIds);
         string memory out = vm.serializeString(json, "marketSymbols", d.marketSymbols);

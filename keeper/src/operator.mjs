@@ -79,6 +79,56 @@ export function gapsBracket(o, px) {
   return false;
 }
 
+// Strategies add-on enums (contracts/src/Strategies.sol).
+const STRATEGY_ACTIVE = 1;
+const STRATEGY_COPY = 2;
+const FLAT = 0;
+const LONG = 1;
+const SHORT = 2;
+const sideOf = (p) => (p ? (p.isLong ? LONG : SHORT) : FLAT);
+
+/**
+ * Mirrors Strategies' copy target: true when the copy's position is off what its leader's says (another side, or
+ * more than 10% off the scaled size), so a sample would trade. `posBy` maps trader + market id (lower case) to a
+ * position. A copy sitting out the leader's trade it was closed out of is not, until the leader moves on.
+ */
+export function copyOff(s, posBy) {
+  const c = s.config;
+  const market = s.marketId.toLowerCase();
+  const lead = posBy.get(c.leader.toLowerCase() + market);
+  let side = sideOf(lead);
+  if (side === SHORT && !c.allowShort) side = FLAT;
+  if (BigInt(s.state.blockedAt) !== 0n) return !(side !== FLAT && BigInt(lead.openedAt) === BigInt(s.state.blockedAt));
+  let size = 0n;
+  if (side !== FLAT) {
+    size = (BigInt(lead.size) * BigInt(c.ratioBps)) / 10_000n;
+    if (size > BigInt(c.maxSize)) size = BigInt(c.maxSize);
+    if (size === 0n) side = FLAT;
+  }
+  const mine = posBy.get(s.account.toLowerCase() + market);
+  const have = sideOf(mine);
+  if (side === FLAT) return have !== FLAT;
+  if (have !== side) return true;
+  const held = BigInt(mine.size);
+  const off = held > size ? held - size : size - held;
+  return off * 10_000n > size * 1_000n;
+}
+
+/**
+ * Whether a live strategy may have something to do at chain time `now` (seconds, bigint); the contract's `due()`
+ * has the last word. An order of its own on the book (settled or gone stale), a step left to take, or a sample due:
+ * trend and mean reversion sample every interval, a copy only when its position and its leader's differ (an idle
+ * copy costs nothing).
+ */
+export function strategyCandidate(s, now, posBy) {
+  const st = s.state;
+  if (Number(st.status) !== STRATEGY_ACTIVE) return false;
+  if (BigInt(st.pendingOrder) !== 0n) return true;
+  if (st.todo && BigInt(st.actAt) <= now) return true;
+  if (BigInt(st.nextAt) > now) return false;
+  return Number(s.config.kind) !== STRATEGY_COPY || copyOff(s, posBy);
+}
+
 export function makeOperator({ pub, publisher, keeper, funder, chainId, addresses, kraken, opts, log }) {
   const { engine, lens, vault, oracle } = addresses;
   const stats = { ticks: 0, pushes: 0, feedsPushed: 0, executed: 0, liquidated: 0, settledMarkets: 0, settledPositions: 0, epochs: 0, topUps: 0, benign: {}, errors: {}, wideFeeds: {}, lastError: null };
@@ -202,7 +252,8 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
 
   /** Heartbeat for readers (the app, direct traders): pushes feeds that are old or have moved, and the feeds in
    *  `force`. Keeper transactions carry their own fresh prices, so nothing here is needed for fills or
-   *  liquidations; add-on pokes (TWAP slices) read the stored price and force their feeds when it is old. */
+   *  liquidations; add-on pokes (TWAP slices, strategies) read the stored price and force their feeds when it is
+   *  old. */
   async function publish(chainNow, oc, force = null) {
     const publishTime = Math.max(lastPublish + 1, Math.min(Math.floor(Date.now() / 1000), chainNow + 1));
     const updates = [];
@@ -376,6 +427,15 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
         stats.lastError = `twap: ${String(e?.shortMessage ?? e?.message ?? e).split("\n")[0].slice(0, 240)}`;
       }
     }
+    // 3d. Strategies (the Strategies add-on): samples, and the orders that move positions to their signals.
+    if (addresses.strategies) {
+      try {
+        await strategies(view);
+      } catch (e) {
+        count(stats.errors, "strategies");
+        stats.lastError = `strategies: ${String(e?.shortMessage ?? e?.message ?? e).split("\n")[0].slice(0, 240)}`;
+      }
+    }
     // 4. Vault epoch.
     if (!opts.settleEpochs) return;
     const [last, len] = await Promise.all([
@@ -486,6 +546,65 @@ export function makeOperator({ pub, publisher, keeper, funder, chainId, addresse
       const batch = due.slice(i, i + opts.batchSize);
       const r = await send(keeper, tw, abi, "poke", [batch.map((x) => x.account), batch.map((x) => x.market)], batch[0].id);
       if (r) stats.slices = (stats.slices ?? 0) + batch.length;
+    }
+  }
+
+  /**
+   * Pokes the strategies with something to do (`strategyCandidate`, then the contract's own `due()`), in batches.
+   * A poke samples, settles the strategy's last order, or places its next one, which step 3 fills like any other
+   * keeper order. Accounts that withdrew the contract's approval are skipped; markets whose stored price has under
+   * 3 s of life left are refreshed first, as for TWAPs; a strategy still not due afterwards backs off.
+   */
+  async function strategies(view) {
+    const sx = addresses.strategies;
+    const abi = ABIS.strategiesAbi;
+    if (!abi) return;
+    const n = await pub.readContract({ address: sx, abi, functionName: "strategyCount" });
+    if (n === 0n) return;
+    const block = await pub.getBlock();
+    const chainNow = Number(block.timestamp);
+    const now = BigInt(chainNow);
+    const posBy = new Map(view.positions.map((v) => [v.position.trader.toLowerCase() + v.position.priceId.toLowerCase(), v.position]));
+    const approved = new Map();
+    const candidates = [];
+    for (let at = 0n; at < n; at += PAGE) {
+      const [ids, list] = await pub.readContract({ address: sx, abi, functionName: "getStrategies", args: [at, PAGE] });
+      for (let i = 0; i < ids.length; i += 1) {
+        const id = `strategy:${ids[i]}`;
+        if (!ready(id) || !strategyCandidate(list[i], now, posBy)) continue;
+        const account = list[i].account;
+        if (!approved.has(account)) {
+          const [expiry] = await pub.readContract({ address: account, abi: ABIS.agentAccountAbi, functionName: "agents", args: [sx] });
+          approved.set(account, BigInt(expiry) > now);
+        }
+        if (!approved.get(account)) {
+          defer(id);
+          continue;
+        }
+        candidates.push({ sid: ids[i], market: list[i].marketId, id });
+      }
+    }
+    if (candidates.length === 0) return;
+    const byId = new Map(view.markets.map((m) => [m.id.toLowerCase(), m]));
+    const force = new Set();
+    for (const c of candidates) {
+      const m = byId.get(c.market.toLowerCase());
+      if (!m || m.market.settlementPrice !== 0n) continue;
+      const age = m.hasPrice ? chainNow - Number(m.price.publishTime) : Infinity;
+      if (age >= maxPriceAge - 3) for (const f of feedsOf(m)) force.add(f.key);
+    }
+    if (force.size > 0 && krakenOk) await publish(chainNow, await onchainFeeds(), force);
+    const due = [];
+    for (const c of candidates) {
+      if (await pub.readContract({ address: sx, abi, functionName: "due", args: [c.sid] })) due.push(c);
+      else defer(c.id);
+    }
+    // An order costs a poke about 470k gas: smaller batches than the engine's.
+    const size = Math.max(1, Math.min(opts.batchSize, opts.strategyBatchSize ?? 8));
+    for (let i = 0; i < due.length; i += size) {
+      const batch = due.slice(i, i + size);
+      const r = await send(keeper, sx, abi, "poke", [batch.map((x) => x.sid)], batch[0].id);
+      if (r) stats.strategyPokes = (stats.strategyPokes ?? 0) + batch.length;
     }
   }
 

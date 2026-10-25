@@ -60,6 +60,8 @@ interface IEngine is IPerpEngine {
 
     function getOrder(uint256 orderId) external view returns (Order memory);
 
+    function orderTrader(uint256 orderId) external view returns (address);
+
     function getPrice(bytes32 marketId) external view returns (OraclePrice memory);
 
     // ───────────────────────────── Positions, orders, settlement (PerpEngineExt) ─────────────────────────────
