@@ -144,7 +144,9 @@ if (want("trade")) {
     await t("confirm-dialog").waitFor();
     await shot(page, "03-confirm");
     await t("confirm-yes").click();
-    await page.getByText(/Approve tUSDC/).first().waitFor({ timeout: 15_000 });
+    // The approval goes first, and its status line can come and go within a moment on a local chain, so the order's
+    // line will do as well here; the allowance itself is checked on-chain below.
+    await page.getByText(/Approve tUSDC|Market long sent as order #\d+/).first().waitFor({ timeout: 15_000 });
     await page.getByText(/Market long sent as order #\d+/).waitFor({ timeout: 30_000 });
     await waitFilled();
     await waitPosition("BTC-USD");

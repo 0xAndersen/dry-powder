@@ -173,8 +173,16 @@ export default async function run({ step, page, t, read, shot, num, addresses, p
     await waitFilled();
     await waitPosition("SOL-USD");
     const opened = await engine("getPosition", [UI_TRADER.address, id]);
-    // The removal is checked against a price published after the open.
-    await page.waitForTimeout(2_500);
+    // The removal is checked against a price published after the open (PriceNotAfterOpen): move SOL so the keeper
+    // publishes one, and wait until the chain has it.
+    const fromBlock = await pub.getBlockNumber();
+    await fetch(`${KRAKEN_URL}/control/move?feed=SOL&pct=0.1`);
+    for (let i = 0; ; i += 1) {
+      const logs = await pub.getContractEvents({ address: addresses.publisherOracle, abi: artifact("PublisherOracle").abi, eventName: "PriceFeedUpdate", args: { id: FEEDS.SOL.id }, fromBlock });
+      if (logs.some((l) => l.args.publishTime > opened.openedAt)) break;
+      if (i === 60) throw new Error(`no SOL price newer than the open (${opened.openedAt}) within 30 s`);
+      await sleep(500);
+    }
     const before = await balanceOf(UI_TRADER.address);
     await t("position-SOL-USD").getByTestId("add-margin").click();
     await t("margin-mode-remove").click();
