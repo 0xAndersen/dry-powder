@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["deployments/**", "**.md"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Build and test
+        working-directory: contracts
+        run: |
+          forge build --sizes
+          forge test
+
+  packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Keeper
+        working-directory: keeper
+        run: npm ci && npm test
+      - name: MCP server
+        working-directory: mcp
+        run: npm ci && npm test
+      - name: Frontend
+        working-directory: frontend
+        run: npm ci && npm run typecheck && npm run build:static
+
+  whole-system:
+    # Local chain + contracts + mock Kraken + scripted traders, with the production keeper publishing and
+    # executing, then the full UI click-through and the MCP server driving an agent account.
+    runs-on: ubuntu-latest
+    needs: [contracts, packages]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cd contracts && forge build --skip test --skip script
+      - run: cd keeper && npm ci
+      - run: cd mcp && npm ci
+      - name: Frontend and browser
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm run build:static
+      - name: UI run with the production keeper
+        working-directory: frontend
+        run: e2e/with-keeper.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e
+          path: frontend/e2e/out

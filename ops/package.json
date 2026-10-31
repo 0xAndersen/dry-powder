@@ -1,0 +1,17 @@
+{
+  "name": "dry-powder-ops",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "PLAYWRIGHT_BROWSERS_PATH=${PLAYWRIGHT_BROWSERS_PATH:-/opt/pw-browsers} node test/run.mjs",
+    "test:variants": "for m in flaky nomc3 usdc lean; do PLAYWRIGHT_BROWSERS_PATH=${PLAYWRIGHT_BROWSERS_PATH:-/opt/pw-browsers} node test/variants.mjs $m || exit 1; done",
+    "gas-table": "node scripts/gas-table.mjs"
+  },
+  "devDependencies": {
+    "@gfx/zopfli": "^1.0.15",
+    "esbuild": "^0.24.0",
+    "playwright": "1.56.0",
+    "viem": "2.21.0"
+  }
+}
