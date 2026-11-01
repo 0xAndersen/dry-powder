@@ -15,8 +15,8 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.32.1",
-    "viem": "2.21.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "viem": "2.57.13",
     "zod": "3.25.76"
   },
   "license": "MIT"
