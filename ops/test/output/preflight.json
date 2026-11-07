@@ -1,0 +1,38 @@
+{
+ "chainId": 5042002,
+ "chainIdOk": true,
+ "deployer": "0xbA223879aa458BcB5B76806B38a38439129B1671",
+ "nonce": 0,
+ "balance": 40,
+ "baseFeeGwei": 20,
+ "gasPriceGwei": 21,
+ "networkTipGwei": 1,
+ "multicall3": true,
+ "gas": {
+  "deploy": 13392000,
+  "fund": 6675000,
+  "agents": 547698600,
+  "keeper": 141470933,
+  "publisher": 8190000,
+  "total": 717426533
+ },
+ "costUsdc": {
+  "deploy": 0.281232,
+  "fund": 0.140175,
+  "agents": 11.501671,
+  "keeper": 2.97089,
+  "publisher": 0.17199,
+  "total": 15.065957
+ },
+ "perAgentUsdc": 0.115017,
+ "floats": {
+  "perAgent": 0.14,
+  "keeper": 2,
+  "publisher": 0.5,
+  "total": 16.5
+ },
+ "required": 26.740365,
+ "sufficient": true,
+ "shortfall": 0,
+ "note": "costUsdc.total is the expected net spend; required is the peak the deployer must hold (deploy+fund gas + account floats + 65% of run gas for top-ups + reserve); unspent floats return with sweep({returnGas:true})"
+}

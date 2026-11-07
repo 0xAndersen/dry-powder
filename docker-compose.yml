@@ -1,0 +1,40 @@
+# Runs the trading frontend and the keeper together.
+#
+#   cp .env.example .env    # fill in the contract addresses from ops/output-testnet/addresses.json
+#   docker compose up --build
+#
+# Frontend: http://localhost:3000
+
+services:
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      PERP_ENGINE_ADDRESS: ${PERP_ENGINE_ADDRESS:?set PERP_ENGINE_ADDRESS in .env}
+      ENGINE_LENS_ADDRESS: ${ENGINE_LENS_ADDRESS:?set ENGINE_LENS_ADDRESS in .env}
+      HOUSE_VAULT_ADDRESS: ${HOUSE_VAULT_ADDRESS:?set HOUSE_VAULT_ADDRESS in .env}
+      REWARD_TOKEN_ADDRESS: ${REWARD_TOKEN_ADDRESS:?set REWARD_TOKEN_ADDRESS in .env}
+      AGENT_FACTORY_ADDRESS: ${AGENT_FACTORY_ADDRESS:-}
+      USDC_ADDRESS: ${USDC_ADDRESS:-0x3600000000000000000000000000000000000000}
+      COLLATERAL_SYMBOL: ${COLLATERAL_SYMBOL:-USDC}
+      COLLATERAL_IS_TEST: ${COLLATERAL_IS_TEST:-false}
+      ORACLE_MODE: ${ORACLE_MODE:-publisher}
+      KRAKEN_URL: ${KRAKEN_URL:-https://api.kraken.com}
+      PYTH_API_KEY: ${PYTH_API_KEY:-}
+      RPC_URL: ${RPC_URL:-https://rpc.testnet.arc.network}
+      HERMES_URL: ${HERMES_URL:-https://hermes.pyth.network}
+      CHAIN_ID: ${CHAIN_ID:-5042002}
+      EXPLORER_URL: ${EXPLORER_URL:-https://testnet.arcscan.app}
+
+  # Price publisher + keeper (keeper/.env.example). Reads the deployment file and DEPLOYER_KEY (or explicit keys).
+  keeper:
+    build: ./keeper
+    restart: unless-stopped
+    environment:
+      DEPLOYMENT: /deployments/arc-testnet.json
+      DEPLOYER_KEY: ${DEPLOYER_KEY:?set DEPLOYER_KEY in .env (or PUBLISHER_KEY and KEEPER_KEY)}
+      PORT: "8080"
+    volumes:
+      - ./deployments:/deployments:ro

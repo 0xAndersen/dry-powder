@@ -1,0 +1,8 @@
+[profile.default]
+src = "src"
+out = "out"
+solc = "0.8.28"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 200
+bytecode_hash = "none"

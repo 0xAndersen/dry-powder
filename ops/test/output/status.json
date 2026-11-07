@@ -1,0 +1,94 @@
+{
+ "v": "1.0.0",
+ "phase": "ended",
+ "uptimeS": 467,
+ "runS": 420,
+ "head": 491,
+ "indexed": 490,
+ "baseFeeGwei": 20,
+ "agents": {
+  "n": 100,
+  "done": 100,
+  "active": 0,
+  "failed": 0,
+  "tripsMin": 5,
+  "tripsAvg": 6.03,
+  "marginShort": 0
+ },
+ "trades": {
+  "opens": 603,
+  "closes": 594,
+  "liqs": 9,
+  "orders": 675,
+  "fills": {
+   "0": 93,
+   "1": 52,
+   "2": 81,
+   "3": 40
+  }
+ },
+ "volume": 34881980,
+ "oi": 0,
+ "openPos": 0,
+ "openOrd": 0,
+ "nav": 5032784,
+ "publisher": {
+  "polls": 490,
+  "pollErr": 0,
+  "pushes": 198,
+  "lastOkS": 1,
+  "closed": [],
+  "err": {}
+ },
+ "keeper": {
+  "liqs": 9,
+  "fills": {
+   "limit": 92,
+   "tp": 52,
+   "sl": 81,
+   "close": 40
+  },
+  "settledMkt": 1,
+  "settledPos": 8,
+  "epochs": 5,
+  "err": {}
+ },
+ "reverts": {
+  "PositionNotFound": 12,
+  "OrderNotFound": 9,
+  "(revertedOnChain)": 9
+ },
+ "txs": 2135,
+ "txErr": {
+  "revertedOnChain": 9
+ },
+ "gasUsdc": 14.953444,
+ "rpc": {
+  "req": 9695,
+  "http": 3443,
+  "errors": 0,
+  "errRate": 0,
+  "retries": 0,
+  "noBatch": false
+ },
+ "native": {
+  "keeper": 1.401084,
+  "publisher": 0.160812,
+  "deployer": 14.080801
+ },
+ "topUps": 114,
+ "anomalies": {
+  "marketOrderNotFilled": 2,
+  "closeOrderNotExecuted": 1,
+  "feedClosed": 1,
+  "feedReopened": 1
+ },
+ "loopErr": {},
+ "lastErr": null,
+ "jobs": {
+  "sweep": "done"
+ },
+ "timers": "worker",
+ "visible": "visible",
+ "lsErr": 0
+}

@@ -1,0 +1,5 @@
+node_modules/
+test/.cache/
+test/mc3/cache/
+test/mc3/out/
+test/output-dev/

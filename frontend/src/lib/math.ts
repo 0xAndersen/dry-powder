@@ -1,0 +1,106 @@
+/** Client-side mirrors of PerpEngine / PositionMath arithmetic. Everything is bigint. */
+
+export const BPS = 10_000n;
+export const ONE = 10n ** 18n;
+export const LIQUIDATION_THRESHOLD_BPS = 9_000n;
+export const SECONDS_PER_YEAR = 31_536_000;
+/** USDC (6 dec) x price scale (18 dec) -> units of the underlying in 18 decimals. */
+const UNIT_SCALE = 10n ** 30n;
+
+export function ceilDiv(a: bigint, b: bigint): bigint {
+  return a === 0n ? 0n : (a - 1n) / b + 1n;
+}
+
+export function absDiff(a: bigint, b: bigint): bigint {
+  return a > b ? a - b : b - a;
+}
+
+export function abs(a: bigint): bigint {
+  return a < 0n ? -a : a;
+}
+
+export function minBig(a: bigint, b: bigint): bigint {
+  return a < b ? a : b;
+}
+
+export function maxBig(a: bigint, b: bigint): bigint {
+  return a > b ? a : b;
+}
+
+/** Price PnL in USDC (6 dec), rounded against the trader exactly like `PositionMath.pricePnl`. */
+export function pricePnl(size: bigint, entry: bigint, price: bigint, isLong: boolean): bigint {
+  if (entry === 0n) return 0n;
+  const profit = isLong ? price >= entry : price <= entry;
+  const numerator = size * absDiff(price, entry);
+  return profit ? numerator / entry : -ceilDiv(numerator, entry);
+}
+
+/** Liquidation price given funding already owed, mirroring `PositionMath.liquidationPrice`.
+ *  Returns null when the position is liquidatable at any price, 0n when a long can never be liquidated. */
+export function liquidationPrice(
+  entry: bigint,
+  margin: bigint,
+  size: bigint,
+  isLong: boolean,
+  fundingOwed = 0n,
+): bigint | null {
+  if (size === 0n || entry === 0n) return null;
+  const room = (margin * LIQUIDATION_THRESHOLD_BPS) / BPS - fundingOwed;
+  if (room <= 0n) return null;
+  if (isLong) {
+    if (room >= size) return 0n;
+    return ceilDiv(entry * (size - room), size);
+  }
+  return (entry * (size + room)) / size;
+}
+
+/** Price at which the profit cap (`maxProfitMultiple` x margin) is reached. Null when unreachable (short past zero). */
+export function profitCapPrice(entry: bigint, margin: bigint, size: bigint, isLong: boolean, multiple: bigint): bigint | null {
+  if (size === 0n) return null;
+  const cap = margin * multiple;
+  if (isLong) return entry + ceilDiv(entry * cap, size);
+  if (cap >= size) return null;
+  return (entry * (size - cap)) / size;
+}
+
+/** Upper bound of the open fee, as escrowed for limit orders. */
+export function maxOpenFee(size: bigint, baseFeeBps: bigint, maxSkewFeeBps: bigint): bigint {
+  return ceilDiv(size * (baseFeeBps + maxSkewFeeBps), BPS);
+}
+
+export function baseFee(size: bigint, baseFeeBps: bigint): bigint {
+  return ceilDiv(size * baseFeeBps, BPS);
+}
+
+/** Worst acceptable fill for a buy (price may rise by `slippageBps`). */
+export function withSlippageUp(price: bigint, slippageBps: bigint): bigint {
+  return ceilDiv(price * (BPS + slippageBps), BPS);
+}
+
+/** Worst acceptable fill for a sell (price may fall by `slippageBps`). */
+export function withSlippageDown(price: bigint, slippageBps: bigint): bigint {
+  return (price * (BPS - slippageBps)) / BPS;
+}
+
+/** Units of the underlying (18 dec) that `size` USDC of notional represents at `price`. */
+export function unitsOf(size: bigint, price: bigint): bigint {
+  return price === 0n ? 0n : (size * UNIT_SCALE) / price;
+}
+
+/** USDC notional (6 dec) of `units` (18 dec) of the underlying at `price`. */
+export function notionalOf(units: bigint, price: bigint): bigint {
+  return (units * price) / UNIT_SCALE;
+}
+
+/** bigint ratio as a JS number, for display only. */
+export function ratio(numerator: bigint, denominator: bigint): number {
+  if (denominator === 0n) return NaN;
+  const scaled = (numerator * 1_000_000_000n) / denominator;
+  return Number(scaled) / 1e9;
+}
+
+/** Scales a bigint by a float factor with 1e-9 resolution (display-side conversions such as % of entry). */
+export function scaleBy(value: bigint, factor: number): bigint {
+  if (!Number.isFinite(factor)) return 0n;
+  return (value * BigInt(Math.round(factor * 1e9))) / 1_000_000_000n;
+}

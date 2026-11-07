@@ -1,0 +1,57 @@
+{
+ "note": "eth_call at tag latest reverted with Panic(0x11); the same call pinned to that block succeeds and no position or market is bad",
+ "replays": [
+  {
+   "wall": 1791779889.572,
+   "latestBlock": 169,
+   "latestTimestamp": 1791779889,
+   "pinned": [
+    [
+     168,
+     "ok"
+    ],
+    [
+     169,
+     "ok"
+    ],
+    [
+     170,
+     "Invalid parameters were provided to the RPC method.\nDouble check you have provid"
+    ]
+   ]
+  },
+  {
+   "wall": 1791779931.55,
+   "latestBlock": 211,
+   "latestTimestamp": 1791779931,
+   "pinned": [
+    [
+     210,
+     "ok"
+    ],
+    [
+     211,
+     "ok"
+    ],
+    [
+     212,
+     "Invalid parameters were provided to the RPC method.\nDouble check you have provid"
+    ]
+   ]
+  }
+ ],
+ "found": [
+  {
+   "block": 169,
+   "blockTimestamp": 1791779889,
+   "positions": 42,
+   "bad": []
+  },
+  {
+   "block": 211,
+   "blockTimestamp": 1791779931,
+   "positions": 1,
+   "bad": []
+  }
+ ]
+}
